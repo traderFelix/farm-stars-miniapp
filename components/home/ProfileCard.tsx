@@ -110,7 +110,7 @@ export function ProfileCard() {
                 </div>
 
                 <div className="col-span-2 rounded-3xl border border-white/10 bg-black/20 p-4">
-                    <div className="text-xs text-white/50">Индекс активности</div>
+                    <div className="text-xs text-white/50">Индекс Активности</div>
                     <div className="mt-2 text-base font-medium">{activityIndex}%</div>
                 </div>
             </div>

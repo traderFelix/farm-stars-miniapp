@@ -56,5 +56,7 @@ export function initTelegramMiniApp(): TelegramWebApp | null {
 
 export function getTelegramInitData(): string | null {
     const webApp = getTelegramWebApp();
-    return webApp?.initData || null;
+    if (!webApp) return null;
+
+    return webApp.initData ?? null;
 }
