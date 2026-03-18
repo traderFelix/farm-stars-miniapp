@@ -47,7 +47,7 @@ export function ProfileCard() {
             setState("success");
 
             const webApp = getTelegramWebApp();
-            webApp?.HapticFeedback?.notificationOccurred("success");
+            webApp?.HapticFeedback?.notificationOccurred?.("success");
         } catch (error) {
             const message =
                 error instanceof Error ? error.message : "Не удалось загрузить профиль.";
@@ -56,7 +56,7 @@ export function ProfileCard() {
             setErrorText(message);
 
             const webApp = getTelegramWebApp();
-            webApp?.HapticFeedback?.notificationOccurred("error");
+            webApp?.HapticFeedback?.notificationOccurred?.("error");
         }
     };
 

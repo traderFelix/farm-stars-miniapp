@@ -12,6 +12,12 @@ class TelegramAuthRequest(BaseModel):
 
 @router.post("/telegram")
 async def telegram_auth(payload: TelegramAuthRequest):
+    print("AUTH HIT:", {
+        "has_init_data": payload.init_data is not None,
+        "init_data_len": len(payload.init_data or ""),
+        "init_data_preview": (payload.init_data or "")[:120],
+    })
+
     if payload.init_data is None:
         raise HTTPException(status_code=400, detail="init_data is required")
 

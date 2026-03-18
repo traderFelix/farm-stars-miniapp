@@ -9,13 +9,11 @@ router = APIRouter(prefix="/api", tags=["miniapp-compat"])
 async def miniapp_auth():
     return {
         "ok": True,
-        "token": "dev-token",
+        "session_token": "dev-token",
         "user": {
             "id": 144574240,
             "username": "vad_ym",
             "first_name": "Vadym",
-            "role": "user",
-            "balance": 0.15,
         },
     }
 
@@ -26,11 +24,14 @@ async def get_me(authorization: Optional[str] = Header(default=None)):
         raise HTTPException(status_code=401, detail="Invalid token")
 
     return {
-        "id": 144574240,
-        "username": "vad_ym",
-        "first_name": "Vadym",
-        "role": "user",
-        "balance": 0.15,
+        "user": {
+            "id": 144574240,
+            "username": "vad_ym",
+            "first_name": "Vadym",
+            "role": "user",
+            "balance": 0.15,
+            "activity_index": 0.0,
+        }
     }
 
 
@@ -71,4 +72,28 @@ async def get_next_task(authorization: Optional[str] = Header(default=None)):
             "seconds": 3,
             "url": "https://t.me/example/1",
         }
+    }
+
+
+@router.post("/tasks/open")
+async def open_task(authorization: Optional[str] = Header(default=None)):
+    if authorization and authorization != "Bearer dev-token":
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    return {
+        "ok": True,
+        "opened_at": 1710000000,
+    }
+
+
+@router.post("/tasks/check")
+async def check_task(authorization: Optional[str] = Header(default=None)):
+    if authorization and authorization != "Bearer dev-token":
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    return {
+        "ok": True,
+        "reward": 0.03,
+        "new_balance": 0.18,
+        "message": "Просмотр засчитан",
     }

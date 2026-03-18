@@ -72,7 +72,7 @@ export function TaskCard() {
             }
 
             const webApp = getTelegramWebApp();
-            webApp?.HapticFeedback?.selectionChanged();
+            webApp?.HapticFeedback?.selectionChanged?.();
         } catch (error) {
             const message =
                 error instanceof Error ? error.message : "Не удалось загрузить задание.";
@@ -82,7 +82,7 @@ export function TaskCard() {
             setErrorText(message);
 
             const webApp = getTelegramWebApp();
-            webApp?.HapticFeedback?.notificationOccurred("error");
+            webApp?.HapticFeedback?.notificationOccurred?.("error");
         }
     };
 
@@ -113,7 +113,7 @@ export function TaskCard() {
 
             const webApp = getTelegramWebApp();
             if (webApp) {
-                webApp.openTelegramLink(task.telegram_url);
+                webApp.openTelegramLink?.(task.telegram_url);
             } else {
                 window.open(task.telegram_url, "_blank");
             }
@@ -147,7 +147,7 @@ export function TaskCard() {
             setState("completed");
 
             const webApp = getTelegramWebApp();
-            webApp?.HapticFeedback?.notificationOccurred("success");
+            webApp?.HapticFeedback?.notificationOccurred?.("success");
         } catch (error) {
             const message =
                 error instanceof Error ? error.message : "Не удалось засчитать просмотр.";
@@ -155,7 +155,7 @@ export function TaskCard() {
             setErrorText(message);
 
             const webApp = getTelegramWebApp();
-            webApp?.HapticFeedback?.notificationOccurred("error");
+            webApp?.HapticFeedback?.notificationOccurred?.("error");
         }
     };
 

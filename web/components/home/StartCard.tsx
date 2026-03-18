@@ -36,8 +36,8 @@ export function StartCard() {
             return;
         }
 
-        webApp.HapticFeedback?.impactOccurred("light");
-        webApp.showAlert("Mini App подключен. На следующем шаге сделаем auth.");
+        webApp.HapticFeedback?.impactOccurred?.("light");
+        webApp.showAlert?.("Mini App подключен. На следующем шаге сделаем auth.");
     };
 
     return (

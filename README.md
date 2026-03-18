@@ -34,3 +34,11 @@ npm run dev
 cd web
 ngrok http 3000
 ```
+
+
+## Локальный билд
+```bash
+cd web
+npm run build
+npm run start
+```

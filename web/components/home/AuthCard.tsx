@@ -56,9 +56,9 @@ export function AuthCard() {
 
             const result = await apiRequest<AuthResponse>("/api/miniapp/auth", {
                 method: "POST",
-                body: {
+                body: JSON.stringify({
                     init_data: initData,
-                },
+                }),
             });
 
             saveSession(result.session_token, result.user);
@@ -71,7 +71,7 @@ export function AuthCard() {
             setUserLabel(label);
             setState("success");
 
-            webApp.HapticFeedback?.notificationOccurred("success");
+            webApp?.HapticFeedback?.notificationOccurred?.("success");
         } catch (error) {
             const message =
                 error instanceof Error ? error.message : "Не удалось авторизоваться.";
@@ -79,7 +79,7 @@ export function AuthCard() {
             setState("error");
             setErrorText(message);
 
-            webApp?.HapticFeedback?.notificationOccurred("error");
+            webApp?.HapticFeedback?.notificationOccurred?.("error");
         }
     };
 

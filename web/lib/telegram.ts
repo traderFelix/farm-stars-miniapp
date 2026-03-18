@@ -1,35 +1,54 @@
+type TgUser = {
+    id?: number;
+    username?: string;
+    first_name?: string;
+    last_name?: string;
+};
+
+type TgWebApp = {
+    initData: string;
+    initDataUnsafe?: { user?: TgUser };
+    platform?: string;
+    ready: () => void;
+    expand: () => void;
+    showAlert?: (message: string) => void;
+    openTelegramLink?: (url: string) => void;
+    HapticFeedback?: {
+        notificationOccurred?: (type: "error" | "success" | "warning") => void;
+        impactOccurred?: (style: "light" | "medium" | "heavy" | "rigid" | "soft") => void;
+        selectionChanged?: () => void;
+    };
+};
+
 declare global {
     interface Window {
         Telegram?: {
-            WebApp?: {
-                initData: string;
-                initDataUnsafe?: {
-                    user?: {
-                        id?: number;
-                        username?: string;
-                        first_name?: string;
-                        last_name?: string;
-                    };
-                };
-                ready: () => void;
-                expand: () => void;
-            };
+            WebApp?: TgWebApp;
         };
     }
 }
 
-export function initTelegramWebApp() {
-    if (typeof window === "undefined") return;
-    window.Telegram?.WebApp?.ready();
-    window.Telegram?.WebApp?.expand();
+export function getTelegramWebApp(): TgWebApp | undefined {
+    if (typeof window === "undefined") return undefined;
+    return window.Telegram?.WebApp;
+}
+
+export function initTelegramWebApp(): TgWebApp | undefined {
+    const webApp = getTelegramWebApp();
+    if (!webApp) return undefined;
+    webApp.ready();
+    webApp.expand();
+    return webApp;
+}
+
+export function initTelegramMiniApp(): TgWebApp | undefined {
+    return initTelegramWebApp();
 }
 
 export function getTelegramInitData(): string {
-    if (typeof window === "undefined") return "";
-    return window.Telegram?.WebApp?.initData || "";
+    return getTelegramWebApp()?.initData || "";
 }
 
 export function getTelegramUserUnsafe() {
-    if (typeof window === "undefined") return null;
-    return window.Telegram?.WebApp?.initDataUnsafe?.user || null;
+    return getTelegramWebApp()?.initDataUnsafe?.user || null;
 }
