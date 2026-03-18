@@ -23,18 +23,49 @@ TASK_OPENS: dict[tuple[int, int], dict] = {}
 
 def get_demo_next_task_for_user(user_id: int):
     channel_username = "telegram"
-    message_id = 1
 
-    return {
-        "id": 101,
-        "type": "view_post",
-        "title": "Просмотреть пост",
-        "reward": 0.03,
-        "hold_seconds": 3,
-        "telegram_url": f"https://t.me/{channel_username}/{message_id}",
-        "channel_name": f"@{channel_username}",
-        "message_id": message_id,
-    }
+    # временно крутим несколько demo task id,
+    # чтобы после выполнения одной приходила следующая
+    user_tasks = [
+        {
+            "id": 101,
+            "type": "view_post",
+            "title": "Просмотреть пост #1",
+            "reward": 0.03,
+            "hold_seconds": 3,
+            "telegram_url": f"https://t.me/{channel_username}/1",
+            "channel_name": f"@{channel_username}",
+            "message_id": 1,
+        },
+        {
+            "id": 102,
+            "type": "view_post",
+            "title": "Просмотреть пост #2",
+            "reward": 0.04,
+            "hold_seconds": 4,
+            "telegram_url": f"https://t.me/{channel_username}/2",
+            "channel_name": f"@{channel_username}",
+            "message_id": 2,
+        },
+        {
+            "id": 103,
+            "type": "view_post",
+            "title": "Просмотреть пост #3",
+            "reward": 0.05,
+            "hold_seconds": 5,
+            "telegram_url": f"https://t.me/{channel_username}/3",
+            "channel_name": f"@{channel_username}",
+            "message_id": 3,
+        },
+    ]
+
+    for task in user_tasks:
+        key = (int(user_id), int(task["id"]))
+        existing = TASK_OPENS.get(key)
+        if not existing or not existing.get("completed"):
+            return task
+
+    return None
 
 
 @router.get("/api/tasks/next", response_model=MiniAppNextTaskResponse)

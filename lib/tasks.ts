@@ -23,3 +23,9 @@ export type TaskCheckResponse = {
     new_balance: number;
     message: string;
 };
+
+export type StoredOpenedTask = {
+    task_id: number;
+    opened_at: number;
+    hold_seconds: number;
+};

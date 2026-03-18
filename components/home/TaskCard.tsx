@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { apiRequest } from "@/lib/api";
 import { getSessionToken } from "@/lib/auth";
+import { clearOpenedTask, getOpenedTask, saveOpenedTask } from "@/lib/opened-task";
 import type {
     NextTaskResponse,
     TaskCheckResponse,
@@ -49,12 +50,26 @@ export function TaskCard() {
             if (!result.task) {
                 setTask(null);
                 setState("empty");
+                clearOpenedTask();
                 return;
             }
 
             setTask(result.task);
-            setTimeLeft(result.task.hold_seconds);
-            setState("success");
+
+            const storedOpened = getOpenedTask();
+            if (storedOpened && storedOpened.task_id === result.task.id) {
+                const elapsed = Math.max(
+                    0,
+                    Math.floor(Date.now() / 1000) - storedOpened.opened_at,
+                );
+                const left = Math.max(0, storedOpened.hold_seconds - elapsed);
+
+                setTimeLeft(left);
+                setState("opened");
+            } else {
+                setTimeLeft(result.task.hold_seconds);
+                setState("success");
+            }
 
             const webApp = getTelegramWebApp();
             webApp?.HapticFeedback?.selectionChanged();
@@ -79,7 +94,7 @@ export function TaskCard() {
             setErrorText("");
             setSuccessText("");
 
-            await apiRequest<TaskOpenResponse>("/api/tasks/open", {
+            const result = await apiRequest<TaskOpenResponse>("/api/tasks/open", {
                 method: "POST",
                 token,
                 body: {
@@ -87,7 +102,14 @@ export function TaskCard() {
                 },
             });
 
+            saveOpenedTask({
+                task_id: task.id,
+                opened_at: result.opened_at,
+                hold_seconds: task.hold_seconds,
+            });
+
             setState("opened");
+            setTimeLeft(task.hold_seconds);
 
             const webApp = getTelegramWebApp();
             if (webApp) {
@@ -119,6 +141,7 @@ export function TaskCard() {
                 },
             });
 
+            clearOpenedTask();
             setSuccessText(`${result.message}. +${result.reward.toFixed(2)}⭐`);
             setNewBalance(result.new_balance.toFixed(2));
             setState("completed");
@@ -144,15 +167,23 @@ export function TaskCard() {
     }, []);
 
     useEffect(() => {
-        if (state !== "opened" || !task) return;
+        if (state !== "opened") return;
         if (timeLeft <= 0) return;
 
         const timer = setTimeout(() => {
-            setTimeLeft((prev) => prev - 1);
+            setTimeLeft((prev) => Math.max(0, prev - 1));
         }, 1000);
 
         return () => clearTimeout(timer);
-    }, [timeLeft, state, task]);
+    }, [timeLeft, state]);
+
+    const statusText = useMemo(() => {
+        if (!task) return "Нет задания";
+        if (state === "completed") return "Выполнено";
+        if (state === "opened" && timeLeft > 0) return `Подожди ${timeLeft} сек`;
+        if (state === "opened" && timeLeft === 0) return "Можно засчитывать";
+        return "Готово к просмотру";
+    }, [state, task, timeLeft]);
 
     return (
         <section className="mt-4 rounded-[28px] border border-white/10 bg-white/5 p-4 shadow-soft backdrop-blur">
@@ -160,7 +191,7 @@ export function TaskCard() {
                 <div>
                     <div className="text-sm font-semibold">Следующее задание</div>
                     <div className="mt-1 text-xs text-white/50">
-                        Шаг 6 · open/check
+                        Шаг 7 · возврат и success flow
                     </div>
                 </div>
 
@@ -180,10 +211,25 @@ export function TaskCard() {
                 </div>
             ) : null}
 
-            {successText ? (
-                <div className="mt-4 rounded-2xl border border-emerald-400/20 bg-emerald-400/10 px-3 py-2 text-sm text-emerald-200">
-                    {successText}
-                    {newBalance ? <div className="mt-1">Новый баланс: {newBalance}⭐</div> : null}
+            {state === "completed" ? (
+                <div className="mt-4 rounded-3xl border border-emerald-400/20 bg-emerald-400/10 p-4">
+                    <div className="text-lg font-semibold text-emerald-200">
+                        ✅ Просмотр засчитан
+                    </div>
+                    <div className="mt-2 text-sm text-emerald-100">{successText}</div>
+                    {newBalance ? (
+                        <div className="mt-2 text-sm text-emerald-100">
+                            Новый баланс: {newBalance}⭐
+                        </div>
+                    ) : null}
+
+                    <button
+                        type="button"
+                        onClick={loadNextTask}
+                        className="mt-4 w-full rounded-2xl bg-emerald-400 px-4 py-3 text-sm font-semibold text-black"
+                    >
+                        Следующее задание
+                    </button>
                 </div>
             ) : null}
 
@@ -193,13 +239,8 @@ export function TaskCard() {
                 </div>
             ) : null}
 
-            {task ? (
+            {task && state !== "completed" ? (
                 <div className="mt-4 space-y-3">
-                    <div className="rounded-3xl border border-white/10 bg-black/20 p-4">
-                        <div className="text-xs text-white/50">Тип</div>
-                        <div className="mt-2 text-base font-medium">{task.type}</div>
-                    </div>
-
                     <div className="rounded-3xl border border-white/10 bg-black/20 p-4">
                         <div className="text-xs text-white/50">Заголовок</div>
                         <div className="mt-2 text-base font-medium">{task.title}</div>
@@ -232,27 +273,36 @@ export function TaskCard() {
                         </div>
                     </div>
 
-                    <button
-                        type="button"
-                        onClick={openTask}
-                        disabled={state === "completed"}
-                        className="w-full rounded-2xl bg-cyan-400 px-4 py-3 text-sm font-semibold text-slate-950 transition hover:scale-[0.99] active:scale-[0.98] disabled:opacity-60"
-                    >
-                        Открыть пост
-                    </button>
+                    <div className="rounded-3xl border border-white/10 bg-black/20 p-4">
+                        <div className="text-xs text-white/50">Статус</div>
+                        <div className="mt-2 text-base font-medium">{statusText}</div>
+                    </div>
 
-                    <button
-                        type="button"
-                        onClick={checkTask}
-                        disabled={state !== "opened" || timeLeft > 0 || state === "completed"}
-                        className="w-full rounded-2xl bg-emerald-400 px-4 py-3 text-sm font-semibold text-black disabled:opacity-50"
-                    >
-                        {state === "completed"
-                            ? "Просмотр засчитан"
-                            : timeLeft > 0 && state === "opened"
-                                ? "Подождите..."
-                                : "Засчитать просмотр"}
-                    </button>
+                    {state !== "opened" ? (
+                        <button
+                            type="button"
+                            onClick={openTask}
+                            className="w-full rounded-2xl bg-cyan-400 px-4 py-3 text-sm font-semibold text-slate-950 transition hover:scale-[0.99] active:scale-[0.98]"
+                        >
+                            Открыть пост
+                        </button>
+                    ) : (
+                        <button
+                            type="button"
+                            onClick={checkTask}
+                            disabled={timeLeft > 0}
+                            className="w-full rounded-2xl bg-emerald-400 px-4 py-3 text-sm font-semibold text-black disabled:opacity-50"
+                        >
+                            {timeLeft > 0 ? "Подождите..." : "Засчитать просмотр"}
+                        </button>
+                    )}
+
+                    {state === "opened" ? (
+                        <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-3 text-xs leading-5 text-white/65">
+                            После просмотра поста вернись назад в Mini App. Если время уже
+                            прошло, кнопка засчёта станет активной.
+                        </div>
+                    ) : null}
                 </div>
             ) : null}
         </section>
