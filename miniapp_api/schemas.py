@@ -48,3 +48,19 @@ class MiniAppTask(BaseModel):
 class MiniAppNextTaskResponse(BaseModel):
     ok: bool
     task: Optional[MiniAppTask] = None
+
+
+class MiniAppTaskActionRequest(BaseModel):
+    task_id: int
+
+
+class MiniAppTaskOpenResponse(BaseModel):
+    ok: bool
+    opened_at: int
+
+
+class MiniAppTaskCheckResponse(BaseModel):
+    ok: bool
+    reward: float
+    new_balance: float
+    message: str
