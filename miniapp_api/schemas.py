@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, List
 from pydantic import BaseModel
 
 
@@ -64,3 +64,15 @@ class MiniAppTaskCheckResponse(BaseModel):
     reward: float
     new_balance: float
     message: str
+
+
+class MiniAppHistoryItem(BaseModel):
+    task_id: int
+    title: str
+    reward: float
+    completed_at: int
+
+
+class MiniAppHistoryResponse(BaseModel):
+    ok: bool
+    items: List[MiniAppHistoryItem]

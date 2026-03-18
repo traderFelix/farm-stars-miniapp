@@ -4,7 +4,13 @@ from typing import Optional
 from fastapi import APIRouter, Header, HTTPException
 
 from .auth_session import get_bearer_token
-from .db import add_balance_to_user
+from .db import (
+    add_balance_to_user,
+    complete_task_for_user,
+    fetch_next_task_for_user,
+    fetch_task_by_id,
+    fetch_task_event,
+)
 from .routes_auth import SESSIONS
 from .schemas import (
     MiniAppNextTaskResponse,
@@ -13,77 +19,35 @@ from .schemas import (
     MiniAppTaskCheckResponse,
     MiniAppTaskOpenResponse,
 )
+from .db import open_task_for_user
 
 router = APIRouter()
-
-# Временное хранилище открытий/зачетов.
-# Потом вынесем в нормальную таблицу БД.
-TASK_OPENS: dict[tuple[int, int], dict] = {}
-
-
-def get_demo_next_task_for_user(user_id: int):
-    channel_username = "telegram"
-
-    # временно крутим несколько demo task id,
-    # чтобы после выполнения одной приходила следующая
-    user_tasks = [
-        {
-            "id": 101,
-            "type": "view_post",
-            "title": "Просмотреть пост #1",
-            "reward": 0.03,
-            "hold_seconds": 3,
-            "telegram_url": f"https://t.me/{channel_username}/1",
-            "channel_name": f"@{channel_username}",
-            "message_id": 1,
-        },
-        {
-            "id": 102,
-            "type": "view_post",
-            "title": "Просмотреть пост #2",
-            "reward": 0.04,
-            "hold_seconds": 4,
-            "telegram_url": f"https://t.me/{channel_username}/2",
-            "channel_name": f"@{channel_username}",
-            "message_id": 2,
-        },
-        {
-            "id": 103,
-            "type": "view_post",
-            "title": "Просмотреть пост #3",
-            "reward": 0.05,
-            "hold_seconds": 5,
-            "telegram_url": f"https://t.me/{channel_username}/3",
-            "channel_name": f"@{channel_username}",
-            "message_id": 3,
-        },
-    ]
-
-    for task in user_tasks:
-        key = (int(user_id), int(task["id"]))
-        existing = TASK_OPENS.get(key)
-        if not existing or not existing.get("completed"):
-            return task
-
-    return None
 
 
 @router.get("/api/tasks/next", response_model=MiniAppNextTaskResponse)
 async def get_next_task(authorization: Optional[str] = Header(default=None)):
     token = get_bearer_token(authorization)
-
     session_data = SESSIONS.get(token)
+
     if not session_data:
         raise HTTPException(status_code=401, detail="Invalid or expired session")
 
-    task_data = get_demo_next_task_for_user(session_data["user_id"])
-
-    if not task_data:
+    row = fetch_next_task_for_user(int(session_data["user_id"]))
+    if not row:
         return MiniAppNextTaskResponse(ok=True, task=None)
 
     return MiniAppNextTaskResponse(
         ok=True,
-        task=MiniAppTask(**task_data),
+        task=MiniAppTask(
+            id=int(row["id"]),
+            type=str(row["type"]),
+            title=str(row["title"]),
+            reward=float(row["reward"]),
+            hold_seconds=int(row["hold_seconds"]),
+            telegram_url=str(row["telegram_url"]),
+            channel_name=row["channel_name"],
+            message_id=row["message_id"],
+        ),
     )
 
 
@@ -93,32 +57,27 @@ async def open_task(
         authorization: Optional[str] = Header(default=None),
 ):
     token = get_bearer_token(authorization)
-
     session_data = SESSIONS.get(token)
+
     if not session_data:
         raise HTTPException(status_code=401, detail="Invalid or expired session")
 
-    task_data = get_demo_next_task_for_user(session_data["user_id"])
-    if not task_data or int(task_data["id"]) != int(payload.task_id):
+    task_row = fetch_task_by_id(int(payload.task_id))
+    if not task_row or int(task_row["is_active"]) != 1:
         raise HTTPException(status_code=404, detail="Task not found")
 
-    now_ts = int(time.time())
-    key = (int(session_data["user_id"]), int(payload.task_id))
+    result = open_task_for_user(
+        user_id=int(session_data["user_id"]),
+        task_id=int(payload.task_id),
+        reward=float(task_row["reward"]),
+    )
 
-    existing = TASK_OPENS.get(key)
-    if existing and existing.get("completed"):
+    if result.get("error") == "Task already completed":
         raise HTTPException(status_code=400, detail="Task already completed")
-
-    TASK_OPENS[key] = {
-        "opened_at": now_ts,
-        "completed": False,
-        "reward": float(task_data["reward"]),
-        "hold_seconds": int(task_data["hold_seconds"]),
-    }
 
     return MiniAppTaskOpenResponse(
         ok=True,
-        opened_at=now_ts,
+        opened_at=int(result["opened_at"]),
     )
 
 
@@ -128,29 +87,27 @@ async def check_task(
         authorization: Optional[str] = Header(default=None),
 ):
     token = get_bearer_token(authorization)
-
     session_data = SESSIONS.get(token)
+
     if not session_data:
         raise HTTPException(status_code=401, detail="Invalid or expired session")
 
     user_id = int(session_data["user_id"])
-    task_data = get_demo_next_task_for_user(user_id)
+    task_row = fetch_task_by_id(int(payload.task_id))
 
-    if not task_data or int(task_data["id"]) != int(payload.task_id):
+    if not task_row or int(task_row["is_active"]) != 1:
         raise HTTPException(status_code=404, detail="Task not found")
 
-    key = (user_id, int(payload.task_id))
-    open_data = TASK_OPENS.get(key)
-
-    if not open_data:
+    event_row = fetch_task_event(user_id, int(payload.task_id))
+    if not event_row:
         raise HTTPException(status_code=400, detail="Task was not opened")
 
-    if open_data.get("completed"):
+    if str(event_row["status"]) == "completed":
         raise HTTPException(status_code=400, detail="Task already completed")
 
     now_ts = int(time.time())
-    opened_at = int(open_data["opened_at"])
-    hold_seconds = int(open_data["hold_seconds"])
+    opened_at = int(event_row["opened_at"] or 0)
+    hold_seconds = int(task_row["hold_seconds"])
 
     if now_ts - opened_at < hold_seconds:
         left = hold_seconds - (now_ts - opened_at)
@@ -159,11 +116,9 @@ async def check_task(
             detail=f"Hold time not reached. Wait {left} more sec",
         )
 
-    reward = float(open_data["reward"])
+    reward = float(task_row["reward"])
+    complete_task_for_user(user_id, int(payload.task_id), reward)
     new_balance = add_balance_to_user(user_id, reward)
-
-    open_data["completed"] = True
-    TASK_OPENS[key] = open_data
 
     return MiniAppTaskCheckResponse(
         ok=True,

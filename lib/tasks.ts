@@ -29,3 +29,13 @@ export type StoredOpenedTask = {
     opened_at: number;
     hold_seconds: number;
 };
+
+export type HistoryResponse = {
+    ok: true;
+    items: {
+        task_id: number;
+        title: string;
+        reward: number;
+        completed_at: number;
+    }[];
+};
