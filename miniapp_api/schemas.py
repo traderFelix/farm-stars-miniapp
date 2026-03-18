@@ -32,3 +32,19 @@ class MiniAppMeUser(BaseModel):
 class MiniAppMeResponse(BaseModel):
     ok: bool
     user: MiniAppMeUser
+
+
+class MiniAppTask(BaseModel):
+    id: int
+    type: str
+    title: str
+    reward: float
+    hold_seconds: int
+    telegram_url: str
+    channel_name: Optional[str] = None
+    message_id: Optional[int] = None
+
+
+class MiniAppNextTaskResponse(BaseModel):
+    ok: bool
+    task: Optional[MiniAppTask] = None
