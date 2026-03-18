@@ -1,0 +1,1981 @@
+import aiosqlite, uuid, asyncio, logging, json
+
+from datetime import datetime, timedelta, timezone
+from typing import Optional, List, Tuple
+from contextlib import asynccontextmanager
+from config import (
+    DB_PATH, REFERRAL_PERCENT, OWNER_ID, ADMIN_IDS, ROLE_USER, ROLE_CLIENT, ROLE_PARTNER, ROLE_ADMIN, ROLE_OWNER, SYSTEM_REASONS,
+)
+from decimal import Decimal, ROUND_DOWN
+
+logger = logging.getLogger(__name__)
+
+# ---------- Roles ----------
+
+def normalize_role_level(role_level: int) -> int:
+    value = int(role_level)
+    if value < ROLE_USER:
+        return ROLE_USER
+    if value > ROLE_OWNER:
+        return ROLE_OWNER
+    return value
+
+
+def role_title_from_level(role_level: int) -> str:
+    value = normalize_role_level(role_level)
+
+    if value >= ROLE_OWNER:
+        return "владелец"
+    if value >= ROLE_ADMIN:
+        return "админ"
+    if value >= ROLE_PARTNER:
+        return "партнер"
+    if value >= ROLE_CLIENT:
+        return "клиент"
+    return "пользователь"
+
+
+
+def bootstrap_role_level_for_user_id(user_id: int) -> int:
+    uid = int(user_id)
+
+    if uid in OWNER_ID:
+        return ROLE_OWNER
+    if uid in ADMIN_IDS:
+        return ROLE_ADMIN
+    return ROLE_USER
+
+
+def has_role_level(current_level: int, required_level: int) -> bool:
+    return int(current_level) >= int(required_level)
+
+
+async def _column_exists(db: aiosqlite.Connection, table_name: str, column_name: str) -> bool:
+    async with db.execute(f"PRAGMA table_info({table_name})") as cur:
+        rows = await cur.fetchall()
+
+    for row in rows:
+        name = row["name"] if isinstance(row, aiosqlite.Row) else row[1]
+        if name == column_name:
+            return True
+    return False
+
+
+async def _ensure_users_role_schema(db: aiosqlite.Connection) -> None:
+    if not await _column_exists(db, "users", "role_level"):
+        await db.execute(
+            f"ALTER TABLE users ADD COLUMN role_level INTEGER NOT NULL DEFAULT {ROLE_USER}"
+        )
+
+    await db.execute(
+        f"""
+        UPDATE users
+        SET role_level = COALESCE(role_level, {ROLE_USER})
+        """
+    )
+
+    for owner_id in OWNER_ID:
+        await db.execute(
+            """
+            UPDATE users
+            SET role_level = CASE
+                WHEN COALESCE(role_level, 0) < ? THEN ?
+                ELSE role_level
+            END
+            WHERE user_id = ?
+            """,
+            (ROLE_OWNER, ROLE_OWNER, int(owner_id)),
+        )
+
+    for admin_id in ADMIN_IDS:
+        await db.execute(
+            """
+            UPDATE users
+            SET role_level = CASE
+                WHEN COALESCE(role_level, 0) < ? THEN ?
+                ELSE role_level
+            END
+            WHERE user_id = ?
+            """,
+            (ROLE_ADMIN, ROLE_ADMIN, int(admin_id)),
+        )
+
+
+# ---------- Connection / TX ----------
+
+async def open_db() -> aiosqlite.Connection:
+    db = await aiosqlite.connect(
+        DB_PATH,
+        timeout=30,
+        isolation_level=None,  # важно
+    )
+    db.row_factory = aiosqlite.Row
+
+    await db.execute("PRAGMA journal_mode=WAL;")
+    await db.execute("PRAGMA synchronous=NORMAL;")
+    await db.execute("PRAGMA foreign_keys=ON;")
+    await db.execute("PRAGMA busy_timeout=30000;")
+
+    db._tx_lock = asyncio.Lock()
+
+    return db
+
+async def close_db(db: aiosqlite.Connection) -> None:
+    await db.close()
+
+@asynccontextmanager
+async def tx(db: aiosqlite.Connection, immediate: bool = True):
+    if getattr(db, "in_transaction", False):
+        sp_name = f"sp_{uuid.uuid4().hex}"
+        await db.execute(f'SAVEPOINT "{sp_name}"')
+        try:
+            yield
+            await db.execute(f'RELEASE SAVEPOINT "{sp_name}"')
+        except Exception:
+            await db.execute(f'ROLLBACK TO SAVEPOINT "{sp_name}"')
+            await db.execute(f'RELEASE SAVEPOINT "{sp_name}"')
+            raise
+    else:
+        async with db._tx_lock:  # type: ignore[attr-defined]
+            await db.execute("BEGIN IMMEDIATE;" if immediate else "BEGIN;")
+            try:
+                yield
+                await db.commit()
+            except Exception:
+                await db.rollback()
+                raise
+
+
+async def init_db(db: aiosqlite.Connection) -> None:
+    await db.executescript("""
+        CREATE TABLE IF NOT EXISTS users (
+          user_id INTEGER PRIMARY KEY,
+          username TEXT,
+          tg_first_name TEXT,
+          tg_last_name TEXT,
+          balance NUMERIC DEFAULT 0 CHECK(balance >= 0),
+          is_suspicious INTEGER NOT NULL DEFAULT 0,
+          suspicious_reason TEXT,
+          referred_by INTEGER,
+          is_banned INTEGER DEFAULT 0,
+          role_level INTEGER NOT NULL DEFAULT 0,
+          daily_checkin_cycle_day INTEGER NOT NULL DEFAULT 0,
+          last_daily_checkin_at TEXT,
+          created_at TEXT DEFAULT (datetime('now')),
+          last_seen_at TEXT DEFAULT (datetime('now'))
+        );
+    
+        CREATE TABLE IF NOT EXISTS campaigns (
+          campaign_key TEXT PRIMARY KEY,
+          title TEXT NOT NULL,
+          reward_amount NUMERIC NOT NULL,
+          status TEXT DEFAULT 'draft',             -- draft | active | ended
+          description TEXT,
+          created_at TEXT DEFAULT (datetime('now')),
+          starts_at TEXT,
+          ends_at TEXT
+        );
+    
+        CREATE TABLE IF NOT EXISTS claims (
+          user_id INTEGER NOT NULL,
+          campaign_key TEXT NOT NULL,
+          amount NUMERIC NOT NULL,
+          claimed_at TEXT DEFAULT (datetime('now')),
+          status TEXT DEFAULT 'ok',
+          PRIMARY KEY (user_id, campaign_key),
+          FOREIGN KEY (user_id) REFERENCES users(user_id),
+          FOREIGN KEY (campaign_key) REFERENCES campaigns(campaign_key)
+        );
+    
+        CREATE TABLE IF NOT EXISTS campaign_winners (
+          campaign_key TEXT NOT NULL,
+          username TEXT NOT NULL,                 -- храним БЕЗ @
+          user_id INTEGER,                        -- подтянем позже, когда победитель зайдет
+          added_at TEXT DEFAULT (datetime('now')),
+          added_by INTEGER,
+          PRIMARY KEY (campaign_key, username),
+          FOREIGN KEY (campaign_key) REFERENCES campaigns(campaign_key)
+        );
+    
+        CREATE TABLE IF NOT EXISTS ledger (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          user_id INTEGER NOT NULL,
+          delta NUMERIC NOT NULL,
+          reason TEXT NOT NULL,
+          campaign_key TEXT,
+          withdrawal_id INTEGER,
+          meta TEXT,
+          created_at TEXT DEFAULT (datetime('now')),
+          FOREIGN KEY (user_id) REFERENCES users(user_id)
+        );
+    
+        CREATE TABLE IF NOT EXISTS withdrawals (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          user_id INTEGER NOT NULL,
+          amount NUMERIC NOT NULL,
+          method TEXT NOT NULL,                    -- 'ton' | 'stars'
+          wallet TEXT,                            -- wallet address for TON
+          status TEXT NOT NULL DEFAULT 'pending',  -- pending|paid|rejected
+          created_at TEXT DEFAULT (datetime('now')),
+          processed_at TEXT,
+          processed_by INTEGER,
+          fee_xtr INTEGER NOT NULL DEFAULT 0,
+          fee_paid INTEGER NOT NULL DEFAULT 0,
+          fee_refunded INTEGER NOT NULL DEFAULT 0,
+          fee_telegram_charge_id TEXT,
+          fee_invoice_payload TEXT,
+          FOREIGN KEY (user_id) REFERENCES users(user_id)
+        );
+    
+        CREATE TABLE IF NOT EXISTS abuse_events (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          user_id INTEGER NOT NULL,
+          action TEXT NOT NULL,                       -- claim_click | claim_fail | withdraw_create
+          amount NUMERIC DEFAULT 0,
+          created_at TEXT DEFAULT (datetime('now'))
+        );
+        
+        CREATE TABLE IF NOT EXISTS xtr_ledger (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          user_id INTEGER NOT NULL,
+          withdrawal_id INTEGER,
+          delta_xtr INTEGER NOT NULL,                  -- + списали комиссию / - вернули комиссию
+          reason TEXT NOT NULL,                        -- withdraw_fee_paid | withdraw_fee_refunded | admin_fee_refund
+          telegram_payment_charge_id TEXT,
+          invoice_payload TEXT,
+          meta TEXT,
+          created_at TEXT DEFAULT (datetime('now')),
+          FOREIGN KEY (user_id) REFERENCES users(user_id),
+          FOREIGN KEY (withdrawal_id) REFERENCES withdrawals(id)
+        );
+        
+        CREATE TABLE IF NOT EXISTS task_channels (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            chat_id TEXT NOT NULL UNIQUE,
+            title TEXT,
+            is_active INTEGER NOT NULL DEFAULT 1,
+            total_bought_views INTEGER NOT NULL DEFAULT 0,
+            views_per_post INTEGER NOT NULL DEFAULT 0,
+            view_seconds INTEGER NOT NULL DEFAULT 3,
+            allocated_views INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT DEFAULT (datetime('now'))
+        );
+        
+        CREATE TABLE IF NOT EXISTS task_posts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            channel_id INTEGER NOT NULL,
+            channel_post_id INTEGER NOT NULL,
+            reward REAL NOT NULL DEFAULT 0.01,
+            required_views INTEGER NOT NULL DEFAULT 0,
+            current_views INTEGER NOT NULL DEFAULT 0,
+            is_active INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT DEFAULT (datetime('now')),
+            completed_at TEXT,
+            UNIQUE(channel_id, channel_post_id),
+            FOREIGN KEY (channel_id) REFERENCES task_channels(id)
+        );
+        
+        CREATE TABLE IF NOT EXISTS task_post_views (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            task_post_id INTEGER NOT NULL,
+            reward REAL NOT NULL,
+            viewed_at TEXT DEFAULT (datetime('now')),
+            UNIQUE(user_id, task_post_id),
+            FOREIGN KEY (task_post_id) REFERENCES task_posts(id)
+        );
+        
+        CREATE INDEX IF NOT EXISTS idx_users_created_at ON users(created_at);
+        CREATE INDEX IF NOT EXISTS idx_users_last_seen_at ON users(last_seen_at);
+        CREATE INDEX IF NOT EXISTS idx_campaigns_status_created ON campaigns(status, created_at);
+        CREATE INDEX IF NOT EXISTS idx_claims_campaign_key ON claims(campaign_key);
+        CREATE INDEX IF NOT EXISTS idx_winners_campaign_key ON campaign_winners(campaign_key);
+        CREATE INDEX IF NOT EXISTS idx_ledger_withdrawal ON ledger(withdrawal_id);
+        CREATE INDEX IF NOT EXISTS idx_ledger_created_id ON ledger(created_at DESC, id DESC);
+        CREATE INDEX IF NOT EXISTS idx_ledger_user_created_id ON ledger(user_id, created_at DESC, id DESC);
+        CREATE INDEX IF NOT EXISTS idx_withdrawals_status_created ON withdrawals(status, created_at);
+        CREATE INDEX IF NOT EXISTS idx_withdrawals_user_created ON withdrawals(user_id, created_at);
+        CREATE INDEX IF NOT EXISTS idx_abuse_events_user_action_time ON abuse_events(user_id, action, created_at);
+        CREATE INDEX IF NOT EXISTS idx_xtr_ledger_reason_created ON xtr_ledger(reason, created_at);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_xtr_ledger_unique_paid_charge ON xtr_ledger(reason, telegram_payment_charge_id)
+          WHERE reason = 'withdraw_fee_paid' AND telegram_payment_charge_id IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS idx_task_channels_active ON task_channels(is_active, created_at);
+        CREATE INDEX IF NOT EXISTS idx_task_posts_queue ON task_posts(is_active, created_at, id);
+        CREATE INDEX IF NOT EXISTS idx_task_post_views_user ON task_post_views(user_id, viewed_at);
+        CREATE INDEX IF NOT EXISTS idx_users_referred_by ON users(referred_by);
+    """)
+
+    await _ensure_users_role_schema(db)
+    await db.commit()
+
+
+# ---------- Users ----------
+
+async def register_user(
+        db: aiosqlite.Connection,
+        user_id: int,
+        username: Optional[str],
+        first_name: Optional[str] = None,
+        last_name: Optional[str] = None
+) -> None:
+    u = (username or "").strip().lstrip("@") or None
+    fn = (first_name or "").strip() or None
+    ln = (last_name or "").strip() or None
+
+    bootstrap_level = bootstrap_role_level_for_user_id(user_id)
+
+    async with db.execute("SELECT user_id FROM users WHERE user_id = ?", (user_id,)) as cur:
+        exists = await cur.fetchone() is not None
+
+    if not exists:
+        await db.execute(
+            """
+            INSERT INTO users (
+                user_id, username, tg_first_name, tg_last_name,
+                balance, role_level, created_at, last_seen_at
+            )
+            VALUES (?, ?, ?, ?, 0, ?, datetime('now'), datetime('now'))
+            """,
+            (user_id, u, fn, ln, bootstrap_level),
+        )
+        return
+
+    await db.execute(
+        """
+        UPDATE users
+        SET username = COALESCE(?, username),
+            tg_first_name = COALESCE(?, tg_first_name),
+            tg_last_name = COALESCE(?, tg_last_name),
+            role_level = CASE
+                WHEN COALESCE(role_level, 0) < ? THEN ?
+                ELSE role_level
+            END,
+            last_seen_at = datetime('now')
+        WHERE user_id = ?
+        """,
+        (u, fn, ln, bootstrap_level, bootstrap_level, user_id),
+    )
+
+async def get_user_role_level(db: aiosqlite.Connection, user_id: int) -> int:
+    async with db.execute(
+            """
+        SELECT COALESCE(role_level, ?) AS role_level
+        FROM users
+        WHERE user_id = ?
+        """,
+            (ROLE_USER, int(user_id)),
+    ) as cur:
+        row = await cur.fetchone()
+
+    db_level = int(row["role_level"]) if row else ROLE_USER
+    bootstrap_level = bootstrap_role_level_for_user_id(user_id)
+    return max(db_level, bootstrap_level)
+
+
+async def get_user_role_name(db: aiosqlite.Connection, user_id: int) -> str:
+    return role_title_from_level(await get_user_role_level(db, user_id))
+
+
+async def user_has_role(db: aiosqlite.Connection, user_id: int, required_level: int) -> bool:
+    current_level = await get_user_role_level(db, user_id)
+    return has_role_level(current_level, required_level)
+
+
+async def set_user_role_level(db: aiosqlite.Connection, user_id: int, role_level: int) -> bool:
+    target_level = normalize_role_level(role_level)
+
+    async with db.execute(
+            "SELECT 1 FROM users WHERE user_id = ?",
+            (int(user_id),),
+    ) as cur:
+        exists = await cur.fetchone()
+
+    if not exists:
+        return False
+
+    if target_level >= ROLE_OWNER:
+        target_level = ROLE_ADMIN
+
+    target_level = max(target_level, bootstrap_role_level_for_user_id(user_id))
+
+    await db.execute(
+        """
+        UPDATE users
+        SET role_level = ?
+        WHERE user_id = ?
+        """,
+        (target_level, int(user_id)),
+    )
+    return True
+
+
+async def ensure_user_registered(message_or_callback, db):
+    user = message_or_callback.from_user
+    async with tx(db, immediate=False):
+        await register_user(
+            db,
+            user.id,
+            user.username,
+            user.first_name,
+            user.last_name,
+        )
+
+async def get_balance(db: aiosqlite.Connection, user_id: int) -> float:
+    async with db.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,)) as cur:
+        row = await cur.fetchone()
+    return float(row["balance"]) if row else 0.0
+
+async def total_balances(db: aiosqlite.Connection) -> float:
+    async with db.execute("SELECT COALESCE(SUM(balance), 0) AS s FROM users") as cur:
+        row = await cur.fetchone()
+    return float(row["s"] or 0.0)
+
+async def top_users_by_balance(db: aiosqlite.Connection, limit: int = 10):
+    async with db.execute(
+            """
+        SELECT username, balance
+        FROM users
+        ORDER BY balance DESC
+        LIMIT ?
+        """,
+            (int(limit),),
+    ) as cur:
+        return await cur.fetchall()
+
+async def bind_referrer(
+        db: aiosqlite.Connection,
+        user_id: int,
+        referrer_id: int,
+) -> bool:
+    user_id = int(user_id)
+    referrer_id = int(referrer_id)
+
+    if user_id == referrer_id:
+        return False
+
+    async with db.execute(
+            "SELECT referred_by FROM users WHERE user_id = ?",
+            (user_id,),
+    ) as cur:
+        row = await cur.fetchone()
+
+    if not row:
+        return False
+
+    if row["referred_by"] is not None:
+        return False
+
+    async with db.execute(
+            "SELECT 1 FROM users WHERE user_id = ?",
+            (referrer_id,),
+    ) as cur:
+        ref_exists = await cur.fetchone()
+
+    if not ref_exists:
+        return False
+
+    await db.execute(
+        """
+        UPDATE users
+        SET referred_by = ?
+        WHERE user_id = ? AND referred_by IS NULL
+        """,
+        (referrer_id, user_id),
+    )
+    return True
+
+
+async def get_referrer_id(db: aiosqlite.Connection, user_id: int) -> Optional[int]:
+    async with db.execute(
+            "SELECT referred_by FROM users WHERE user_id = ?",
+            (int(user_id),),
+    ) as cur:
+        row = await cur.fetchone()
+
+    if not row or row["referred_by"] is None:
+        return None
+
+    return int(row["referred_by"])
+
+
+async def get_referrals_count(db: aiosqlite.Connection, user_id: int) -> int:
+    async with db.execute(
+            "SELECT COUNT(*) AS c FROM users WHERE referred_by = ?",
+            (int(user_id),),
+    ) as cur:
+        row = await cur.fetchone()
+    return int(row["c"] or 0)
+
+
+async def add_referral_bonus_for_paid_withdrawal(
+        db: aiosqlite.Connection,
+        referred_user_id: int,
+        withdrawal_id: int,
+        withdraw_amount: float,
+) -> tuple[bool, Optional[int], float]:
+    logger.info(
+        "REF CHECK | referred_user=%s withdrawal=%s amount=%s",
+        referred_user_id, withdrawal_id, withdraw_amount
+    )
+
+    referred_user_id = int(referred_user_id)
+    withdrawal_id = int(withdrawal_id)
+    withdraw_amount = float(withdraw_amount)
+
+    referrer_id = await get_referrer_id(db, referred_user_id)
+    if not referrer_id:
+        return False, None, 0.0
+
+    async with db.execute(
+            """
+        SELECT 1
+        FROM ledger
+        WHERE withdrawal_id = ? AND reason = 'referral_bonus'
+        LIMIT 1
+        """,
+            (withdrawal_id,),
+    ) as cur:
+        exists = await cur.fetchone()
+
+    if exists:
+        return False, referrer_id, 0.0
+
+    bonus = round(withdraw_amount * REFERRAL_PERCENT, 2)
+    if bonus <= 0:
+        return False, referrer_id, 0.0
+
+    await apply_balance_delta(
+        db,
+        user_id=referrer_id,
+        delta=bonus,
+        reason="referral_bonus",
+        withdrawal_id=withdrawal_id,
+        meta=f"from_user_id={referred_user_id};percent={REFERRAL_PERCENT}",
+    )
+
+    logger.info(
+        "REF RESULT | bonus_added=%s referrer=%s amount=%s",
+        True, referrer_id, bonus
+    )
+
+    return True, referrer_id, bonus
+
+# ---------- Campaigns ----------
+
+async def upsert_campaign(
+        db: aiosqlite.Connection,
+        campaign_key: str,
+        title: str,
+        reward_amount: float,
+        status: str = "draft",
+        description: Optional[str] = None,
+) -> None:
+    await db.execute(
+        """
+        INSERT INTO campaigns (campaign_key, title, reward_amount, status, description)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(campaign_key) DO UPDATE SET
+            title=excluded.title,
+            reward_amount=excluded.reward_amount,
+            status=excluded.status,
+            description=excluded.description
+        """,
+        (campaign_key, title, float(reward_amount), status, description),
+    )
+
+async def set_campaign_status(db: aiosqlite.Connection, campaign_key: str, status: str) -> None:
+    await db.execute(
+        "UPDATE campaigns SET status = ? WHERE campaign_key = ?",
+        (status, campaign_key),
+    )
+
+async def delete_campaign(db: aiosqlite.Connection, campaign_key: str) -> None:
+    await db.execute("DELETE FROM claims WHERE campaign_key = ?", (campaign_key,))
+    await db.execute("DELETE FROM campaign_winners WHERE campaign_key = ?", (campaign_key,))
+    await db.execute("DELETE FROM campaigns WHERE campaign_key = ?", (campaign_key,))
+
+async def get_campaign(db: aiosqlite.Connection, campaign_key: str):
+    async with db.execute(
+            "SELECT campaign_key, title, reward_amount, status FROM campaigns WHERE campaign_key = ?",
+            (campaign_key,),
+    ) as cur:
+        return await cur.fetchone()
+
+async def list_campaigns(db: aiosqlite.Connection):
+    async with db.execute(
+            """
+        SELECT campaign_key, reward_amount, status, created_at
+        FROM campaigns
+        ORDER BY datetime(created_at) DESC
+        """
+    ) as cur:
+        return await cur.fetchall()
+
+async def list_campaigns_latest(db: aiosqlite.Connection, limit: int = 5):
+    async with db.execute(
+            """
+        SELECT campaign_key, reward_amount, status, created_at
+        FROM campaigns
+        ORDER BY datetime(created_at) DESC
+        LIMIT ?
+        """,
+            (int(limit),),
+    ) as cur:
+        return await cur.fetchall()
+
+async def list_active_campaigns(db: aiosqlite.Connection):
+    async with db.execute(
+            """
+        SELECT campaign_key, title, reward_amount
+        FROM campaigns
+        WHERE status = 'active'
+        ORDER BY datetime(created_at) DESC
+        """
+    ) as cur:
+        return await cur.fetchall()
+
+async def campaigns_status_counts(db: aiosqlite.Connection) -> Tuple[int, int, int]:
+    async with db.execute("SELECT status, COUNT(*) AS cnt FROM campaigns GROUP BY status") as cur:
+        rows = await cur.fetchall()
+
+    counts = {"active": 0, "ended": 0, "draft": 0}
+    for r in rows:
+        counts[str(r["status"])] = int(r["cnt"])
+
+    return counts["active"], counts["ended"], counts["draft"]
+
+
+# ---------- Winners ----------
+
+async def add_winners(db: aiosqlite.Connection, campaign_key: str, usernames: List[str]) -> int:
+    count = 0
+    for u in usernames:
+        u = (u or "").strip().lstrip("@")
+        if not u:
+            continue
+        await db.execute(
+            "INSERT OR IGNORE INTO campaign_winners (campaign_key, username) VALUES (?, ?)",
+            (campaign_key, u),
+        )
+        count += 1
+    return count
+
+async def list_winners(db: aiosqlite.Connection, campaign_key: str) -> List[str]:
+    async with db.execute(
+            "SELECT username FROM campaign_winners WHERE campaign_key = ? ORDER BY added_at ASC",
+            (campaign_key,),
+    ) as cur:
+        rows = await cur.fetchall()
+    return [r["username"] for r in rows]
+
+async def winners_count(db: aiosqlite.Connection, campaign_key: str) -> int:
+    async with db.execute("SELECT COUNT(*) AS c FROM campaign_winners WHERE campaign_key = ?", (campaign_key,)) as cur:
+        row = await cur.fetchone()
+    return int(row["c"])
+
+async def attach_winner_user_id(db: aiosqlite.Connection, campaign_key: str, username: str, user_id: int) -> None:
+    u = (username or "").strip().lstrip("@")
+    if not u:
+        return
+    await db.execute(
+        """
+        UPDATE campaign_winners
+        SET user_id = ?
+        WHERE campaign_key = ?
+          AND username = ?
+          AND user_id IS NULL
+        """,
+        (int(user_id), campaign_key, u),
+    )
+
+async def is_winner(db: aiosqlite.Connection, campaign_key: str, user_id: int, username: Optional[str]) -> bool:
+    async with db.execute(
+            "SELECT 1 FROM campaign_winners WHERE campaign_key = ? AND user_id = ? LIMIT 1",
+            (campaign_key, int(user_id)),
+    ) as cur:
+        if await cur.fetchone() is not None:
+            return True
+
+    u = (username or "").strip().lstrip("@")
+    if not u:
+        return False
+
+    async with db.execute(
+            "SELECT 1 FROM campaign_winners WHERE campaign_key = ? AND username = ? LIMIT 1",
+            (campaign_key, u),
+    ) as cur:
+        return await cur.fetchone() is not None
+
+async def delete_winner_if_not_claimed(db: aiosqlite.Connection, campaign_key: str, username: str):
+    u = (username or "").strip().lstrip("@")
+    if not u:
+        return False, "Пустой username"
+
+    async with db.execute(
+            "SELECT user_id FROM campaign_winners WHERE campaign_key = ? AND username = ?",
+            (campaign_key, u),
+    ) as cur:
+        row = await cur.fetchone()
+    if row is None:
+        return False, "Этого username нет в списке победителей"
+
+    winner_user_id = row["user_id"]
+
+    user_id_by_username = None
+    if winner_user_id is None:
+        async with db.execute("SELECT user_id FROM users WHERE username = ? LIMIT 1", (u,)) as cur:
+            r2 = await cur.fetchone()
+        if r2:
+            user_id_by_username = r2["user_id"]
+
+    async with db.execute(
+            """
+        SELECT 1
+        FROM claims cl
+        WHERE cl.campaign_key = ?
+          AND (
+            (? IS NOT NULL AND cl.user_id = ?)
+            OR (? IS NOT NULL AND cl.user_id = ?)
+          )
+        LIMIT 1
+        """,
+            (campaign_key, winner_user_id, winner_user_id, user_id_by_username, user_id_by_username),
+    ) as cur:
+        if await cur.fetchone() is not None:
+            return False, "Нельзя удалить: этот победитель уже заклеймил"
+
+    await db.execute(
+        "DELETE FROM campaign_winners WHERE campaign_key = ? AND username = ?",
+        (campaign_key, u),
+    )
+    return True, "Удалено"
+
+
+# ---------- Claims ----------
+
+async def has_claim(db: aiosqlite.Connection, user_id: int, campaign_key: str) -> bool:
+    async with db.execute(
+            "SELECT 1 FROM claims WHERE user_id = ? AND campaign_key = ?",
+            (int(user_id), campaign_key),
+    ) as cur:
+        return await cur.fetchone() is not None
+
+async def add_claim(db: aiosqlite.Connection, user_id: int, campaign_key: str, amount: float) -> None:
+    await db.execute(
+        "INSERT INTO claims (user_id, campaign_key, amount) VALUES (?, ?, ?)",
+        (int(user_id), campaign_key, float(amount)),
+    )
+
+async def claimed_usernames(db: aiosqlite.Connection, campaign_key: str) -> List[str]:
+    async with db.execute(
+            """
+        SELECT u.username
+        FROM claims c
+        JOIN users u ON u.user_id = c.user_id
+        WHERE c.campaign_key = ?
+          AND u.username IS NOT NULL
+          AND u.username != ''
+        ORDER BY datetime(c.claimed_at) ASC
+        """,
+            (campaign_key,),
+    ) as cur:
+        rows = await cur.fetchall()
+    return [r["username"] for r in rows]
+
+async def campaign_stats(db: aiosqlite.Connection, campaign_key: str):
+    async with db.execute(
+            "SELECT COUNT(*) AS cnt, COALESCE(SUM(amount), 0) AS total FROM claims WHERE campaign_key = ?",
+            (campaign_key,),
+    ) as cur:
+        row = await cur.fetchone()
+    claims_count = int(row["cnt"] or 0)
+    total_paid = float(row["total"] or 0.0)
+
+    async with db.execute("SELECT COUNT(*) AS c FROM campaign_winners WHERE campaign_key = ?", (campaign_key,)) as cur:
+        r2 = await cur.fetchone()
+    winners_cnt = int(r2["c"])
+
+    return claims_count, winners_cnt, total_paid
+
+async def global_claims_stats(db: aiosqlite.Connection):
+    async with db.execute("SELECT COUNT(*) AS cnt, COALESCE(SUM(amount), 0) AS total FROM claims") as cur:
+        row = await cur.fetchone()
+    return int(row["cnt"] or 0), float(row["total"] or 0.0)
+
+async def claim_reward(
+        db: aiosqlite.Connection,
+        user_id: int,
+        username: Optional[str],
+        campaign_key: str,
+        first_name: Optional[str] = None,
+        last_name: Optional[str] = None,
+) -> tuple[bool, str, float]:
+
+    uid = int(user_id)
+    ck = (campaign_key or "").strip()
+
+    async with tx(db, immediate=True):
+        await register_user(db, uid, username, first_name, last_name)
+
+        row = await get_campaign(db, ck)
+        if not row:
+            return False, "❌ Конкурс не найден", 0.0
+
+        _k, title, reward_amount, status = row[0], row[1], float(row[2]), row[3]
+        if status != "active":
+            return False, "❌ Этот конкурс сейчас неактивен", 0.0
+
+        if username:
+            await attach_winner_user_id(db, ck, username, uid)
+
+        ok_winner = await is_winner(db, ck, uid, username)
+        if not ok_winner:
+            return False, "❌ Ты не в списке победителей этого конкурса", 0.0
+
+        try:
+            await add_claim(db, uid, ck, reward_amount)
+        except Exception:
+            return False, "⚠️ Ты уже забрал награду в этом конкурсе", 0.0
+
+        await apply_balance_delta(
+            db,
+            user_id=uid,
+            delta=reward_amount,
+            reason="contest_bonus",
+            campaign_key=ck,
+            meta=title,
+        )
+
+        new_balance = await get_balance(db, uid)
+        return True, f"✅ Ты получил {reward_amount:g}⭐️ ({title})", float(new_balance)
+
+# ---------- Totals for admin dashboard ----------
+
+async def total_assigned_amount(db: aiosqlite.Connection) -> float:
+    async with db.execute(
+            """
+        SELECT COALESCE(SUM(c.reward_amount), 0) AS total
+        FROM campaign_winners w
+        JOIN campaigns c ON c.campaign_key = w.campaign_key
+        """
+    ) as cur:
+        row = await cur.fetchone()
+    return float(row["total"] or 0.0)
+
+async def unclaimed_total_amount(db: aiosqlite.Connection) -> float:
+    async with db.execute(
+            """
+        SELECT COALESCE(SUM(c.reward_amount), 0) AS total
+        FROM campaign_winners w
+        JOIN campaigns c ON c.campaign_key = w.campaign_key
+        LEFT JOIN users u ON u.username = w.username
+        WHERE NOT EXISTS (
+            SELECT 1
+            FROM claims cl
+            WHERE cl.campaign_key = w.campaign_key
+              AND (
+                (w.user_id IS NOT NULL AND cl.user_id = w.user_id)
+                OR (w.user_id IS NULL AND u.user_id IS NOT NULL AND cl.user_id = u.user_id)
+              )
+        )
+        """
+    ) as cur:
+        row = await cur.fetchone()
+    return float(row["total"] or 0.0)
+
+async def users_total_count(db: aiosqlite.Connection) -> int:
+    async with db.execute("SELECT COUNT(*) AS c FROM users") as cur:
+        row = await cur.fetchone()
+    return int(row["c"])
+
+async def users_new_since_hours(db: aiosqlite.Connection, hours: int) -> int:
+    async with db.execute(
+            "SELECT COUNT(*) AS c FROM users WHERE created_at >= datetime('now', ?)",
+            (f"-{int(hours)} hours",),
+    ) as cur:
+        row = await cur.fetchone()
+    return int(row["c"])
+
+async def users_new_since_days(db: aiosqlite.Connection, days: int) -> int:
+    async with db.execute(
+            "SELECT COUNT(*) AS c FROM users WHERE created_at >= datetime('now', ?)",
+            (f"-{int(days)} days",),
+    ) as cur:
+        row = await cur.fetchone()
+    return int(row["c"])
+
+async def users_active_since_days(db: aiosqlite.Connection, days: int) -> int:
+    async with db.execute(
+            "SELECT COUNT(*) AS c FROM users WHERE last_seen_at >= datetime('now', ?)",
+            (f"-{int(days)} days",),
+    ) as cur:
+        row = await cur.fetchone()
+    return int(row["c"])
+
+async def users_growth_by_day(db: aiosqlite.Connection, days: int = 30):
+    async with db.execute(
+            """
+        SELECT date(created_at) AS d, COUNT(*) AS cnt
+        FROM users
+        WHERE created_at >= datetime('now', ?)
+        GROUP BY d
+        ORDER BY d ASC
+        """,
+            (f"-{int(days)} days",),
+    ) as cur:
+        rows = await cur.fetchall()
+    return [(r["d"], int(r["cnt"])) for r in rows]
+
+
+# ---------- Ledger / Withdrawals ----------
+
+async def ledger_add(
+        db: aiosqlite.Connection,
+        user_id: int,
+        delta: float,
+        reason: str,
+        campaign_key: Optional[str] = None,
+        withdrawal_id: Optional[int] = None,
+        meta: Optional[str] = None,
+) -> None:
+    await db.execute(
+        """
+        INSERT INTO ledger (user_id, delta, reason, campaign_key, withdrawal_id, meta, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+        """,
+        (int(user_id), float(delta), reason, campaign_key, withdrawal_id, meta),
+    )
+
+async def ledger_last(db: aiosqlite.Connection, user_id: int, limit: int = 20):
+    async with db.execute(
+            """
+        SELECT created_at, delta, reason, campaign_key, meta
+        FROM ledger
+        WHERE user_id = ?
+        ORDER BY datetime(created_at) DESC
+        LIMIT ?
+        """,
+            (int(user_id), int(limit)),
+    ) as cur:
+        return await cur.fetchall()
+
+async def ledger_sum(db: aiosqlite.Connection, user_id: int) -> float:
+    async with db.execute(
+            "SELECT COALESCE(SUM(delta), 0) AS s FROM ledger WHERE user_id = ?",
+            (int(user_id),),
+    ) as cur:
+        row = await cur.fetchone()
+    return float(row["s"] or 0.0)
+
+async def create_withdrawal(db: aiosqlite.Connection, user_id: int, amount: float, method: str, wallet: Optional[str] = None) -> int:
+    cur = await db.execute(
+        """
+        INSERT INTO withdrawals (user_id, amount, method, wallet, status)
+        VALUES (?, ?, ?, ?, 'pending')
+        """,
+        (int(user_id), float(amount), method, wallet),
+    )
+
+    logger.info(
+        "WITHDRAW CREATE | user_id=%s amount=%s wallet=%s",
+        user_id, amount, wallet
+    )
+
+    return int(cur.lastrowid)
+
+async def list_withdrawals(db: aiosqlite.Connection, status: str = "pending", limit: int = 20):
+    async with db.execute(
+            """
+        SELECT w.id, w.user_id, u.username, w.amount, w.method, w.wallet, w.status, w.created_at
+        FROM withdrawals w
+        LEFT JOIN users u ON u.user_id = w.user_id
+        WHERE w.status = ?
+        ORDER BY datetime(w.created_at) DESC
+        LIMIT ?
+        """,
+            (status, int(limit)),
+    ) as cur:
+        return await cur.fetchall()
+
+async def get_withdrawal(db: aiosqlite.Connection, withdrawal_id: int):
+    async with db.execute(
+            """
+        SELECT w.id, w.user_id, u.username, w.amount, w.method, w.wallet, w.status, w.created_at
+        FROM withdrawals w
+        LEFT JOIN users u ON u.user_id = w.user_id
+        WHERE w.id = ?
+        """,
+            (int(withdrawal_id),),
+    ) as cur:
+        return await cur.fetchone()
+
+async def set_withdrawal_status(db: aiosqlite.Connection, withdrawal_id: int, status: str, processed_by: Optional[int] = None) -> None:
+    await db.execute(
+        """
+        UPDATE withdrawals
+        SET status = ?,
+            processed_at = datetime('now'),
+            processed_by = ?
+        WHERE id = ?
+        """,
+        (status, processed_by, int(withdrawal_id)),
+    )
+
+async def user_withdrawals(db: aiosqlite.Connection, user_id: int, limit: int = 20):
+    async with db.execute(
+            """
+        SELECT id, amount, method, status, created_at
+        FROM withdrawals
+        WHERE user_id = ?
+        ORDER BY datetime(created_at) DESC
+        LIMIT ?
+        """,
+            (int(user_id), int(limit)),
+    ) as cur:
+        return await cur.fetchall()
+
+async def balances_audit(db: aiosqlite.Connection, limit: int = 10):
+    async with db.execute(
+            """
+        SELECT
+          u.user_id,
+          u.username,
+          COALESCE(u.balance, 0) AS users_balance,
+          COALESCE(SUM(l.delta), 0) AS ledger_sum,
+          (COALESCE(u.balance, 0) - COALESCE(SUM(l.delta), 0)) AS diff
+        FROM users u
+        LEFT JOIN ledger l ON l.user_id = u.user_id
+        GROUP BY u.user_id
+        HAVING ABS(diff) > 1e-9
+        ORDER BY ABS(diff) DESC
+        LIMIT ?
+        """,
+            (int(limit),),
+    ) as cur:
+        return await cur.fetchall()
+
+async def apply_balance_delta(
+        db: aiosqlite.Connection,
+        user_id: int,
+        delta: float,
+        reason: str,
+        campaign_key: Optional[str] = None,
+        withdrawal_id: Optional[int] = None,
+        meta: Optional[str] = None,
+) -> None:
+    await db.execute(
+        """
+        INSERT INTO ledger (user_id, delta, reason, campaign_key, withdrawal_id, meta, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+        """,
+        (int(user_id), float(delta), reason, campaign_key, withdrawal_id, meta),
+    )
+
+    logger.info(
+        "LEDGER | user_id=%s delta=%s reason=%s withdrawal_id=%s campaign=%s meta=%s",
+        user_id, delta, reason, withdrawal_id, campaign_key, meta
+    )
+
+    await db.execute(
+        "UPDATE users SET balance = balance + ? WHERE user_id = ?",
+        (float(delta), int(user_id)),
+    )
+
+async def apply_balance_debit_if_enough(
+        db: aiosqlite.Connection,
+        user_id: int,
+        amount: float,
+        reason: str,
+        campaign_key: Optional[str] = None,
+        withdrawal_id: Optional[int] = None,
+        meta: Optional[str] = None,
+) -> bool:
+    amount = float(amount)
+
+    cur = await db.execute(
+        "UPDATE users SET balance = balance - ? WHERE user_id = ? AND balance >= ?",
+        (amount, int(user_id), amount),
+    )
+    if cur.rowcount != 1:
+        return False
+
+    await db.execute(
+        """
+        INSERT INTO ledger (user_id, delta, reason, campaign_key, withdrawal_id, meta, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+        """,
+        (int(user_id), -amount, reason, campaign_key, withdrawal_id, meta),
+    )
+    return True
+
+def stars(value) -> Decimal:
+    return Decimal(value).quantize(Decimal("0.00"), rounding=ROUND_DOWN)
+
+def fmt_stars(v):
+    return f"{Decimal(v):.2f}"
+
+async def admin_balance_changes(db: aiosqlite.Connection) -> tuple[int, int]:
+    query = """
+    SELECT
+        COALESCE(SUM(CASE WHEN delta > 0 THEN delta END), 0) AS added,
+        COALESCE(SUM(CASE WHEN delta < 0 THEN -delta END), 0) AS removed
+    FROM ledger
+    WHERE reason = 'admin_adjust'
+    """
+
+    async with db.execute(query) as cur:
+        row = await cur.fetchone()
+        added = int(row[0] or 0)
+        removed = int(row[1] or 0)
+
+    return added, removed
+
+async def total_withdrawn_amount(db: aiosqlite.Connection) -> int:
+    query = """
+    SELECT COALESCE(SUM(amount), 0)
+    FROM withdrawals
+    WHERE status = 'paid'
+    """
+
+    async with db.execute(query) as cur:
+        row = await cur.fetchone()
+        return int(row[0] or 0)
+
+async def pending_withdrawn_amount(db: aiosqlite.Connection) -> int:
+    query = """
+    SELECT COALESCE(SUM(amount), 0)
+    FROM withdrawals
+    WHERE status = 'pending'
+    """
+    async with db.execute(query) as cur:
+        row = await cur.fetchone()
+        return int(row[0] or 0)
+
+async def ledger_sum_by_reason(db: aiosqlite.Connection, reason: str) -> float:
+    query = """
+    SELECT COALESCE(SUM(delta), 0)
+    FROM ledger
+    WHERE reason = ?
+    """
+    async with db.execute(query, (reason,)) as cur:
+        row = await cur.fetchone()
+        return float(row[0] or 0)
+
+
+async def cleanup_abuse_events(db: aiosqlite.Connection) -> None:
+    await db.execute("""
+        DELETE FROM abuse_events
+        WHERE datetime(created_at) < datetime('now', '-1 day')
+    """)
+
+
+async def log_abuse_event(db, user_id: int, action: str, amount: float = 0):
+    await cleanup_abuse_events(db)
+
+    await db.execute(
+        """
+        INSERT INTO abuse_events (user_id, action, amount)
+        VALUES (?, ?, ?)
+        """,
+        (int(user_id), action, float(amount)),
+    )
+
+
+async def count_recent_abuse_events(
+        db: aiosqlite.Connection,
+        user_id: int,
+        action: str,
+        minutes: int,
+) -> int:
+    async with db.execute(
+            """
+        SELECT COUNT(*)
+        FROM abuse_events
+        WHERE user_id = ?
+          AND action = ?
+          AND datetime(created_at) >= datetime('now', ?)
+        """,
+            (int(user_id), action, f"-{int(minutes)} minutes"),
+    ) as cur:
+        row = await cur.fetchone()
+        return int(row[0] or 0)
+
+
+async def sum_recent_abuse_amount(
+        db: aiosqlite.Connection,
+        user_id: int,
+        action: str,
+        hours: int,
+) -> float:
+    async with db.execute(
+            """
+        SELECT COALESCE(SUM(amount), 0)
+        FROM abuse_events
+        WHERE user_id = ?
+          AND action = ?
+          AND datetime(created_at) >= datetime('now', ?)
+        """,
+            (int(user_id), action, f"-{int(hours)} hours"),
+    ) as cur:
+        row = await cur.fetchone()
+        return float(row[0] or 0.0)
+
+
+async def has_pending_withdrawal(db: aiosqlite.Connection, user_id: int) -> bool:
+    async with db.execute(
+            """
+        SELECT 1
+        FROM withdrawals
+        WHERE user_id = ?
+          AND status = 'pending'
+        LIMIT 1
+        """,
+            (int(user_id),),
+    ) as cur:
+        return await cur.fetchone() is not None
+
+
+async def user_created_hours_ago(db: aiosqlite.Connection, user_id: int) -> float:
+    async with db.execute(
+            """
+        SELECT COALESCE((julianday('now') - julianday(created_at)) * 24.0, 0)
+        FROM users
+        WHERE user_id = ?
+        """,
+            (int(user_id),),
+    ) as cur:
+        row = await cur.fetchone()
+        return float(row[0] or 0.0)
+
+async def wallet_used_by_another_user(
+        db: aiosqlite.Connection,
+        user_id: int,
+        wallet: str,
+) -> bool:
+    async with db.execute(
+            """
+        SELECT 1
+        FROM withdrawals
+        WHERE method = 'ton'
+          AND wallet = ?
+          AND user_id != ?
+        LIMIT 1
+        """,
+            (wallet.strip(), int(user_id)),
+    ) as cur:
+        return await cur.fetchone() is not None
+
+async def wallet_users(db, wallet: str) -> list[str]:
+    async with db.execute(
+            """
+        SELECT DISTINCT w.user_id, u.username
+        FROM withdrawals w
+        LEFT JOIN users u ON u.user_id = w.user_id
+        WHERE w.wallet = ?
+        ORDER BY w.user_id ASC
+        """,
+            (wallet.strip(),)
+    ) as cur:
+        rows = await cur.fetchall()
+
+    result = []
+    for user_id, username in rows:
+        if username:
+            result.append(f"@{username}")
+        else:
+            result.append(f"user_id={user_id}")
+
+    return result
+
+async def mark_user_suspicious(db, user_id: int, reason: str):
+    row = await db.execute_fetchone(
+        "SELECT is_suspicious, suspicious_reason FROM users WHERE user_id = ?",
+        (user_id,),
+    )
+    if not row:
+        return
+
+    if row["is_suspicious"]:
+        old_reason = row["suspicious_reason"] or ""
+        if reason and reason not in old_reason:
+            new_reason = f"{old_reason}; {reason}" if old_reason else reason
+        else:
+            new_reason = old_reason
+    else:
+        new_reason = reason
+
+    await db.execute(
+        """
+        UPDATE users
+        SET is_suspicious = 1,
+            suspicious_reason = ?
+        WHERE user_id = ?
+        """,
+        (new_reason, user_id),
+    )
+    await db.commit()
+
+async def clear_user_suspicious(db, user_id: int):
+    await db.execute(
+        """
+        UPDATE users
+        SET is_suspicious = 0,
+            suspicious_reason = NULL
+        WHERE user_id = ?
+        """,
+        (user_id,),
+    )
+    await db.commit()
+
+async def get_user_earnings_breakdown(db, user_id: int):
+    system_placeholders = ",".join("?" for _ in SYSTEM_REASONS)
+
+    query = f"""
+        SELECT
+            COALESCE(SUM(CASE WHEN reason = 'view_post_bonus' THEN delta ELSE 0 END), 0) AS view_post_bonus,
+            COALESCE(SUM(CASE WHEN reason = 'daily_bonus' THEN delta ELSE 0 END), 0) AS daily_bonus,
+            COALESCE(SUM(CASE WHEN reason = 'contest_bonus' THEN delta ELSE 0 END), 0) AS contest_bonus,
+            COALESCE(SUM(CASE WHEN reason = 'referral_bonus' THEN delta ELSE 0 END), 0) AS referral_bonus,
+            COALESCE(SUM(CASE WHEN reason = 'admin_adjust' THEN delta ELSE 0 END), 0) AS admin_adjust,
+            COALESCE(SUM(CASE
+                WHEN reason NOT IN ({system_placeholders})
+                THEN delta ELSE 0 END), 0) AS total_earned
+        FROM ledger
+        WHERE user_id = ?
+    """
+
+    params = (*SYSTEM_REASONS, user_id)
+    cursor = await db.execute(query, params)
+    row = await cursor.fetchone()
+
+    view_post_bonus = float(row["view_post_bonus"] or 0)
+    daily_bonus = float(row["daily_bonus"] or 0)
+    contest_bonus = float(row["contest_bonus"] or 0)
+    referral_bonus = float(row["referral_bonus"] or 0)
+    admin_adjust = float(row["admin_adjust"] or 0)
+    total = float(row["total_earned"] or 0)
+
+    def pct(value: float, total_value: float) -> float:
+        if total_value == 0:
+            return 0.0
+        return value * 100 / total_value
+
+    return {
+        "total": total,
+        "view_post_bonus": view_post_bonus,
+        "view_post_bonus_pct": pct(view_post_bonus, total),
+        "daily_bonus": daily_bonus,
+        "daily_bonus_pct": pct(daily_bonus, total),
+        "contest_bonus": contest_bonus,
+        "contest_bonus_pct": pct(contest_bonus, total),
+        "referral_bonus": referral_bonus,
+        "referral_bonus_pct": pct(referral_bonus, total),
+        "admin_adjust": admin_adjust,
+        "admin_adjust_pct": pct(admin_adjust, total),
+    }
+
+async def get_user_admin_details(db, user_id: int):
+    cursor = await db.execute(
+        """
+        SELECT user_id, username, balance, is_suspicious, suspicious_reason
+        FROM users
+        WHERE user_id = ?
+        """,
+        (user_id,),
+    )
+    return await cursor.fetchone()
+
+async def build_user_stats_text(db, user_id: int) -> str:
+    stats = await get_user_earnings_breakdown(db, user_id)
+
+    return (
+        f"⭐ Всего заработано: {fmt_stars(stats['total'])}⭐\n"
+        f"{fmt_stars(stats['view_post_bonus'])} ({stats['view_post_bonus_pct']:.1f}%) — просмотр постов\n"
+        f"{fmt_stars(stats['daily_bonus'])} ({stats['daily_bonus_pct']:.1f}%) — ежедневный бонус\n"
+        f"{fmt_stars(stats['contest_bonus'])} ({stats['contest_bonus_pct']:.1f}%) — конкурсы\n"
+        f"{fmt_stars(stats['referral_bonus'])} ({stats['referral_bonus_pct']:.1f}%) — рефералы\n"
+        f"{fmt_stars(stats['admin_adjust'])} ({stats['admin_adjust_pct']:.1f}%) — начисления от админа"
+    )
+
+async def mark_withdraw_fee_refunded(db, withdrawal_id: int):
+    await db.execute(
+        """
+        UPDATE withdrawals
+        SET fee_refunded = 1
+        WHERE id = ?
+        """,
+        (withdrawal_id,),
+    )
+    await db.commit()
+
+async def list_recent_fee_payments(db, limit: int = 10):
+    cur = await db.execute(
+        """
+        SELECT
+            w.id AS withdrawal_id,
+            w.user_id,
+            u.username AS username,
+            w.fee_xtr,
+            w.fee_paid,
+            w.fee_refunded,
+            w.fee_telegram_charge_id,
+            w.created_at
+        FROM withdrawals w
+        LEFT JOIN users u ON u.user_id = w.user_id
+        WHERE w.fee_paid = 1
+          AND w.fee_telegram_charge_id IS NOT NULL
+          AND w.fee_telegram_charge_id != ''
+        ORDER BY w.id DESC
+        LIMIT ?
+        """,
+        (limit,),
+    )
+    rows = await cur.fetchall()
+    await cur.close()
+    return rows
+
+
+async def find_withdraw_by_fee_charge_id(db, charge_id: str):
+    cur = await db.execute(
+        """
+        SELECT
+            w.id AS withdrawal_id,
+            w.user_id,
+            w.fee_xtr,
+            w.fee_paid,
+            w.fee_refunded,
+            w.fee_telegram_charge_id,
+            w.created_at
+        FROM withdrawals w
+        WHERE w.fee_telegram_charge_id = ?
+        LIMIT 1
+        """,
+        (charge_id,),
+    )
+    row = await cur.fetchone()
+    await cur.close()
+    return row
+
+
+async def xtr_ledger_add(
+        db: aiosqlite.Connection,
+        user_id: int,
+        delta_xtr: int,
+        reason: str,
+        withdrawal_id: Optional[int] = None,
+        telegram_payment_charge_id: Optional[str] = None,
+        invoice_payload: Optional[str] = None,
+        meta: Optional[str] = None,
+) -> None:
+    await db.execute(
+        """
+        INSERT INTO xtr_ledger (
+            user_id,
+            withdrawal_id,
+            delta_xtr,
+            reason,
+            telegram_payment_charge_id,
+            invoice_payload,
+            meta,
+            created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+        """,
+        (
+            int(user_id),
+            int(withdrawal_id) if withdrawal_id is not None else None,
+            int(delta_xtr),
+            reason,
+            telegram_payment_charge_id,
+            invoice_payload,
+            meta,
+        ),
+    )
+
+
+async def xtr_ledger_sum(db: aiosqlite.Connection) -> int:
+    async with db.execute(
+            "SELECT COALESCE(SUM(delta_xtr), 0) AS s FROM xtr_ledger"
+    ) as cur:
+        row = await cur.fetchone()
+        return int(row["s"] or 0)
+
+
+async def xtr_ledger_sum_by_reason(db: aiosqlite.Connection, reason: str) -> int:
+    async with db.execute(
+            """
+        SELECT COALESCE(SUM(delta_xtr), 0) AS s
+        FROM xtr_ledger
+        WHERE reason = ?
+        """,
+            (reason,),
+    ) as cur:
+        row = await cur.fetchone()
+        return int(row["s"] or 0)
+
+
+async def list_task_channels(db: aiosqlite.Connection):
+    async with db.execute(
+            """
+        SELECT
+            id,
+            chat_id,
+            COALESCE(title, '') AS title,
+            is_active,
+            total_bought_views,
+            views_per_post,
+            view_seconds,
+            allocated_views,
+            (total_bought_views - allocated_views) AS remaining_views,
+            created_at
+        FROM task_channels
+        ORDER BY id DESC
+        """
+    ) as cur:
+        return await cur.fetchall()
+
+
+async def get_task_channel(db: aiosqlite.Connection, channel_id: int):
+    async with db.execute(
+            """
+        SELECT
+            id,
+            chat_id,
+            COALESCE(title, '') AS title,
+            is_active,
+            total_bought_views,
+            views_per_post,
+            view_seconds,
+            allocated_views,
+            (total_bought_views - allocated_views) AS remaining_views,
+            created_at
+        FROM task_channels
+        WHERE id = ?
+        LIMIT 1
+        """,
+            (int(channel_id),),
+    ) as cur:
+        return await cur.fetchone()
+
+
+async def get_task_channel_by_chat_id(db: aiosqlite.Connection, chat_id: str):
+    async with db.execute(
+            """
+        SELECT
+            id,
+            chat_id,
+            COALESCE(title, '') AS title,
+            is_active,
+            total_bought_views,
+            views_per_post,
+            view_seconds,
+            allocated_views,
+            (total_bought_views - allocated_views) AS remaining_views,
+            created_at
+        FROM task_channels
+        WHERE chat_id = ?
+        LIMIT 1
+        """,
+            (str(chat_id),),
+    ) as cur:
+        return await cur.fetchone()
+
+
+async def create_task_channel(
+        db: aiosqlite.Connection,
+        chat_id: str,
+        title: Optional[str],
+        total_bought_views: int,
+        views_per_post: int,
+        view_seconds: int,
+) -> int:
+    cur = await db.execute(
+        """
+        INSERT INTO task_channels (
+            chat_id, title, is_active, total_bought_views, views_per_post, view_seconds, allocated_views, created_at
+        )
+        VALUES (?, ?, 1, ?, ?, ?, 0, datetime('now'))
+        """,
+        (
+            str(chat_id),
+            title,
+            int(total_bought_views),
+            int(views_per_post),
+            int(view_seconds),
+        ),
+    )
+    return int(cur.lastrowid)
+
+
+async def set_task_channel_active(db: aiosqlite.Connection, channel_id: int, is_active: int) -> None:
+    await db.execute(
+        """
+        UPDATE task_channels
+        SET is_active = ?
+        WHERE id = ?
+        """,
+        (int(is_active), int(channel_id)),
+    )
+
+
+async def allocate_task_post_from_channel_post(
+        db: aiosqlite.Connection,
+        chat_id: str,
+        channel_post_id: int,
+        title: Optional[str] = None,
+        reward: float = 0.01,
+) -> bool:
+    channel = await get_task_channel_by_chat_id(db, chat_id)
+    if not channel:
+        return False
+
+    if int(channel["is_active"] or 0) != 1:
+        return False
+
+    remaining = int(channel["remaining_views"] or 0)
+    views_per_post = int(channel["views_per_post"] or 0)
+
+    if remaining <= 0 or views_per_post <= 0:
+        await auto_disable_task_channel_if_exhausted(db, int(channel["id"]))
+        return False
+
+    alloc = min(remaining, views_per_post)
+    if alloc <= 0:
+        await auto_disable_task_channel_if_exhausted(db, int(channel["id"]))
+        return False
+
+    cur = await db.execute(
+        """
+        INSERT OR IGNORE INTO task_posts (
+            channel_id, channel_post_id, reward, required_views, current_views, is_active, created_at
+        )
+        VALUES (?, ?, ?, ?, 0, 1, datetime('now'))
+        """,
+        (
+            int(channel["id"]),
+            int(channel_post_id),
+            float(reward),
+            int(alloc),
+        ),
+    )
+
+    if cur.rowcount != 1:
+        return False
+
+    await db.execute(
+        """
+        UPDATE task_channels
+        SET
+            allocated_views = allocated_views + ?,
+            title = COALESCE(?, title)
+        WHERE id = ?
+        """,
+        (int(alloc), title, int(channel["id"])),
+    )
+
+    await auto_disable_task_channel_if_exhausted(db, int(channel["id"]))
+    return True
+
+
+async def count_available_task_posts_for_user(db: aiosqlite.Connection, user_id: int) -> int:
+    async with db.execute(
+            """
+        SELECT COUNT(*)
+        FROM task_posts p
+        WHERE p.is_active = 1
+          AND p.current_views < p.required_views
+          AND NOT EXISTS (
+              SELECT 1
+              FROM task_post_views v
+              WHERE v.user_id = ?
+                AND v.task_post_id = p.id
+          )
+        """,
+            (int(user_id),),
+    ) as cur:
+        row = await cur.fetchone()
+        return int(row[0] or 0)
+
+
+async def get_next_task_post_for_user(db: aiosqlite.Connection, user_id: int):
+    async with db.execute(
+            """
+        SELECT
+            p.id,
+            p.channel_id,
+            c.chat_id,
+            c.view_seconds,
+            p.channel_post_id,
+            p.reward,
+            p.required_views,
+            p.current_views,
+            p.created_at
+        FROM task_posts p
+        JOIN task_channels c ON c.id = p.channel_id
+        WHERE p.is_active = 1
+          AND p.current_views < p.required_views
+          AND NOT EXISTS (
+              SELECT 1
+              FROM task_post_views v
+              WHERE v.user_id = ?
+                AND v.task_post_id = p.id
+          )
+        ORDER BY datetime(p.created_at) ASC, p.id ASC
+        LIMIT 1
+        """,
+            (int(user_id),),
+    ) as cur:
+        return await cur.fetchone()
+
+
+async def get_specific_task_post_for_user(
+        db: aiosqlite.Connection,
+        user_id: int,
+        task_post_id: int,
+):
+    async with db.execute(
+            """
+        SELECT
+            p.id,
+            p.channel_id,
+            c.chat_id,
+            c.view_seconds,
+            p.channel_post_id,
+            p.reward,
+            p.required_views,
+            p.current_views,
+            p.created_at
+        FROM task_posts p
+        JOIN task_channels c ON c.id = p.channel_id
+        WHERE p.id = ?
+          AND p.is_active = 1
+          AND p.current_views < p.required_views
+          AND NOT EXISTS (
+              SELECT 1
+              FROM task_post_views v
+              WHERE v.user_id = ?
+                AND v.task_post_id = p.id
+          )
+        LIMIT 1
+        """,
+            (int(task_post_id), int(user_id)),
+    ) as cur:
+        return await cur.fetchone()
+
+
+async def add_task_post_view(
+        db: aiosqlite.Connection,
+        user_id: int,
+        task_post_id: int,
+        reward: float,
+) -> bool:
+    cur = await db.execute(
+        """
+        INSERT OR IGNORE INTO task_post_views (user_id, task_post_id, reward, viewed_at)
+        VALUES (?, ?, ?, datetime('now'))
+        """,
+        (int(user_id), int(task_post_id), float(reward)),
+    )
+    return cur.rowcount == 1
+
+
+async def increment_task_post_views(db: aiosqlite.Connection, task_post_id: int) -> bool:
+    cur = await db.execute(
+        """
+        UPDATE task_posts
+        SET
+            current_views = current_views + 1,
+            is_active = CASE
+                WHEN current_views + 1 >= required_views THEN 0
+                ELSE is_active
+            END,
+            completed_at = CASE
+                WHEN current_views + 1 >= required_views THEN datetime('now')
+                ELSE completed_at
+            END
+        WHERE id = ?
+          AND is_active = 1
+          AND current_views < required_views
+        """,
+        (int(task_post_id),),
+    )
+    return cur.rowcount == 1
+
+
+async def task_channel_stats(db: aiosqlite.Connection, channel_id: int):
+    async with db.execute(
+            """
+        SELECT
+            COUNT(*) AS total_posts,
+            COALESCE(SUM(required_views), 0) AS total_required,
+            COALESCE(SUM(current_views), 0) AS total_current,
+            SUM(CASE WHEN is_active = 1 AND current_views < required_views THEN 1 ELSE 0 END) AS active_posts
+        FROM task_posts
+        WHERE channel_id = ?
+        """,
+            (int(channel_id),),
+    ) as cur:
+        return await cur.fetchone()
+
+async def update_task_channel_params(
+        db: aiosqlite.Connection,
+        channel_id: int,
+        total_bought_views: int,
+        views_per_post: int,
+        view_seconds: int,
+) -> None:
+    await db.execute(
+        """
+        UPDATE task_channels
+        SET
+            total_bought_views = ?,
+            views_per_post = ?,
+            view_seconds = ?
+        WHERE id = ?
+        """,
+        (
+            int(total_bought_views),
+            int(views_per_post),
+            int(view_seconds),
+            int(channel_id),
+        ),
+    )
+
+async def get_task_channel_allocated_views(db: aiosqlite.Connection, channel_id: int) -> int:
+    async with db.execute(
+            """
+        SELECT allocated_views
+        FROM task_channels
+        WHERE id = ?
+        LIMIT 1
+        """,
+            (int(channel_id),),
+    ) as cur:
+        row = await cur.fetchone()
+        return int(row["allocated_views"] or 0) if row else 0
+
+async def list_task_posts_by_channel(db: aiosqlite.Connection, channel_id: int, limit: int = 20):
+    async with db.execute(
+            """
+        SELECT
+            id,
+            channel_post_id,
+            required_views,
+            current_views,
+            is_active,
+            created_at,
+            completed_at
+        FROM task_posts
+        WHERE channel_id = ?
+        ORDER BY channel_post_id DESC, id DESC
+        LIMIT ?
+        """,
+            (int(channel_id), int(limit)),
+    ) as cur:
+        return await cur.fetchall()
+
+async def auto_disable_task_channel_if_exhausted(
+        db: aiosqlite.Connection,
+        channel_id: int,
+) -> bool:
+    cur = await db.execute(
+        """
+        UPDATE task_channels
+        SET is_active = 0
+        WHERE id = ?
+          AND is_active = 1
+          AND allocated_views >= total_bought_views
+        """,
+        (int(channel_id),),
+    )
+    return cur.rowcount == 1
+
+def normalize_daily_cycle_day(cycle_day: int) -> int:
+    if cycle_day <= 0:
+        return 1
+    return ((cycle_day - 1) % 30) + 1
+
+
+def daily_checkin_reward(cycle_day: int) -> float:
+    cycle_day = normalize_daily_cycle_day(cycle_day)
+    return round(cycle_day * 0.05, 2)
+
+
+async def claim_daily_checkin(
+        db,
+        user_id: int,
+        username: Optional[str],
+        first_name: Optional[str] = None,
+        last_name: Optional[str] = None,
+):
+    uid = int(user_id)
+
+    now = datetime.now(timezone.utc)
+    today = now.date()
+    yesterday = today - timedelta(days=1)
+
+    async with tx(db, immediate=True):
+        await register_user(db, uid, username, first_name, last_name)
+
+        async with db.execute(
+                """
+            SELECT daily_checkin_cycle_day, last_daily_checkin_at
+            FROM users
+            WHERE user_id = ?
+            """,
+                (uid,),
+        ) as cur:
+            row = await cur.fetchone()
+
+        cycle_day = int(row["daily_checkin_cycle_day"] or 0)
+        last_checkin_raw = row["last_daily_checkin_at"]
+
+        last_date = None
+        if last_checkin_raw:
+            last_date = datetime.fromisoformat(last_checkin_raw).date()
+
+        if last_date == today:
+            balance = await get_balance(db, uid)
+            return False, "", balance
+
+        if last_date == yesterday:
+            new_cycle_day = normalize_daily_cycle_day(cycle_day + 1)
+        else:
+            new_cycle_day = 1
+
+        reward = daily_checkin_reward(new_cycle_day)
+        next_cycle_day = normalize_daily_cycle_day(new_cycle_day + 1)
+        next_reward = daily_checkin_reward(next_cycle_day)
+
+        await db.execute(
+            """
+            UPDATE users
+            SET daily_checkin_cycle_day = ?, last_daily_checkin_at = ?
+            WHERE user_id = ?
+            """,
+            (new_cycle_day, now.isoformat(), uid),
+        )
+
+        await apply_balance_delta(
+            db=db,
+            user_id=uid,
+            delta=reward,
+            reason="daily_bonus",
+            meta=json.dumps(
+                {
+                    "type": "daily_bonus",
+                    "cycle_day": new_cycle_day,
+                    "reward": reward,
+                },
+                ensure_ascii=False,
+            ),
+        )
+
+        balance = await get_balance(db, uid)
+
+        text = (
+            f"🎁 Вы получили {fmt_stars(reward)}⭐\n\n"
+            f"📅 Приходите завтра и забирайте {fmt_stars(next_reward)}⭐"
+        )
+
+        return True, text, balance

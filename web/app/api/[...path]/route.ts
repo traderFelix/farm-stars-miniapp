@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
-const BACKEND_INTERNAL_URL =
-    process.env.BACKEND_INTERNAL_URL || "http://127.0.0.1:8000";
+const NEXT_PUBLIC_API_BASE_URL =
+    process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000";
 
 async function proxyRequest(
     request: NextRequest,
@@ -9,7 +9,7 @@ async function proxyRequest(
 ) {
     const path = params.path.join("/");
     const search = request.nextUrl.search || "";
-    const targetUrl = `${BACKEND_INTERNAL_URL}/api/${path}${search}`;
+    const targetUrl = `${NEXT_PUBLIC_API_BASE_URL}/api/${path}${search}`;
 
     const headers = new Headers();
     const contentType = request.headers.get("content-type");

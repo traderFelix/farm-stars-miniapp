@@ -1,19 +1,30 @@
-# node
-node_modules
-.next
-
-# python
-venv
-__pycache__
-*.pyc
-
-# env
-.env
-.env.local
-
-# ide
-.idea
-*.iml
-
-# mac
+# macOS
 .DS_Store
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+
+# Bot DB / local files
+*.db
+*.sqlite
+*.sqlite3
+
+# Node
+node_modules/
+.next/
+out/
+dist/
+
+# Env
+.env
+.env.*
+!.env.example
+
+# IDE
+.idea/
+.vscode/

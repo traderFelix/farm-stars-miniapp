@@ -1,8 +1,7 @@
 import sqlite3
 import time
-from typing import Optional
 
-DB_PATH = "/Users/vadym/telegram/felix-farm-stars-bot/bot.db"
+DB_PATH = "/Users/vadym/telegram/felix-farm-stars-miniapp/bot/bot.db"
 
 
 def get_connection():

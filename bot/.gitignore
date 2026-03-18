@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+
+# Virtualenv
+venv/
+.venv/
+
+# OS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+*.iml
+
+# Local data
+bot.db
+bot.db-shm
+bot.db-wal
+*.log
+
+# Secrets/env
+.env
+.env.*
+
+*.diff

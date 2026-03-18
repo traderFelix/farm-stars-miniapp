@@ -1,7 +1,6 @@
 import os, secrets
 
 from fastapi import APIRouter, HTTPException
-from typing import Optional
 
 from .schemas import MiniAppAuthRequest, MiniAppAuthResponse, MiniAppUser
 from .telegram_auth import TelegramInitDataError, validate_telegram_init_data
