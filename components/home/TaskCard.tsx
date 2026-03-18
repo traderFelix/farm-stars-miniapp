@@ -12,6 +12,7 @@ export function TaskCard() {
     const [state, setState] = useState<LoadState>("idle");
     const [errorText, setErrorText] = useState("");
     const [task, setTask] = useState<NextTaskResponse["task"]>(null);
+    const [timeLeft, setTimeLeft] = useState(0);
 
     const loadNextTask = async () => {
         const token = getSessionToken();
@@ -37,6 +38,7 @@ export function TaskCard() {
             }
 
             setTask(result.task);
+            setTimeLeft(result.task.hold_seconds);
             setState("success");
 
             const webApp = getTelegramWebApp();
@@ -55,16 +57,30 @@ export function TaskCard() {
     };
 
     useEffect(() => {
-        const token = getSessionToken();
-        if (token) {
-            void loadNextTask();
-        }
-    }, []);
+        if (state !== "success" || !task) return;
+
+        if (timeLeft <= 0) return;
+
+        const timer = setTimeout(() => {
+            setTimeLeft((prev) => prev - 1);
+        }, 1000);
+
+        return () => clearTimeout(timer);
+    }, [timeLeft, state, task]);
+
 
     const openPost = () => {
         if (!task?.telegram_url) return;
-        window.open(task.telegram_url, "_blank");
+
+        const webApp = getTelegramWebApp();
+
+        if (webApp) {
+            webApp.openTelegramLink(task.telegram_url);
+        } else {
+            window.open(task.telegram_url, "_blank");
+        }
     };
+
 
     return (
         <section className="mt-4 rounded-[28px] border border-white/10 bg-white/5 p-4 shadow-soft backdrop-blur">
@@ -121,6 +137,9 @@ export function TaskCard() {
                         <div className="rounded-3xl border border-white/10 bg-black/20 p-4">
                             <div className="text-xs text-white/50">Удержание</div>
                             <div className="mt-2 text-xl font-semibold">
+                                {timeLeft > 0 ? `${timeLeft} сек` : "Готово"}
+                            </div>
+                            <div className="mt-2 text-xl font-semibold">
                                 {task.hold_seconds} сек
                             </div>
                         </div>
@@ -136,10 +155,16 @@ export function TaskCard() {
                     <button
                         type="button"
                         onClick={openPost}
-                        className="w-full rounded-2xl bg-cyan-400 px-4 py-3 text-sm font-semibold text-slate-950 transition hover:scale-[0.99] active:scale-[0.98]"
-                    >
+                        className="w-full rounded-2xl bg-cyan-400 px-4 py-3 text-sm font-semibold text-slate-950 transition hover:scale-[0.99] active:scale-[0.98]">
                         Открыть пост
                     </button>
+                    <button
+                        type="button"
+                        disabled={timeLeft > 0}
+                        className="w-full rounded-2xl bg-emerald-400 px-4 py-3 text-sm font-semibold text-black disabled:opacity-50">
+                        {timeLeft > 0 ? "Подождите..." : "Засчитать просмотр"}
+                    </button>
+
                 </div>
             ) : null}
         </section>
