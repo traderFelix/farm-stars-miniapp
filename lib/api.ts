@@ -1,6 +1,3 @@
-const API_BASE_URL =
-    process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
-
 type RequestOptions = {
     method?: "GET" | "POST";
     body?: unknown;
@@ -13,7 +10,12 @@ export async function apiRequest<T>(
 ): Promise<T> {
     const { method = "GET", body, token } = options;
 
-    const response = await fetch(`${API_BASE_URL}${path}`, {
+    const url = path;
+
+    console.log("REQUEST PATH =", path);
+    console.log("FULL REQUEST URL =", url);
+
+    const response = await fetch(url, {
         method,
         headers: {
             "Content-Type": "application/json",
@@ -23,8 +25,11 @@ export async function apiRequest<T>(
         cache: "no-store",
     });
 
+    console.log("RESPONSE STATUS =", response.status);
+
     if (!response.ok) {
         const text = await response.text();
+        console.log("RESPONSE TEXT =", text);
         throw new Error(text || `Request failed: ${response.status}`);
     }
 
