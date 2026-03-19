@@ -20,14 +20,16 @@ from bot.db import (
     sum_recent_abuse_amount, has_pending_withdrawal, user_created_hours_ago,
     register_user, get_balance, create_withdrawal, user_withdrawals, apply_balance_debit_if_enough,
     claim_reward, list_active_campaigns, log_abuse_event, count_recent_abuse_events, tx,
-    wallet_used_by_another_user, wallet_users, ensure_user_registered, xtr_ledger_add, apply_balance_delta,
-    increment_task_post_views, count_available_task_posts_for_user, get_next_task_post_for_user, bind_referrer,
-    get_specific_task_post_for_user, add_task_post_view, allocate_task_post_from_channel_post, get_referrals_count,
-    claim_daily_checkin,
+    wallet_used_by_another_user, wallet_users, ensure_user_registered, xtr_ledger_add, apply_balance_delta, bind_referrer,
+    allocate_task_post_from_channel_post, get_referrals_count, claim_daily_checkin,
 )
 
 from shared.db.users import (
-    get_activity_index, _fmt_stars, user_has_role, get_user_role_level, role_title_from_level
+    get_activity_index, _fmt_stars, user_has_role, get_user_role_level, role_title_from_level,
+)
+from shared.db.tasks import (
+    count_available_task_posts_for_user, get_next_view_post_task_for_user, get_view_post_task_for_user,
+    increment_task_post_views, add_task_post_view
 )
 
 from bot.keyboards import (
@@ -237,7 +239,7 @@ async def task_view_post(callback: CallbackQuery, bot: Bot, state: FSMContext, d
     async with tx(db, immediate=False):
         await ensure_user_registered(callback, db)
 
-        row = await get_next_task_post_for_user(db, user_id)
+        row = await get_next_view_post_task_for_user(db, user_id)
         if not row:
             await callback.answer("❌ Доступных постов пока нет.", show_alert=True)
             return
@@ -286,7 +288,7 @@ async def task_view_post(callback: CallbackQuery, bot: Bot, state: FSMContext, d
     await asyncio.sleep(view_seconds)
 
     async with tx(db, immediate=True):
-        current_row = await get_specific_task_post_for_user(db, user_id, task_post_id)
+        current_row = await get_view_post_task_for_user(db, user_id, task_post_id)
         if not current_row:
             await bot.send_message(
                 chat_id=user_id,
