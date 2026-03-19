@@ -18,7 +18,7 @@ async def telegram_auth(payload: TelegramAuthRequest):
         "init_data_preview": (payload.init_data or "")[:120],
     })
 
-    if payload.init_data is None:
+    if not payload.init_data:
         raise HTTPException(status_code=400, detail="init_data is required")
 
     return {

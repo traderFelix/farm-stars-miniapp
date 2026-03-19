@@ -24,14 +24,12 @@ async def get_me(authorization: Optional[str] = Header(default=None)):
         raise HTTPException(status_code=401, detail="Invalid token")
 
     return {
-        "user": {
-            "id": 144574240,
-            "username": "vad_ym",
-            "first_name": "Vadym",
-            "role": "user",
-            "balance": 0.15,
-            "activity_index": 0.0,
-        }
+        "id": 144574240,
+        "username": "vad_ym",
+        "first_name": "Vadym",
+        "role": "user",
+        "balance": 0.15,
+        "activity_index": 0.0,
     }
 
 

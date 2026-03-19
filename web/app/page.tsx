@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { apiGet, apiPost } from "@/lib/api";
-import { getTelegramInitData, initTelegramWebApp } from "@/lib/telegram";
+import { initTelegramWebApp } from "@/lib/telegram";
 
 type AuthResponse = {
   ok: boolean;
@@ -53,38 +53,31 @@ export default function HomePage() {
   useEffect(() => {
     async function bootstrap() {
       try {
-        log("STEP 1: start");
+        const webApp = initTelegramWebApp();
+        if (!webApp) {
+          throw new Error("Telegram WebApp is unavailable");
+        }
 
-        initTelegramWebApp();
-        log("STEP 2: telegram ready");
+        const initData = webApp.initData?.trim();
 
-        const initData = getTelegramInitData();
-        console.log("INIT DATA RAW:", initData);
-        console.log("INIT DATA LEN:", initData.length);
-        setStatus(`initData len: ${initData.length}`);
-
-        const payload = { init_data: initData };
-        console.log("AUTH PAYLOAD:", payload);
+        if (!initData) {
+          throw new Error("Telegram initData is empty");
+        }
 
         const auth = await apiPost<AuthResponse>("/auth/telegram", {
           init_data: initData,
         });
-        log("STEP 4: auth ok", auth);
 
         localStorage.setItem("fs_token", auth.token);
 
         const profile = await apiGet<MeResponse>("/api/me", auth.token);
-        log("STEP 5: profile ok", profile);
-
         setMe(profile);
         setStatus("Connected");
       } catch (error: any) {
         log("BOOTSTRAP ERROR", {
           message: error?.message,
           stack: error?.stack,
-          cause: error?.cause,
         });
-
         setStatus(error?.message || "API error");
       }
     }
