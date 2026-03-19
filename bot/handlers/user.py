@@ -12,27 +12,30 @@ from aiogram.types import (
     Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, PreCheckoutQuery, LabeledPrice
 )
 
-from config import (
-    CHANNEL_ID, ADMIN_IDS, MIN_WITHDRAW, MIN_WITHDRAW_PERCENT, ROLE_USER, ROLE_CLIENT, ROLE_PARTNER, GOOD_ACTIVITY_REASONS,
-    SYSTEM_REASONS,
+from shared.config import (
+    CHANNEL_ID, ADMIN_IDS, MIN_WITHDRAW, MIN_WITHDRAW_PERCENT, ROLE_USER, ROLE_CLIENT, ROLE_PARTNER
 )
 
-from db import (
+from bot.db import (
     sum_recent_abuse_amount, has_pending_withdrawal, user_created_hours_ago,
     register_user, get_balance, create_withdrawal, user_withdrawals, apply_balance_debit_if_enough,
-    claim_reward, list_active_campaigns, log_abuse_event, count_recent_abuse_events, tx, fmt_stars,
+    claim_reward, list_active_campaigns, log_abuse_event, count_recent_abuse_events, tx,
     wallet_used_by_another_user, wallet_users, ensure_user_registered, xtr_ledger_add, apply_balance_delta,
     increment_task_post_views, count_available_task_posts_for_user, get_next_task_post_for_user, bind_referrer,
     get_specific_task_post_for_user, add_task_post_view, allocate_task_post_from_channel_post, get_referrals_count,
-    get_user_role_level, user_has_role, role_title_from_level, claim_daily_checkin,
+    claim_daily_checkin,
 )
 
-from keyboards import (
+from shared.db.users import (
+    get_activity_index, _fmt_stars, user_has_role, get_user_role_level, role_title_from_level
+)
+
+from bot.keyboards import (
     subscribe_keyboard, main_menu, tasks_menu, bottom_menu_kb, withdraw_stars_amount_kb, task_after_view_kb,
     withdraw_method_kb, withdraw_menu_kb, withdraw_back_kb, referrals_kb, daily_checkin_kb
 )
 
-from states import WithdrawCreate
+from bot.states import WithdrawCreate
 
 router = Router()
 
@@ -66,42 +69,10 @@ def menu_text(balance: float, role_level: int = ROLE_USER, activity_index: float
 
     return (
         "🏠 Главное меню\n\n"
-        f"Баланс: {fmt_stars(balance)}⭐️\n\n"
+        f"Баланс: {_fmt_stars(balance)}⭐️\n\n"
         f"Роль: {role_name}\n"
         f"Индекс Активности: {activity_index:.1f}%"
     )
-
-async def get_activity_index(db, user_id: int) -> float:
-    system_placeholders = ",".join("?" for _ in SYSTEM_REASONS)
-    good_placeholders = ",".join("?" for _ in GOOD_ACTIVITY_REASONS)
-
-    sql = f"""
-    SELECT
-        COALESCE(SUM(CASE
-            WHEN delta > 0 AND reason IN ({good_placeholders}) THEN delta
-            ELSE 0
-        END), 0) AS good_total,
-        COALESCE(SUM(CASE
-            WHEN delta > 0 THEN delta
-            ELSE 0
-        END), 0) AS total_earned
-    FROM ledger
-    WHERE user_id = ?
-      AND reason NOT IN ({system_placeholders})
-    """
-
-    params = [*GOOD_ACTIVITY_REASONS, int(user_id), *SYSTEM_REASONS]
-
-    async with db.execute(sql, params) as cur:
-        row = await cur.fetchone()
-
-    good_total = float(row["good_total"] or 0)
-    total_earned = float(row["total_earned"] or 0)
-
-    if total_earned <= 0:
-        return 0.0
-
-    return (good_total / total_earned) * 100.0
 
 
 async def build_main_menu_text(db, user_id: int, balance: float, role_level: int) -> str:
@@ -254,7 +225,7 @@ async def show_tasks(callback: CallbackQuery, db):
         "👁 Просмотр постов из каналов\n"
         "За каждый просмотр начисляется награда.\n"
         f"Доступно постов: {available}\n\n"
-        f"Баланс: {fmt_stars(balance)}⭐️",
+        f"Баланс: {_fmt_stars(balance)}⭐️",
         reply_markup=tasks_menu()
     )
 
@@ -365,9 +336,9 @@ async def task_view_post(callback: CallbackQuery, bot: Bot, state: FSMContext, d
         chat_id=user_id,
         text=(
             "✅ Просмотр засчитан\n\n"
-            f"Начислено: {fmt_stars(reward)}⭐\n"
+            f"Начислено: {_fmt_stars(reward)}⭐\n"
             f"Осталось доступно постов: {available}\n"
-            f"Баланс: {fmt_stars(new_balance)}⭐️"
+            f"Баланс: {_fmt_stars(new_balance)}⭐️"
         ),
         reply_markup=task_after_view_kb()
     )
@@ -458,7 +429,7 @@ async def claim_for_campaign(callback: CallbackQuery, db):
         return
 
     await callback.answer(
-        f"{msg}\nБаланс: {fmt_stars(new_balance)}⭐️",
+        f"{msg}\nБаланс: {_fmt_stars(new_balance)}⭐️",
         show_alert=True
     )
 
@@ -473,7 +444,7 @@ async def withdraw_menu(callback: CallbackQuery, state: FSMContext, db):
     await safe_edit_text(
         callback.message,
         "Меню заявок на вывод\n\n"
-        f"Доступно: {fmt_stars(balance)}⭐",
+        f"Доступно: {_fmt_stars(balance)}⭐",
         reply_markup=withdraw_menu_kb()
     )
 
@@ -666,7 +637,7 @@ async def finalize_withdraw_request(
     if paid_fee > 0:
         success_text += f"Комиссия оплачена: {paid_fee} XTR\n"
 
-    success_text += f"\nБаланс: {fmt_stars(new_balance)}⭐"
+    success_text += f"\nБаланс: {_fmt_stars(new_balance)}⭐"
 
     await message.answer(success_text)
 
@@ -752,7 +723,7 @@ async def withdraw_choose_method(callback: CallbackQuery, state: FSMContext, db)
         await safe_edit_text(
             callback.message,
             "Выбери сумму вывода ⭐:\n\n"
-            f"Доступно: {fmt_stars(balance)}⭐\n"
+            f"Доступно: {_fmt_stars(balance)}⭐\n"
             f"Минимум: {MIN_WITHDRAW:g}⭐",
             reply_markup=withdraw_stars_amount_kb(),
         )
@@ -761,7 +732,7 @@ async def withdraw_choose_method(callback: CallbackQuery, state: FSMContext, db)
     await state.set_state(WithdrawCreate.amount)
     await callback.message.answer(
         f"Введи сумму обмена ⭐ в TON:\n"
-        f"Доступно: {fmt_stars(balance)}⭐\n"
+        f"Доступно: {_fmt_stars(balance)}⭐\n"
         f"Минимум: {MIN_WITHDRAW:g}⭐"
     )
 
@@ -1127,8 +1098,8 @@ def daily_checkin_text(current_day: int, already_claimed_today: bool) -> str:
     return (
         f"{status}\n\n"
         f"🔥 День цикла: {current_day}/30\n"
-        f"💰 Сегодня: {fmt_stars(current_reward)}⭐\n"
-        f"📅 Завтра: {fmt_stars(next_reward)}⭐\n\n"
+        f"💰 Сегодня: {_fmt_stars(current_reward)}⭐\n"
+        f"📅 Завтра: {_fmt_stars(next_reward)}⭐\n\n"
         "Заходите каждый день, чтобы не сбросился прогресс"
     )
 

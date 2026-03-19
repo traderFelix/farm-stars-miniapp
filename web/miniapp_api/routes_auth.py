@@ -1,7 +1,8 @@
-import os, secrets
+import secrets
 
 from fastapi import APIRouter, HTTPException
 
+from shared.config import TELEGRAM_BOT_TOKEN
 from .schemas import MiniAppAuthRequest, MiniAppAuthResponse, MiniAppUser
 from .telegram_auth import TelegramInitDataError, validate_telegram_init_data
 
@@ -10,15 +11,13 @@ router = APIRouter()
 # Потом вынесешь в нормальное хранилище / redis / db
 SESSIONS: dict[str, dict] = {}
 
-BOT_TOKEN = os.environ["BOT_TOKEN"]
-
 
 @router.post("/api/miniapp/auth", response_model=MiniAppAuthResponse)
 async def miniapp_auth(payload: MiniAppAuthRequest):
     try:
         result = validate_telegram_init_data(
             init_data=payload.init_data,
-            bot_token=BOT_TOKEN,
+            bot_token=TELEGRAM_BOT_TOKEN,
             max_age_seconds=3600,
         )
     except TelegramInitDataError as exc:

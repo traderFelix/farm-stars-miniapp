@@ -1,7 +1,7 @@
 import sqlite3
 import time
 
-DB_PATH = "/Users/vadym/telegram/felix-farm-stars-miniapp/bot/bot.db"
+from shared.config import DB_PATH
 
 
 def get_connection():

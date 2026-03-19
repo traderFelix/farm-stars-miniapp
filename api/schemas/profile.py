@@ -9,3 +9,4 @@ class ProfileResponse(BaseModel):
     first_name: Optional[str] = None
     balance: float
     role: str
+    activity_index: float

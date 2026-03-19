@@ -1,50 +1,120 @@
-const API_BASE_URL =
-    process.env.NEXT_PUBLIC_API_BASE_URL || "/backend";
+const ACCESS_TOKEN_KEY = "farmstars_access_token";
 
-type ApiRequestOptions = Omit<RequestInit, "body"> & {
-    token?: string | null;
-    body?: unknown;
+export type TelegramAuthResponse = {
+    ok: boolean;
+    token: string;
+    session: {
+        user_id: number;
+        username?: string | null;
+        first_name?: string | null;
+    };
 };
 
-export async function apiRequest<T>(
+export type Profile = {
+    user_id: number;
+    username?: string | null;
+    first_name?: string | null;
+    balance: number;
+    role: string;
+    activity_index: number;
+};
+
+type RequestOptions = {
+    method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+    body?: unknown;
+    auth?: boolean;
+};
+
+function isBrowser(): boolean {
+    return typeof window !== "undefined";
+}
+
+export function setAccessToken(token: string): void {
+    if (!isBrowser()) return;
+    localStorage.setItem(ACCESS_TOKEN_KEY, token);
+}
+
+export function getAccessToken(): string | null {
+    if (!isBrowser()) return null;
+    return localStorage.getItem(ACCESS_TOKEN_KEY);
+}
+
+export function clearAccessToken(): void {
+    if (!isBrowser()) return;
+    localStorage.removeItem(ACCESS_TOKEN_KEY);
+}
+
+function buildHeaders(auth: boolean, hasBody: boolean): HeadersInit {
+    const headers: HeadersInit = {};
+
+    if (hasBody) {
+        headers["Content-Type"] = "application/json";
+    }
+
+    if (auth) {
+        const token = getAccessToken();
+        if (token) {
+            headers["Authorization"] = `Bearer ${token}`;
+        }
+    }
+
+    return headers;
+}
+
+async function apiRequest<T>(
     path: string,
-    options: ApiRequestOptions = {},
+    { method = "GET", body, auth = false }: RequestOptions = {},
 ): Promise<T> {
-    const { token, headers, body, ...rest } = options;
+    const hasBody = body !== undefined;
 
-    const normalizedBody: BodyInit | undefined =
-        body == null
-            ? undefined
-            : typeof body === "string" ||
-            body instanceof FormData ||
-            body instanceof URLSearchParams ||
-            body instanceof Blob ||
-            body instanceof ArrayBuffer
-                ? body
-                : JSON.stringify(body);
-
-    const res = await fetch(`${API_BASE_URL}${path}`, {
-        ...rest,
-        headers: {
-            "Content-Type": "application/json",
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
-            ...(headers || {}),
-        },
-        body: normalizedBody,
+    const response = await fetch(`/api${path}`, {
+        method,
+        headers: buildHeaders(auth, hasBody),
+        body: hasBody ? JSON.stringify(body) : undefined,
         cache: "no-store",
     });
 
-    if (!res.ok) {
-        throw new Error(`${options.method || "GET"} ${path} failed: ${res.status}`);
+    let data: any;
+    const contentType = response.headers.get("content-type") || "";
+
+    if (contentType.includes("application/json")) {
+        data = await response.json();
+    } else {
+        const text = await response.text();
+        data = text ? { detail: text } : null;
     }
 
-    return res.json();
+    if (!response.ok) {
+        const message =
+            data?.detail ||
+            data?.message ||
+            `Request failed with status ${response.status}`;
+        throw new Error(message);
+    }
+
+    return data as T;
 }
 
-export async function apiGet<T>(path: string, token?: string): Promise<T> {
-    return apiRequest<T>(path, { method: "GET", token });
+export async function authTelegram(initData: string): Promise<TelegramAuthResponse> {
+    const result = await apiRequest<TelegramAuthResponse>("/auth/telegram", {
+        method: "POST",
+        body: {
+            init_data: initData,
+        },
+        auth: false,
+    });
+
+    if (!result?.token) {
+        throw new Error("Token was not returned by /auth/telegram");
+    }
+
+    setAccessToken(result.token);
+    return result;
 }
 
-export async function apiPost<T>(path: string, body: unknown): Promise<T> {
-    return apiRequest<T>(path, { method: "POST", body });
+export async function getMyProfile(): Promise<Profile> {
+    return apiRequest<Profile>("/profile/me", {
+        method: "GET",
+        auth: true,
+    });
 }

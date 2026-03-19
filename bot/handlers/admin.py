@@ -2,6 +2,10 @@ import io, logging
 from datetime import date, timedelta
 
 import matplotlib
+
+from bot.api_client import get_admin_user_profile, ApiClientError
+from bot.profile_texts import format_admin_user_profile_card
+
 matplotlib.use("Agg")  # важно для серверов без GUI
 
 import matplotlib.pyplot as plt
@@ -15,12 +19,12 @@ from aiogram.filters import Filter
 from aiogram.methods import RefundStarPayment
 from aiogram.exceptions import TelegramBadRequest
 
-from config import LEDGER_PAGE_SIZE, ROLE_ADMIN, ROLE_OWNER
+from shared.config import LEDGER_PAGE_SIZE, ROLE_ADMIN, ROLE_OWNER
 
-from handlers.user import safe_edit_text, get_activity_index
+from bot.handlers.user import safe_edit_text
 
-from db import (
-    tx, fmt_stars,
+from bot.db import (
+    tx,
 
     # campaigns
     upsert_campaign, set_campaign_status, delete_campaign, list_campaigns, list_campaigns_latest, get_campaign,
@@ -29,11 +33,11 @@ from db import (
     # stats
     campaign_stats, list_winners, claimed_usernames, global_claims_stats, campaigns_status_counts, total_balances,
     unclaimed_total_amount, total_assigned_amount, admin_balance_changes, total_withdrawn_amount, pending_withdrawn_amount,
-    ledger_sum_by_reason, build_user_stats_text,
+    ledger_sum_by_reason,
 
     # users/growth
     top_users_by_balance, users_total_count, users_new_since_hours, users_new_since_days, users_active_since_days,
-    users_growth_by_day, get_user_admin_details, mark_user_suspicious, clear_user_suspicious,
+    users_growth_by_day, mark_user_suspicious, clear_user_suspicious,
 
     # ledger
     ledger_add, apply_balance_delta, get_balance, balances_audit, xtr_ledger_add,
@@ -45,18 +49,20 @@ from db import (
     # channels
     list_task_channels, get_task_channel, create_task_channel, set_task_channel_active, task_channel_stats, update_task_channel_params,
     get_task_channel_allocated_views, list_task_posts_by_channel,
-
-    #roles
-    get_user_role_level, get_user_role_name, user_has_role, set_user_role_level, role_title_from_level
 )
 
-from keyboards import (
+from shared.db.users import (
+    _fmt_stars, build_user_stats_text, user_has_role, get_user_role_name, get_user_role_level, set_user_role_level,
+    role_title_from_level
+)
+
+from bot.keyboards import (
     admin_menu_kb, admin_back_kb, campaigns_list_kb, campaign_manage_kb, stats_list_kb, admin_fee_refund_kb,
     campaign_created_kb, admin_user_kb, admin_withdraw_list_kb, admin_withdraw_actions_kb, campaign_delete_confirm_kb,
     admin_task_channels_kb, admin_task_channel_card_kb, admin_growth_photo_kb,
 )
 
-from states import (
+from bot.states import (
     CampaignCreate, AddWinners, DeleteWinner, UserLookup, AdminAdjust, AdminRefundFee, TaskChannelCreate, TaskChannelEdit,
 )
 
@@ -625,7 +631,12 @@ async def adm_user_balance_show(message: Message, state: FSMContext, db):
 
         user_id = int(row[0])
 
-    text = await build_user_details_text(db, user_id)
+    try:
+        profile = await get_admin_user_profile(user_id)
+        text = format_admin_user_profile_card(profile)
+    except ApiClientError as e:
+        text = f"❌ Не удалось загрузить профиль из API.\n\n{e}"
+
 
     await message.answer(
         text,
@@ -692,7 +703,7 @@ async def adm_user_adjust_finish(message: Message, state: FSMContext, db):
     await message.answer(
         f"✅ Готово\n"
         f"Изменение: {delta:+.2f}⭐\n"
-        f"Новый баланс: {fmt_stars(balance)}⭐",
+        f"Новый баланс: {_fmt_stars(balance)}⭐",
         reply_markup=admin_user_kb(user_id)
     )
 
@@ -998,15 +1009,15 @@ async def adm_audit_balances(callback: CallbackQuery, db):
 
     lines = [
         "🧮 Сверка балансов\n",
-        f"Баланс пользователей: {fmt_stars(total_balances_sum)}⭐\n",
-        f"Получено в конкурсах (база): {fmt_stars(total_claimed_all)}⭐",
-        f"Получено в конкурсах (леджер): {fmt_stars(claimed_from_ledger)}⭐",
-        f"Получено за рефералов: {fmt_stars(referral_bonus)}⭐\n"
-        f"Получено за просмотры постов: {fmt_stars(view_post_bonus)}⭐\n"
-        f"Получено за ежедневный бонус: {fmt_stars(daily_bonus)}⭐\n"
-        f"Получено от админа: {fmt_stars(admin_added - admin_removed)}⭐\n",
-        f"Выведено: {fmt_stars(total_withdrawn_sum)}⭐",
-        f"В обработке: {fmt_stars(pending_withdrawn_sum)}⭐\n",
+        f"Баланс пользователей: {_fmt_stars(total_balances_sum)}⭐\n",
+        f"Получено в конкурсах (база): {_fmt_stars(total_claimed_all)}⭐",
+        f"Получено в конкурсах (леджер): {_fmt_stars(claimed_from_ledger)}⭐",
+        f"Получено за рефералов: {_fmt_stars(referral_bonus)}⭐\n"
+        f"Получено за просмотры постов: {_fmt_stars(view_post_bonus)}⭐\n"
+        f"Получено за ежедневный бонус: {_fmt_stars(daily_bonus)}⭐\n"
+        f"Получено от админа: {_fmt_stars(admin_added - admin_removed)}⭐\n",
+        f"Выведено: {_fmt_stars(total_withdrawn_sum)}⭐",
+        f"В обработке: {_fmt_stars(pending_withdrawn_sum)}⭐\n",
     ]
 
     if not mismatches:
@@ -1026,9 +1037,9 @@ async def adm_audit_balances(callback: CallbackQuery, db):
 
             lines.append(
                 f"user_id={user_id} ({uname}): "
-                f"balance={fmt_stars(balance)}⭐ / "
-                f"ledger={fmt_stars(ledger_sum)}⭐ / "
-                f"diff={fmt_stars(diff)}⭐"
+                f"balance={_fmt_stars(balance)}⭐ / "
+                f"ledger={_fmt_stars(ledger_sum)}⭐ / "
+                f"diff={_fmt_stars(diff)}⭐"
             )
 
     await safe_edit_text(
@@ -1045,7 +1056,11 @@ async def adm_user_details(callback: CallbackQuery, db):
         await callback.answer("Некорректный user_id", show_alert=True)
         return
 
-    text = await build_user_details_text(db, user_id)
+    try:
+        profile = await get_admin_user_profile(user_id)
+        text = format_admin_user_profile_card(profile)
+    except ApiClientError as e:
+        text = f"❌ Не удалось загрузить профиль из API.\n\n{e}"
 
     try:
         await safe_edit_text(
@@ -1068,7 +1083,12 @@ async def adm_user_mark_susp(callback: CallbackQuery, db):
         return
 
     await mark_user_suspicious(db, user_id, "Помечен администратором")
-    text = await build_user_details_text(db, user_id)
+
+    try:
+        profile = await get_admin_user_profile(user_id)
+        text = format_admin_user_profile_card(profile)
+    except ApiClientError as e:
+        text = f"❌ Не удалось загрузить профиль из API.\n\n{e}"
 
     await safe_edit_text(
         callback.message,
@@ -1087,7 +1107,12 @@ async def adm_user_clear_susp(callback: CallbackQuery, db):
         return
 
     await clear_user_suspicious(db, user_id)
-    text = await build_user_details_text(db, user_id)
+
+    try:
+        profile = await get_admin_user_profile(user_id)
+        text = format_admin_user_profile_card(profile)
+    except ApiClientError as e:
+        text = f"❌ Не удалось загрузить профиль из API.\n\n{e}"
 
     await safe_edit_text(
         callback.message,
@@ -1786,31 +1811,4 @@ async def adm_set_role(callback: CallbackQuery, db):
                 ]
             ]
         ),
-    )
-
-async def build_user_details_text(db, user_id: int) -> str:
-    user = await get_user_admin_details(db, user_id)
-
-    if not user:
-        return "❌ Пользователь не найден."
-
-    if user["is_suspicious"]:
-        suspicious_block = (
-            f"⚠️ Подозрительный\n"
-            f"Причина: {user['suspicious_reason'] or '-'}"
-        )
-    else:
-        suspicious_block = "✅ Не подозрительный"
-
-    role_level = await get_user_role_level(db, user_id)
-    role_name = role_title_from_level(role_level)
-    activity_index = await get_activity_index(db, user_id)
-
-    return (
-        f"👤 Пользователь: {user['user_id']}\n\n"
-        f"Username: @{user['username'] or '-'}\n"
-        f"Баланс: {fmt_stars(user['balance'])}⭐\n"
-        f"Роль: {role_name}\n"
-        f"Индекс Активности: {activity_index:.1f}%\n\n"
-        f"{suspicious_block}"
     )

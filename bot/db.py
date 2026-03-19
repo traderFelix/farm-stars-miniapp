@@ -3,52 +3,16 @@ import aiosqlite, uuid, asyncio, logging, json
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Tuple
 from contextlib import asynccontextmanager
-from config import (
-    DB_PATH, REFERRAL_PERCENT, OWNER_ID, ADMIN_IDS, ROLE_USER, ROLE_CLIENT, ROLE_PARTNER, ROLE_ADMIN, ROLE_OWNER, SYSTEM_REASONS,
+from shared.config import (
+    DB_PATH, REFERRAL_PERCENT, OWNER_ID, ADMIN_IDS, ROLE_USER, ROLE_ADMIN, ROLE_OWNER,
 )
 from decimal import Decimal, ROUND_DOWN
 
+from shared.db.users import (
+    register_user, get_balance, _fmt_stars,
+)
+
 logger = logging.getLogger(__name__)
-
-# ---------- Roles ----------
-
-def normalize_role_level(role_level: int) -> int:
-    value = int(role_level)
-    if value < ROLE_USER:
-        return ROLE_USER
-    if value > ROLE_OWNER:
-        return ROLE_OWNER
-    return value
-
-
-def role_title_from_level(role_level: int) -> str:
-    value = normalize_role_level(role_level)
-
-    if value >= ROLE_OWNER:
-        return "владелец"
-    if value >= ROLE_ADMIN:
-        return "админ"
-    if value >= ROLE_PARTNER:
-        return "партнер"
-    if value >= ROLE_CLIENT:
-        return "клиент"
-    return "пользователь"
-
-
-
-def bootstrap_role_level_for_user_id(user_id: int) -> int:
-    uid = int(user_id)
-
-    if uid in OWNER_ID:
-        return ROLE_OWNER
-    if uid in ADMIN_IDS:
-        return ROLE_ADMIN
-    return ROLE_USER
-
-
-def has_role_level(current_level: int, required_level: int) -> bool:
-    return int(current_level) >= int(required_level)
-
 
 async def _column_exists(db: aiosqlite.Connection, table_name: str, column_name: str) -> bool:
     async with db.execute(f"PRAGMA table_info({table_name})") as cur:
@@ -74,9 +38,8 @@ async def _ensure_users_role_schema(db: aiosqlite.Connection) -> None:
         """
     )
 
-    for owner_id in OWNER_ID:
-        await db.execute(
-            """
+    await db.execute(
+        """
             UPDATE users
             SET role_level = CASE
                 WHEN COALESCE(role_level, 0) < ? THEN ?
@@ -84,8 +47,8 @@ async def _ensure_users_role_schema(db: aiosqlite.Connection) -> None:
             END
             WHERE user_id = ?
             """,
-            (ROLE_OWNER, ROLE_OWNER, int(owner_id)),
-        )
+        (ROLE_OWNER, ROLE_OWNER, OWNER_ID),
+    )
 
     for admin_id in ADMIN_IDS:
         await db.execute(
@@ -311,104 +274,6 @@ async def init_db(db: aiosqlite.Connection) -> None:
 
 # ---------- Users ----------
 
-async def register_user(
-        db: aiosqlite.Connection,
-        user_id: int,
-        username: Optional[str],
-        first_name: Optional[str] = None,
-        last_name: Optional[str] = None
-) -> None:
-    u = (username or "").strip().lstrip("@") or None
-    fn = (first_name or "").strip() or None
-    ln = (last_name or "").strip() or None
-
-    bootstrap_level = bootstrap_role_level_for_user_id(user_id)
-
-    async with db.execute("SELECT user_id FROM users WHERE user_id = ?", (user_id,)) as cur:
-        exists = await cur.fetchone() is not None
-
-    if not exists:
-        await db.execute(
-            """
-            INSERT INTO users (
-                user_id, username, tg_first_name, tg_last_name,
-                balance, role_level, created_at, last_seen_at
-            )
-            VALUES (?, ?, ?, ?, 0, ?, datetime('now'), datetime('now'))
-            """,
-            (user_id, u, fn, ln, bootstrap_level),
-        )
-        return
-
-    await db.execute(
-        """
-        UPDATE users
-        SET username = COALESCE(?, username),
-            tg_first_name = COALESCE(?, tg_first_name),
-            tg_last_name = COALESCE(?, tg_last_name),
-            role_level = CASE
-                WHEN COALESCE(role_level, 0) < ? THEN ?
-                ELSE role_level
-            END,
-            last_seen_at = datetime('now')
-        WHERE user_id = ?
-        """,
-        (u, fn, ln, bootstrap_level, bootstrap_level, user_id),
-    )
-
-async def get_user_role_level(db: aiosqlite.Connection, user_id: int) -> int:
-    async with db.execute(
-            """
-        SELECT COALESCE(role_level, ?) AS role_level
-        FROM users
-        WHERE user_id = ?
-        """,
-            (ROLE_USER, int(user_id)),
-    ) as cur:
-        row = await cur.fetchone()
-
-    db_level = int(row["role_level"]) if row else ROLE_USER
-    bootstrap_level = bootstrap_role_level_for_user_id(user_id)
-    return max(db_level, bootstrap_level)
-
-
-async def get_user_role_name(db: aiosqlite.Connection, user_id: int) -> str:
-    return role_title_from_level(await get_user_role_level(db, user_id))
-
-
-async def user_has_role(db: aiosqlite.Connection, user_id: int, required_level: int) -> bool:
-    current_level = await get_user_role_level(db, user_id)
-    return has_role_level(current_level, required_level)
-
-
-async def set_user_role_level(db: aiosqlite.Connection, user_id: int, role_level: int) -> bool:
-    target_level = normalize_role_level(role_level)
-
-    async with db.execute(
-            "SELECT 1 FROM users WHERE user_id = ?",
-            (int(user_id),),
-    ) as cur:
-        exists = await cur.fetchone()
-
-    if not exists:
-        return False
-
-    if target_level >= ROLE_OWNER:
-        target_level = ROLE_ADMIN
-
-    target_level = max(target_level, bootstrap_role_level_for_user_id(user_id))
-
-    await db.execute(
-        """
-        UPDATE users
-        SET role_level = ?
-        WHERE user_id = ?
-        """,
-        (target_level, int(user_id)),
-    )
-    return True
-
-
 async def ensure_user_registered(message_or_callback, db):
     user = message_or_callback.from_user
     async with tx(db, immediate=False):
@@ -419,11 +284,6 @@ async def ensure_user_registered(message_or_callback, db):
             user.first_name,
             user.last_name,
         )
-
-async def get_balance(db: aiosqlite.Connection, user_id: int) -> float:
-    async with db.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,)) as cur:
-        row = await cur.fetchone()
-    return float(row["balance"]) if row else 0.0
 
 async def total_balances(db: aiosqlite.Connection) -> float:
     async with db.execute("SELECT COALESCE(SUM(balance), 0) AS s FROM users") as cur:
@@ -1111,8 +971,6 @@ async def apply_balance_debit_if_enough(
 def stars(value) -> Decimal:
     return Decimal(value).quantize(Decimal("0.00"), rounding=ROUND_DOWN)
 
-def fmt_stars(v):
-    return f"{Decimal(v):.2f}"
 
 async def admin_balance_changes(db: aiosqlite.Connection) -> tuple[int, int]:
     query = """
@@ -1327,75 +1185,6 @@ async def clear_user_suspicious(db, user_id: int):
     )
     await db.commit()
 
-async def get_user_earnings_breakdown(db, user_id: int):
-    system_placeholders = ",".join("?" for _ in SYSTEM_REASONS)
-
-    query = f"""
-        SELECT
-            COALESCE(SUM(CASE WHEN reason = 'view_post_bonus' THEN delta ELSE 0 END), 0) AS view_post_bonus,
-            COALESCE(SUM(CASE WHEN reason = 'daily_bonus' THEN delta ELSE 0 END), 0) AS daily_bonus,
-            COALESCE(SUM(CASE WHEN reason = 'contest_bonus' THEN delta ELSE 0 END), 0) AS contest_bonus,
-            COALESCE(SUM(CASE WHEN reason = 'referral_bonus' THEN delta ELSE 0 END), 0) AS referral_bonus,
-            COALESCE(SUM(CASE WHEN reason = 'admin_adjust' THEN delta ELSE 0 END), 0) AS admin_adjust,
-            COALESCE(SUM(CASE
-                WHEN reason NOT IN ({system_placeholders})
-                THEN delta ELSE 0 END), 0) AS total_earned
-        FROM ledger
-        WHERE user_id = ?
-    """
-
-    params = (*SYSTEM_REASONS, user_id)
-    cursor = await db.execute(query, params)
-    row = await cursor.fetchone()
-
-    view_post_bonus = float(row["view_post_bonus"] or 0)
-    daily_bonus = float(row["daily_bonus"] or 0)
-    contest_bonus = float(row["contest_bonus"] or 0)
-    referral_bonus = float(row["referral_bonus"] or 0)
-    admin_adjust = float(row["admin_adjust"] or 0)
-    total = float(row["total_earned"] or 0)
-
-    def pct(value: float, total_value: float) -> float:
-        if total_value == 0:
-            return 0.0
-        return value * 100 / total_value
-
-    return {
-        "total": total,
-        "view_post_bonus": view_post_bonus,
-        "view_post_bonus_pct": pct(view_post_bonus, total),
-        "daily_bonus": daily_bonus,
-        "daily_bonus_pct": pct(daily_bonus, total),
-        "contest_bonus": contest_bonus,
-        "contest_bonus_pct": pct(contest_bonus, total),
-        "referral_bonus": referral_bonus,
-        "referral_bonus_pct": pct(referral_bonus, total),
-        "admin_adjust": admin_adjust,
-        "admin_adjust_pct": pct(admin_adjust, total),
-    }
-
-async def get_user_admin_details(db, user_id: int):
-    cursor = await db.execute(
-        """
-        SELECT user_id, username, balance, is_suspicious, suspicious_reason
-        FROM users
-        WHERE user_id = ?
-        """,
-        (user_id,),
-    )
-    return await cursor.fetchone()
-
-async def build_user_stats_text(db, user_id: int) -> str:
-    stats = await get_user_earnings_breakdown(db, user_id)
-
-    return (
-        f"⭐ Всего заработано: {fmt_stars(stats['total'])}⭐\n"
-        f"{fmt_stars(stats['view_post_bonus'])} ({stats['view_post_bonus_pct']:.1f}%) — просмотр постов\n"
-        f"{fmt_stars(stats['daily_bonus'])} ({stats['daily_bonus_pct']:.1f}%) — ежедневный бонус\n"
-        f"{fmt_stars(stats['contest_bonus'])} ({stats['contest_bonus_pct']:.1f}%) — конкурсы\n"
-        f"{fmt_stars(stats['referral_bonus'])} ({stats['referral_bonus_pct']:.1f}%) — рефералы\n"
-        f"{fmt_stars(stats['admin_adjust'])} ({stats['admin_adjust_pct']:.1f}%) — начисления от админа"
-    )
 
 async def mark_withdraw_fee_refunded(db, withdrawal_id: int):
     await db.execute(
@@ -1974,8 +1763,8 @@ async def claim_daily_checkin(
         balance = await get_balance(db, uid)
 
         text = (
-            f"🎁 Вы получили {fmt_stars(reward)}⭐\n\n"
-            f"📅 Приходите завтра и забирайте {fmt_stars(next_reward)}⭐"
+            f"🎁 Вы получили {_fmt_stars(reward)}⭐\n\n"
+            f"📅 Приходите завтра и забирайте {_fmt_stars(next_reward)}⭐"
         )
 
         return True, text, balance

@@ -9,10 +9,11 @@ __pycache__/
 .venv/
 venv/
 
-# Bot DB / local files
-*.db
+# DB / local files
+*.db*
 *.sqlite
 *.sqlite3
+*.log
 
 # Node
 node_modules/
@@ -23,7 +24,6 @@ dist/
 # Env
 .env
 .env.*
-!.env.example
 
 # IDE
 .idea/

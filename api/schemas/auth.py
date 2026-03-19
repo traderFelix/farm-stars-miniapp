@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Any, Optional
 
 from pydantic import BaseModel
 
@@ -10,6 +10,4 @@ class TelegramAuthRequest(BaseModel):
 class TelegramAuthResponse(BaseModel):
     ok: bool
     token: str
-    user_id: int
-    username: Optional[str] = None
-    first_name: Optional[str] = None
+    session: dict[str, Any]

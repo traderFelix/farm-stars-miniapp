@@ -1,11 +1,12 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from routes.miniapp_compat import router as miniapp_compat_router
 
-from config import WEB_ORIGIN_DEV, WEB_ORIGIN_NGROK
-from routes.health import router as health_router
-from routes.auth import router as auth_router
-from routes.profile import router as profile_router
+from shared.config import WEB_ORIGIN_DEV, WEB_ORIGIN_NGROK
+from api.routes.health import router as health_router
+from api.routes.auth import router as auth_router
+from api.routes.profile import router as profile_router
+from api.routes.miniapp_compat import router as miniapp_compat_router
+from api.routes.admin_users import router as admin_users_router
 
 app = FastAPI(title="Farm Stars API")
 
@@ -25,3 +26,4 @@ app.include_router(health_router)
 app.include_router(auth_router)
 app.include_router(profile_router)
 app.include_router(miniapp_compat_router)
+app.include_router(admin_users_router)

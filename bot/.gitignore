@@ -19,12 +19,6 @@ venv/
 .idea/
 *.iml
 
-# Local data
-bot.db
-bot.db-shm
-bot.db-wal
-*.log
-
 # Secrets/env
 .env
 .env.*

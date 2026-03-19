@@ -6,7 +6,7 @@ from aiogram import Router, Bot
 from aiogram.types import ErrorEvent
 from aiogram.exceptions import TelegramForbiddenError
 
-from config import ADMIN_IDS
+from shared.config import ADMIN_IDS
 
 router = Router()
 logger = logging.getLogger(__name__)

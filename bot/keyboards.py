@@ -1,6 +1,6 @@
 from aiogram.types import InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-from config import CHANNEL_LINK, ROLE_CLIENT, ROLE_PARTNER, ROLE_ADMIN
+from shared.config import CHANNEL_LINK, ROLE_CLIENT, ROLE_PARTNER, ROLE_ADMIN
 
 def bottom_menu_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
