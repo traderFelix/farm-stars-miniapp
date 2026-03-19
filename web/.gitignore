@@ -1,0 +1,18 @@
+# node
+node_modules
+.next
+
+# python
+venv
+__pycache__
+*.pyc
+
+# env
+.env
+
+# ide
+.idea
+*.iml
+
+# mac
+.DS_Store
