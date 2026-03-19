@@ -30,6 +30,7 @@ export default function HomePage() {
         const initData = getTelegramInitData();
 
         if (!initData) {
+          // noinspection ExceptionCaughtLocallyJS
           throw new Error("Telegram initData is empty");
         }
 
@@ -72,7 +73,7 @@ export default function HomePage() {
         <div className="mx-auto flex min-h-screen w-full max-w-md flex-col px-4 py-6">
           <header className="mb-6">
             <div className="text-xs uppercase tracking-[0.2em] text-zinc-500">
-              Farm Stars
+              Felix Farm Stars
             </div>
             <h1 className="mt-2 text-2xl font-semibold">Главный экран</h1>
           </header>
@@ -159,10 +160,5 @@ function formatBalance(value: number): string {
 
 function formatActivity(value: number): string {
   const numeric = Number(value || 0);
-
-  if (numeric <= 1) {
-    return `${(numeric * 100).toFixed(1)}%`;
-  }
-
   return `${numeric.toFixed(1)}%`;
 }

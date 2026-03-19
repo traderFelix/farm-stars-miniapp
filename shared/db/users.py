@@ -295,13 +295,10 @@ async def get_activity_index(db, user_id: int) -> float:
     sql = f"""
     SELECT
         COALESCE(SUM(CASE
-            WHEN delta > 0 AND reason IN ({good_placeholders}) THEN delta
+            WHEN reason IN ({good_placeholders}) THEN delta
             ELSE 0
         END), 0) AS good_total,
-        COALESCE(SUM(CASE
-            WHEN delta > 0 THEN delta
-            ELSE 0
-        END), 0) AS total_earned
+        COALESCE(SUM(delta), 0) AS total_earned
     FROM ledger
     WHERE user_id = ?
       AND reason NOT IN ({system_placeholders})
@@ -336,7 +333,7 @@ async def build_user_profile(db: aiosqlite.Connection, user_id: int) -> Optional
         "balance": float(row["balance"] or 0),
         "role_level": int(role_level),
         "role": role_title_from_level(role_level),
-        "activity_index": get_activity_index(db, user_id),
+        "activity_index": await get_activity_index(db, user_id),
         "is_suspicious": bool(row["is_suspicious"]) if "is_suspicious" in row.keys() else False,
         "suspicious_reason": row["suspicious_reason"] if "suspicious_reason" in row.keys() else None,
         "created_at": row["created_at"] if "created_at" in row.keys() else None,
