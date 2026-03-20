@@ -2,13 +2,10 @@ import aiosqlite, json
 from typing import Optional, Any
 from datetime import datetime, timedelta, timezone
 
-from bot.db import daily_checkin_reward, normalize_daily_cycle_day, tx # todo felix
+from shared.db.common import tx, normalize_daily_cycle_day, daily_checkin_reward
 from shared.config import (
     OWNER_ID, ADMIN_IDS, ROLE_USER, ROLE_CLIENT, ROLE_PARTNER, ROLE_ADMIN, ROLE_OWNER,
 )
-
-from shared.db.ledger import get_user_earnings_breakdown, get_activity_index, apply_balance_delta
-
 
 def normalize_role_level(role_level: int) -> int:
     value = int(role_level)
@@ -218,6 +215,7 @@ def fmt_stars(value: float) -> str:
 
 
 async def build_user_stats_text(db: aiosqlite.Connection, user_id: int) -> str:
+    from shared.db.ledger import get_user_earnings_breakdown
     stats = await get_user_earnings_breakdown(db, user_id)
 
     return (
@@ -231,6 +229,8 @@ async def build_user_stats_text(db: aiosqlite.Connection, user_id: int) -> str:
 
 
 async def build_user_profile(db: aiosqlite.Connection, user_id: int) -> Optional[dict[str, Any]]:
+    from shared.db.ledger import get_activity_index
+
     row = await get_user_by_id(db, user_id)
     if not row:
         return None
@@ -453,6 +453,8 @@ async def claim_daily_checkin(
     yesterday = today - timedelta(days=1)
 
     async with tx(db, immediate=True):
+        from shared.db.ledger import apply_balance_delta
+
         await register_user(db, uid, username, first_name, last_name)
 
         async with db.execute(
