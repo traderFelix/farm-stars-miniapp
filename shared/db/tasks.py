@@ -129,6 +129,8 @@ async def increment_task_post_views(
                 ELSE completed_at
             END
         WHERE id = ?
+          AND is_active = 1
+          AND current_views < required_views
         """,
         (int(task_post_id),),
     )
