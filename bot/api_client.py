@@ -9,7 +9,9 @@ API_TIMEOUT = float(os.getenv("API_TIMEOUT", "10"))
 
 
 class ApiClientError(Exception):
-    pass
+    def __init__(self, message: str, status_code: Optional[int] = None):
+        super().__init__(message)
+        self.status_code = status_code
 
 
 async def _request(
@@ -33,7 +35,7 @@ async def _request(
 
     if response.status_code >= 400:
         message = data.get("detail") or data.get("message") or f"HTTP {response.status_code}"
-        raise ApiClientError(message)
+        raise ApiClientError(message, response.status_code)
 
     return data
 
@@ -42,17 +44,22 @@ async def get_admin_user_profile(user_id: int) -> dict[str, Any]:
     return await _request("GET", f"/admin/users/{int(user_id)}")
 
 
-async def get_next_task(user_id: int) -> dict[str, Any]:
-    return await _request(
-        "GET",
-        f"/bot/tasks/next/{int(user_id)}",
-    )
+async def get_next_task(user_id: int) -> Optional[dict[str, Any]]:
+    try:
+        return await _request(
+            "GET",
+            f"/tasks/bot/next/{int(user_id)}",
+        )
+    except ApiClientError as e:
+        if e.status_code == 404:
+            return None
+        raise
 
 
 async def open_task(user_id: int, task_id: int) -> dict[str, Any]:
     return await _request(
         "POST",
-        f"/bot/tasks/{int(task_id)}/open/{int(user_id)}",
+        f"/tasks/bot/{int(task_id)}/open/{int(user_id)}",
         json={},
     )
 
@@ -60,6 +67,6 @@ async def open_task(user_id: int, task_id: int) -> dict[str, Any]:
 async def check_task(user_id: int, task_id: int) -> dict[str, Any]:
     return await _request(
         "POST",
-        f"/bot/tasks/{int(task_id)}/check/{int(user_id)}",
+        f"/tasks/bot/{int(task_id)}/check/{int(user_id)}",
         json={},
     )

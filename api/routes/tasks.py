@@ -77,7 +77,7 @@ async def check_task(
 
 
 @router.get(
-    "/bot/tasks/next/{user_id}",
+    "/bot/next/{user_id}",
     response_model=TaskListItem,
     summary="Bot internal: get next task for user",
 )
@@ -94,7 +94,7 @@ async def bot_get_next_task(user_id: int):
 
 
 @router.post(
-    "/bot/tasks/{task_id}/open/{user_id}",
+    "/bot/{task_id}/open/{user_id}",
     response_model=TaskOpenResponse,
     summary="Bot internal: open task for user",
 )
@@ -106,7 +106,7 @@ async def bot_open_task(user_id: int, task_id: int):
 
 
 @router.post(
-    "/bot/tasks/{task_id}/check/{user_id}",
+    "/bot/{task_id}/check/{user_id}",
     response_model=TaskCheckResponse,
     summary="Bot internal: check task for user",
 )
