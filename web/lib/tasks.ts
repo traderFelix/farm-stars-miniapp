@@ -1,41 +1,59 @@
-export type NextTaskResponse = {
-    ok: true;
-    task: {
-        id: number;
-        type: "view_post";
-        title: string;
-        reward: number;
-        hold_seconds: number;
-        telegram_url: string;
-        channel_name?: string | null;
-        message_id?: number | null;
-    } | null;
+export type TaskType = "view_post";
+export type TaskStatus = "available" | "in_progress" | "completed" | "blocked";
+
+export type TaskListItem = {
+    id: number;
+    type: TaskType;
+    title: string;
+    description?: string | null;
+    reward: number;
+    status: TaskStatus;
+    chat_id?: string | null;
+    channel_post_id?: number | null;
+    post_url?: string | null;
+    already_completed: boolean;
+    can_claim: boolean;
+    hold_seconds: number;
+};
+
+export type TaskOpenRequest = {
+    source?: string;
 };
 
 export type TaskOpenResponse = {
-    ok: true;
+    ok: boolean;
+    task_id: number;
     opened_at: number;
+    hold_seconds: number;
+    chat_id?: string | null;
+    channel_post_id?: number | null;
+    post_url?: string | null;
+    session_id?: string | null;
 };
 
+export type TaskCheckRequest = {
+    session_id?: string | null;
+};
+
+export type TaskCheckStatus =
+    | "completed"
+    | "already_completed"
+    | "too_early"
+    | "rejected";
+
 export type TaskCheckResponse = {
-    ok: true;
-    reward: number;
-    new_balance: number;
+    ok: boolean;
+    task_id: number;
+    status: TaskCheckStatus;
     message: string;
+    reward_granted: number;
+    new_balance: number;
+    task_completed: boolean;
 };
 
 export type StoredOpenedTask = {
     task_id: number;
     opened_at: number;
     hold_seconds: number;
-};
-
-export type HistoryResponse = {
-    ok: true;
-    items: {
-        task_id: number;
-        title: string;
-        reward: number;
-        completed_at: number;
-    }[];
+    session_id?: string | null;
 };

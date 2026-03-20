@@ -132,7 +132,17 @@ async def check_task_for_user(user_id: int, task_id: int) -> TaskCheckResponse:
 
         updated_post = await increment_task_post_views(db, int(row["id"]))
         if not updated_post:
-            raise RuntimeError("Failed to increment task post views")
+            current_balance = await _get_user_balance_safe(db, user_id)
+            await db.rollback()
+            return TaskCheckResponse(
+                ok=True,
+                task_id=task_id,
+                status="rejected",
+                message="Лимит просмотров достигнут или задание уже недоступно",
+                reward_granted=0,
+                new_balance=current_balance,
+                task_completed=False,
+            )
 
         updated_user = await db.execute(
             """

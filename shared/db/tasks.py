@@ -95,20 +95,15 @@ async def get_view_post_task_for_user(
         return await cur.fetchone()
 
 
-async def add_task_post_view(
-        db: aiosqlite.Connection,
-        user_id: int,
-        task_post_id: int,
-        reward: float,
-) -> bool:
-    cur = await db.execute(
+async def add_task_post_view(db, user_id: int, task_post_id: int, reward: float) -> bool:
+    cursor = await db.execute(
         """
-        INSERT OR IGNORE INTO task_post_views (user_id, task_post_id, reward, viewed_at)
-        VALUES (?, ?, ?, datetime('now'))
+        INSERT OR IGNORE INTO task_post_views (user_id, task_post_id, reward)
+        VALUES (?, ?, ?)
         """,
         (int(user_id), int(task_post_id), float(reward)),
     )
-    return cur.rowcount == 1
+    return cursor.rowcount == 1
 
 
 async def increment_task_post_views(

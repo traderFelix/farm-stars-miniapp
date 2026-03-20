@@ -51,9 +51,19 @@ async def get_history(user_id: int = Depends(get_current_user_id)):
     }
 
 
-@router.get("/tasks/next")
-async def get_next_task(user_id: int = Depends(get_current_user_id)):
-    # Пока compat-заглушка, но уже привязана к авторизованному пользователю.
+@router.get(
+    "/tasks/next",
+    deprecated=True,
+    summary="DEPRECATED compat task endpoint",
+)
+async def compat_get_next_task(user_id: int = Depends(get_current_user_id)):
+    # Временная compat-заглушка.
+    # Новый канонический путь для задач:
+    #   GET /tasks/next
+    #   POST /tasks/{task_id}/open
+    #   POST /tasks/{task_id}/check
+    #
+    # Этот endpoint оставлен только до полного перевода web/bot на новый flow.
     return {
         "task": {
             "id": 1,
@@ -67,8 +77,15 @@ async def get_next_task(user_id: int = Depends(get_current_user_id)):
     }
 
 
-@router.post("/tasks/open")
-async def open_task(user_id: int = Depends(get_current_user_id)):
+@router.post(
+    "/tasks/open",
+    deprecated=True,
+    summary="DEPRECATED compat task endpoint",
+)
+async def compat_open_task(user_id: int = Depends(get_current_user_id)):
+    # Временная compat-заглушка.
+    # Новый канонический endpoint:
+    # POST /tasks/{task_id}/open
     return {
         "ok": True,
         "opened_at": 1710000000,
@@ -76,8 +93,15 @@ async def open_task(user_id: int = Depends(get_current_user_id)):
     }
 
 
-@router.post("/tasks/check")
-async def check_task(user_id: int = Depends(get_current_user_id)):
+@router.post(
+    "/tasks/check",
+    deprecated=True,
+    summary="DEPRECATED compat task endpoint",
+)
+async def compat_check_task(user_id: int = Depends(get_current_user_id)):
+    # Временная compat-заглушка.
+    # Новый канонический endpoint:
+    # POST /tasks/{task_id}/check
     db = await get_db()
     try:
         profile = await get_profile_by_user_id(db, user_id)

@@ -14,38 +14,63 @@ from api.services.tasks import (
     open_task_for_user,
 )
 
-router = APIRouter(prefix="/tasks", tags=["tasks"])
+router = APIRouter(
+    prefix="/tasks",
+    tags=["tasks"],
+)
 
 
-@router.get("/next", response_model=TaskListItem)
+@router.get(
+    "/next",
+    response_model=TaskListItem,
+    summary="Get next available task",
+)
 async def get_next_task(
         user_id: int = Depends(get_current_user_id),
 ):
     task = await get_next_task_for_user(user_id)
+
     if not task:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="No available tasks",
         )
+
     return task
 
 
-@router.post("/{task_id}/open", response_model=TaskOpenResponse)
+@router.post(
+    "/{task_id}/open",
+    response_model=TaskOpenResponse,
+    summary="Open task",
+)
 async def open_task(
         task_id: int,
         payload: TaskOpenRequest,
         user_id: int = Depends(get_current_user_id),
 ):
+    # payload пока оставляем в контракте намеренно.
+    # Это часть нового task API, даже если сейчас source/session еще не используются.
+    _ = payload
+
     return await open_task_for_user(
         user_id=user_id,
         task_id=task_id,
     )
 
 
-@router.post("/{task_id}/check", response_model=TaskCheckResponse)
+@router.post(
+    "/{task_id}/check",
+    response_model=TaskCheckResponse,
+    summary="Check task completion",
+)
 async def check_task(
         task_id: int,
         payload: TaskCheckRequest,
         user_id: int = Depends(get_current_user_id),
 ):
+    # payload пока оставляем в контракте намеренно.
+    # session_id понадобится, если позже появится server-side attempt/session flow.
+    _ = payload
+
     return await check_task_for_user(user_id, task_id)
