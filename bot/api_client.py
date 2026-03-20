@@ -40,3 +40,26 @@ async def _request(
 
 async def get_admin_user_profile(user_id: int) -> dict[str, Any]:
     return await _request("GET", f"/admin/users/{int(user_id)}")
+
+
+async def get_next_task(user_id: int) -> dict[str, Any]:
+    return await _request(
+        "GET",
+        f"/bot/tasks/next/{int(user_id)}",
+    )
+
+
+async def open_task(user_id: int, task_id: int) -> dict[str, Any]:
+    return await _request(
+        "POST",
+        f"/bot/tasks/{int(task_id)}/open/{int(user_id)}",
+        json={},
+    )
+
+
+async def check_task(user_id: int, task_id: int) -> dict[str, Any]:
+    return await _request(
+        "POST",
+        f"/bot/tasks/{int(task_id)}/check/{int(user_id)}",
+        json={},
+    )

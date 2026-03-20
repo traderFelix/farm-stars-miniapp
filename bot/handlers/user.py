@@ -20,7 +20,7 @@ from bot.db import (
     sum_recent_abuse_amount, has_pending_withdrawal,
     register_user, get_balance, create_withdrawal, user_withdrawals,
     claim_reward, list_active_campaigns, log_abuse_event, count_recent_abuse_events, tx,
-    wallet_used_by_another_user, wallet_users, ensure_user_registered, xtr_ledger_add, apply_balance_delta,
+    wallet_used_by_another_user, wallet_users, ensure_user_registered, xtr_ledger_add,
 )
 
 from shared.db.users import (
@@ -28,8 +28,7 @@ from shared.db.users import (
     get_referrals_count, claim_daily_checkin,
 )
 from shared.db.tasks import (
-    count_available_view_post_tasks_for_user, get_next_view_post_task_for_user, get_view_post_task_for_user,
-    increment_task_post_views, add_task_post_view, allocate_task_post_from_channel_post
+    count_available_view_post_tasks_for_user, allocate_task_post_from_channel_post
 )
 from shared.db.ledger import (
     apply_balance_debit_if_enough, get_activity_index
@@ -41,6 +40,12 @@ from bot.keyboards import (
 )
 
 from bot.states import WithdrawCreate
+
+from bot.api_client import (
+    get_next_task,
+    open_task,
+    check_task,
+)
 
 router = Router()
 
@@ -242,27 +247,27 @@ async def task_view_post(callback: CallbackQuery, bot: Bot, state: FSMContext, d
     async with tx(db, immediate=False):
         await ensure_user_registered(callback, db)
 
-        row = await get_next_view_post_task_for_user(db, user_id)
-        if not row:
+        task = await get_next_task(user_id)
+        if not task:
             await callback.answer("❌ Доступных постов пока нет.", show_alert=True)
             return
 
-        view_seconds = int(row["view_seconds"])
+        view_seconds = int(task["hold_seconds"] or 0)
 
         recent_clicks = await count_recent_abuse_events(db, user_id, "task_view_click", 1)
-        if recent_clicks >= 60 / view_seconds:
-            await callback.answer("⏳ Слишком часто. Попробуй через минуту.", show_alert=True)
+        if view_seconds > 0 and recent_clicks >= 60 / view_seconds:
+            await callback.answer("⏳ Слишком часто.\nПопробуй через минуту.", show_alert=True)
             return
 
         await log_abuse_event(db, user_id, "task_view_click")
 
-    task_post_id = int(row["id"])
-    from_chat_id = row["chat_id"]
-    channel_post_id = int(row["channel_post_id"])
-    reward = float(row["reward"] or 0)
+    task_id = int(task["id"])
+    post_url = task.get("post_url")
+    chat_id = task.get("chat_id")
+    channel_post_id = task.get("channel_post_id")
+    reward = float(task.get("reward") or 0)
 
     await callback.answer("Показываю пост...")
-
     await _delete_last_task_post(bot, user_id, state)
 
     try:
@@ -270,11 +275,37 @@ async def task_view_post(callback: CallbackQuery, bot: Bot, state: FSMContext, d
     except Exception:
         pass
 
+    if not chat_id or not channel_post_id:
+        await bot.send_message(
+            chat_id=user_id,
+            text="❌ У задания нет данных поста.",
+            reply_markup=task_after_view_kb(),
+        )
+        return
+
+    try:
+        open_result = await open_task(user_id, task_id)
+    except Exception:
+        await bot.send_message(
+            chat_id=user_id,
+            text="❌ Не удалось открыть задание.",
+            reply_markup=task_after_view_kb(),
+        )
+        return
+
+    if not open_result.get("ok"):
+        await bot.send_message(
+            chat_id=user_id,
+            text="❌ Не удалось открыть задание.",
+            reply_markup=task_after_view_kb(),
+        )
+        return
+
     try:
         sent = await bot.forward_message(
             chat_id=user_id,
-            from_chat_id=from_chat_id,
-            message_id=channel_post_id,
+            from_chat_id=chat_id,
+            message_id=int(channel_post_id),
         )
     except TelegramBadRequest:
         await bot.send_message(
@@ -282,70 +313,60 @@ async def task_view_post(callback: CallbackQuery, bot: Bot, state: FSMContext, d
             text=(
                 "❌ Не удалось показать пост.\n"
                 "Проверь, что бот есть в канале и видит этот пост."
-            )
+            ),
+            reply_markup=task_after_view_kb(),
         )
         return
 
-    await state.update_data(**{LAST_TASK_POST_MSG_ID_KEY: sent.message_id})
+    await state.update_data(
+        **{
+            LAST_TASK_POST_MSG_ID_KEY: sent.message_id,
+            "active_task_id": task_id,
+        }
+    )
 
     await asyncio.sleep(view_seconds)
 
-    async with tx(db, immediate=True):
-        current_row = await get_view_post_task_for_user(db, user_id, task_post_id)
-        if not current_row:
-            await bot.send_message(
-                chat_id=user_id,
-                text=(
-                    "⚠️ Этот пост уже стал недоступен.\n"
-                    "Попробуй открыть следующий."
-                ),
-                reply_markup=task_after_view_kb()
-            )
-            return
-
-        inserted = await add_task_post_view(
-            db=db,
-            user_id=user_id,
-            task_post_id=task_post_id,
-            reward=reward,
+    try:
+        result = await check_task(user_id, task_id)
+    except Exception:
+        await bot.send_message(
+            chat_id=user_id,
+            text="⚠️ Не удалось засчитать просмотр.\nПопробуй следующий пост.",
+            reply_markup=task_after_view_kb(),
         )
-        if not inserted:
-            await bot.send_message(
-                chat_id=user_id,
-                text="✅ Этот пост уже был засчитан ранее.",
-                reply_markup=task_after_view_kb()
-            )
-            return
+        return
 
-        updated = await increment_task_post_views(db, task_post_id)
-        if not updated:
-            await bot.send_message(
-                chat_id=user_id,
-                text="⚠️ Не удалось засчитать просмотр. Попробуй следующий пост.",
-                reply_markup=task_after_view_kb()
-            )
-            return
+    status_value = result.get("status")
+    message_text = result.get("message") or "Готово"
+    new_balance = float(result.get("new_balance") or 0)
 
-        await apply_balance_delta(
-            db=db,
-            user_id=user_id,
-            delta=reward,
-            reason="view_post_bonus",
-            meta=f"task_post:{task_post_id}:channel_post:{channel_post_id}",
-        )
-
-        new_balance = await get_balance(db, user_id)
+    if status_value == "completed":
         available = await count_available_view_post_tasks_for_user(db, user_id)
+        await bot.send_message(
+            chat_id=user_id,
+            text=(
+                "✅ Просмотр засчитан\n\n"
+                f"Начислено: {fmt_stars(reward)}⭐\n"
+                f"Осталось доступно постов: {available}\n"
+                f"Баланс: {fmt_stars(new_balance)}⭐️"
+            ),
+            reply_markup=task_after_view_kb(),
+        )
+        return
+
+    if status_value == "already_completed":
+        await bot.send_message(
+            chat_id=user_id,
+            text="✅ Этот пост уже был засчитан ранее.",
+            reply_markup=task_after_view_kb(),
+        )
+        return
 
     await bot.send_message(
         chat_id=user_id,
-        text=(
-            "✅ Просмотр засчитан\n\n"
-            f"Начислено: {fmt_stars(reward)}⭐\n"
-            f"Осталось доступно постов: {available}\n"
-            f"Баланс: {fmt_stars(new_balance)}⭐️"
-        ),
-        reply_markup=task_after_view_kb()
+        text=f"⚠️ {message_text}",
+        reply_markup=task_after_view_kb(),
     )
 
 
