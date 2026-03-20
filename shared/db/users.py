@@ -216,6 +216,7 @@ def fmt_stars(value: float) -> str:
 
 async def build_user_stats_text(db: aiosqlite.Connection, user_id: int) -> str:
     from shared.db.ledger import get_user_earnings_breakdown
+
     stats = await get_user_earnings_breakdown(db, user_id)
 
     return (
