@@ -1,68 +1,16 @@
-import aiosqlite, uuid, asyncio, logging, json
+import aiosqlite, uuid, asyncio, logging
 
-from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Tuple
 from contextlib import asynccontextmanager
-from shared.config import (
-    DB_PATH, OWNER_ID, ADMIN_IDS, ROLE_USER, ROLE_ADMIN, ROLE_OWNER,
-)
+from shared.config import DB_PATH
 from decimal import Decimal, ROUND_DOWN
 
 from shared.db.ledger import apply_balance_delta
 from shared.db.users import (
-    register_user, get_balance, _fmt_stars,
+    register_user, get_balance, ensure_users_role_schema,
 )
 
 logger = logging.getLogger(__name__)
-
-async def _column_exists(db: aiosqlite.Connection, table_name: str, column_name: str) -> bool:
-    async with db.execute(f"PRAGMA table_info({table_name})") as cur:
-        rows = await cur.fetchall()
-
-    for row in rows:
-        name = row["name"] if isinstance(row, aiosqlite.Row) else row[1]
-        if name == column_name:
-            return True
-    return False
-
-
-async def _ensure_users_role_schema(db: aiosqlite.Connection) -> None:
-    if not await _column_exists(db, "users", "role_level"):
-        await db.execute(
-            f"ALTER TABLE users ADD COLUMN role_level INTEGER NOT NULL DEFAULT {ROLE_USER}"
-        )
-
-    await db.execute(
-        f"""
-        UPDATE users
-        SET role_level = COALESCE(role_level, {ROLE_USER})
-        """
-    )
-
-    await db.execute(
-        """
-            UPDATE users
-            SET role_level = CASE
-                WHEN COALESCE(role_level, 0) < ? THEN ?
-                ELSE role_level
-            END
-            WHERE user_id = ?
-            """,
-        (ROLE_OWNER, ROLE_OWNER, OWNER_ID),
-    )
-
-    for admin_id in ADMIN_IDS:
-        await db.execute(
-            """
-            UPDATE users
-            SET role_level = CASE
-                WHEN COALESCE(role_level, 0) < ? THEN ?
-                ELSE role_level
-            END
-            WHERE user_id = ?
-            """,
-            (ROLE_ADMIN, ROLE_ADMIN, int(admin_id)),
-        )
 
 
 # ---------- Connection / TX ----------
@@ -269,11 +217,9 @@ async def init_db(db: aiosqlite.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_users_referred_by ON users(referred_by);
     """)
 
-    await _ensure_users_role_schema(db)
+    await ensure_users_role_schema(db)
     await db.commit()
 
-
-# ---------- Users ----------
 
 async def ensure_user_registered(message_or_callback, db):
     user = message_or_callback.from_user
@@ -285,74 +231,6 @@ async def ensure_user_registered(message_or_callback, db):
             user.first_name,
             user.last_name,
         )
-
-async def total_balances(db: aiosqlite.Connection) -> float:
-    async with db.execute("SELECT COALESCE(SUM(balance), 0) AS s FROM users") as cur:
-        row = await cur.fetchone()
-    return float(row["s"] or 0.0)
-
-async def top_users_by_balance(db: aiosqlite.Connection, limit: int = 10):
-    async with db.execute(
-            """
-        SELECT username, balance
-        FROM users
-        ORDER BY balance DESC
-        LIMIT ?
-        """,
-            (int(limit),),
-    ) as cur:
-        return await cur.fetchall()
-
-async def bind_referrer(
-        db: aiosqlite.Connection,
-        user_id: int,
-        referrer_id: int,
-) -> bool:
-    user_id = int(user_id)
-    referrer_id = int(referrer_id)
-
-    if user_id == referrer_id:
-        return False
-
-    async with db.execute(
-            "SELECT referred_by FROM users WHERE user_id = ?",
-            (user_id,),
-    ) as cur:
-        row = await cur.fetchone()
-
-    if not row:
-        return False
-
-    if row["referred_by"] is not None:
-        return False
-
-    async with db.execute(
-            "SELECT 1 FROM users WHERE user_id = ?",
-            (referrer_id,),
-    ) as cur:
-        ref_exists = await cur.fetchone()
-
-    if not ref_exists:
-        return False
-
-    await db.execute(
-        """
-        UPDATE users
-        SET referred_by = ?
-        WHERE user_id = ? AND referred_by IS NULL
-        """,
-        (referrer_id, user_id),
-    )
-    return True
-
-
-async def get_referrals_count(db: aiosqlite.Connection, user_id: int) -> int:
-    async with db.execute(
-            "SELECT COUNT(*) AS c FROM users WHERE referred_by = ?",
-            (int(user_id),),
-    ) as cur:
-        row = await cur.fetchone()
-    return int(row["c"] or 0)
 
 # ---------- Campaigns ----------
 
@@ -677,49 +555,6 @@ async def unclaimed_total_amount(db: aiosqlite.Connection) -> float:
         row = await cur.fetchone()
     return float(row["total"] or 0.0)
 
-async def users_total_count(db: aiosqlite.Connection) -> int:
-    async with db.execute("SELECT COUNT(*) AS c FROM users") as cur:
-        row = await cur.fetchone()
-    return int(row["c"])
-
-async def users_new_since_hours(db: aiosqlite.Connection, hours: int) -> int:
-    async with db.execute(
-            "SELECT COUNT(*) AS c FROM users WHERE created_at >= datetime('now', ?)",
-            (f"-{int(hours)} hours",),
-    ) as cur:
-        row = await cur.fetchone()
-    return int(row["c"])
-
-async def users_new_since_days(db: aiosqlite.Connection, days: int) -> int:
-    async with db.execute(
-            "SELECT COUNT(*) AS c FROM users WHERE created_at >= datetime('now', ?)",
-            (f"-{int(days)} days",),
-    ) as cur:
-        row = await cur.fetchone()
-    return int(row["c"])
-
-async def users_active_since_days(db: aiosqlite.Connection, days: int) -> int:
-    async with db.execute(
-            "SELECT COUNT(*) AS c FROM users WHERE last_seen_at >= datetime('now', ?)",
-            (f"-{int(days)} days",),
-    ) as cur:
-        row = await cur.fetchone()
-    return int(row["c"])
-
-async def users_growth_by_day(db: aiosqlite.Connection, days: int = 30):
-    async with db.execute(
-            """
-        SELECT date(created_at) AS d, COUNT(*) AS cnt
-        FROM users
-        WHERE created_at >= datetime('now', ?)
-        GROUP BY d
-        ORDER BY d ASC
-        """,
-            (f"-{int(days)} days",),
-    ) as cur:
-        rows = await cur.fetchall()
-    return [(r["d"], int(r["cnt"])) for r in rows]
-
 
 # ---------- Ledger / Withdrawals ----------
 
@@ -787,26 +622,6 @@ async def user_withdrawals(db: aiosqlite.Connection, user_id: int, limit: int = 
         LIMIT ?
         """,
             (int(user_id), int(limit)),
-    ) as cur:
-        return await cur.fetchall()
-
-async def balances_audit(db: aiosqlite.Connection, limit: int = 10):
-    async with db.execute(
-            """
-        SELECT
-          u.user_id,
-          u.username,
-          COALESCE(u.balance, 0) AS users_balance,
-          COALESCE(SUM(l.delta), 0) AS ledger_sum,
-          (COALESCE(u.balance, 0) - COALESCE(SUM(l.delta), 0)) AS diff
-        FROM users u
-        LEFT JOIN ledger l ON l.user_id = u.user_id
-        GROUP BY u.user_id
-        HAVING ABS(diff) > 1e-9
-        ORDER BY ABS(diff) DESC
-        LIMIT ?
-        """,
-            (int(limit),),
     ) as cur:
         return await cur.fetchall()
 
@@ -909,18 +724,6 @@ async def has_pending_withdrawal(db: aiosqlite.Connection, user_id: int) -> bool
         return await cur.fetchone() is not None
 
 
-async def user_created_hours_ago(db: aiosqlite.Connection, user_id: int) -> float:
-    async with db.execute(
-            """
-        SELECT COALESCE((julianday('now') - julianday(created_at)) * 24.0, 0)
-        FROM users
-        WHERE user_id = ?
-        """,
-            (int(user_id),),
-    ) as cur:
-        row = await cur.fetchone()
-        return float(row[0] or 0.0)
-
 async def wallet_used_by_another_user(
         db: aiosqlite.Connection,
         user_id: int,
@@ -960,46 +763,6 @@ async def wallet_users(db, wallet: str) -> list[str]:
             result.append(f"user_id={user_id}")
 
     return result
-
-async def mark_user_suspicious(db, user_id: int, reason: str):
-    row = await db.execute_fetchone(
-        "SELECT is_suspicious, suspicious_reason FROM users WHERE user_id = ?",
-        (user_id,),
-    )
-    if not row:
-        return
-
-    if row["is_suspicious"]:
-        old_reason = row["suspicious_reason"] or ""
-        if reason and reason not in old_reason:
-            new_reason = f"{old_reason}; {reason}" if old_reason else reason
-        else:
-            new_reason = old_reason
-    else:
-        new_reason = reason
-
-    await db.execute(
-        """
-        UPDATE users
-        SET is_suspicious = 1,
-            suspicious_reason = ?
-        WHERE user_id = ?
-        """,
-        (new_reason, user_id),
-    )
-    await db.commit()
-
-async def clear_user_suspicious(db, user_id: int):
-    await db.execute(
-        """
-        UPDATE users
-        SET is_suspicious = 0,
-            suspicious_reason = NULL
-        WHERE user_id = ?
-        """,
-        (user_id,),
-    )
-    await db.commit()
 
 
 async def mark_withdraw_fee_refunded(db, withdrawal_id: int):
@@ -1119,257 +882,6 @@ async def xtr_ledger_sum_by_reason(db: aiosqlite.Connection, reason: str) -> int
         return int(row["s"] or 0)
 
 
-async def list_task_channels(db: aiosqlite.Connection):
-    async with db.execute(
-            """
-        SELECT
-            id,
-            chat_id,
-            COALESCE(title, '') AS title,
-            is_active,
-            total_bought_views,
-            views_per_post,
-            view_seconds,
-            allocated_views,
-            (total_bought_views - allocated_views) AS remaining_views,
-            created_at
-        FROM task_channels
-        ORDER BY id DESC
-        """
-    ) as cur:
-        return await cur.fetchall()
-
-
-async def get_task_channel(db: aiosqlite.Connection, channel_id: int):
-    async with db.execute(
-            """
-        SELECT
-            id,
-            chat_id,
-            COALESCE(title, '') AS title,
-            is_active,
-            total_bought_views,
-            views_per_post,
-            view_seconds,
-            allocated_views,
-            (total_bought_views - allocated_views) AS remaining_views,
-            created_at
-        FROM task_channels
-        WHERE id = ?
-        LIMIT 1
-        """,
-            (int(channel_id),),
-    ) as cur:
-        return await cur.fetchone()
-
-
-async def get_task_channel_by_chat_id(db: aiosqlite.Connection, chat_id: str):
-    async with db.execute(
-            """
-        SELECT
-            id,
-            chat_id,
-            COALESCE(title, '') AS title,
-            is_active,
-            total_bought_views,
-            views_per_post,
-            view_seconds,
-            allocated_views,
-            (total_bought_views - allocated_views) AS remaining_views,
-            created_at
-        FROM task_channels
-        WHERE chat_id = ?
-        LIMIT 1
-        """,
-            (str(chat_id),),
-    ) as cur:
-        return await cur.fetchone()
-
-
-async def create_task_channel(
-        db: aiosqlite.Connection,
-        chat_id: str,
-        title: Optional[str],
-        total_bought_views: int,
-        views_per_post: int,
-        view_seconds: int,
-) -> int:
-    cur = await db.execute(
-        """
-        INSERT INTO task_channels (
-            chat_id, title, is_active, total_bought_views, views_per_post, view_seconds, allocated_views, created_at
-        )
-        VALUES (?, ?, 1, ?, ?, ?, 0, datetime('now'))
-        """,
-        (
-            str(chat_id),
-            title,
-            int(total_bought_views),
-            int(views_per_post),
-            int(view_seconds),
-        ),
-    )
-    return int(cur.lastrowid)
-
-
-async def set_task_channel_active(db: aiosqlite.Connection, channel_id: int, is_active: int) -> None:
-    await db.execute(
-        """
-        UPDATE task_channels
-        SET is_active = ?
-        WHERE id = ?
-        """,
-        (int(is_active), int(channel_id)),
-    )
-
-
-async def allocate_task_post_from_channel_post(
-        db: aiosqlite.Connection,
-        chat_id: str,
-        channel_post_id: int,
-        title: Optional[str] = None,
-        reward: float = 0.01,
-) -> bool:
-    channel = await get_task_channel_by_chat_id(db, chat_id)
-    if not channel:
-        return False
-
-    if int(channel["is_active"] or 0) != 1:
-        return False
-
-    remaining = int(channel["remaining_views"] or 0)
-    views_per_post = int(channel["views_per_post"] or 0)
-
-    if remaining <= 0 or views_per_post <= 0:
-        await auto_disable_task_channel_if_exhausted(db, int(channel["id"]))
-        return False
-
-    alloc = min(remaining, views_per_post)
-    if alloc <= 0:
-        await auto_disable_task_channel_if_exhausted(db, int(channel["id"]))
-        return False
-
-    cur = await db.execute(
-        """
-        INSERT OR IGNORE INTO task_posts (
-            channel_id, channel_post_id, reward, required_views, current_views, is_active, created_at
-        )
-        VALUES (?, ?, ?, ?, 0, 1, datetime('now'))
-        """,
-        (
-            int(channel["id"]),
-            int(channel_post_id),
-            float(reward),
-            int(alloc),
-        ),
-    )
-
-    if cur.rowcount != 1:
-        return False
-
-    await db.execute(
-        """
-        UPDATE task_channels
-        SET
-            allocated_views = allocated_views + ?,
-            title = COALESCE(?, title)
-        WHERE id = ?
-        """,
-        (int(alloc), title, int(channel["id"])),
-    )
-
-    await auto_disable_task_channel_if_exhausted(db, int(channel["id"]))
-    return True
-
-
-async def task_channel_stats(db: aiosqlite.Connection, channel_id: int):
-    async with db.execute(
-            """
-        SELECT
-            COUNT(*) AS total_posts,
-            COALESCE(SUM(required_views), 0) AS total_required,
-            COALESCE(SUM(current_views), 0) AS total_current,
-            SUM(CASE WHEN is_active = 1 AND current_views < required_views THEN 1 ELSE 0 END) AS active_posts
-        FROM task_posts
-        WHERE channel_id = ?
-        """,
-            (int(channel_id),),
-    ) as cur:
-        return await cur.fetchone()
-
-async def update_task_channel_params(
-        db: aiosqlite.Connection,
-        channel_id: int,
-        total_bought_views: int,
-        views_per_post: int,
-        view_seconds: int,
-) -> None:
-    await db.execute(
-        """
-        UPDATE task_channels
-        SET
-            total_bought_views = ?,
-            views_per_post = ?,
-            view_seconds = ?
-        WHERE id = ?
-        """,
-        (
-            int(total_bought_views),
-            int(views_per_post),
-            int(view_seconds),
-            int(channel_id),
-        ),
-    )
-
-async def get_task_channel_allocated_views(db: aiosqlite.Connection, channel_id: int) -> int:
-    async with db.execute(
-            """
-        SELECT allocated_views
-        FROM task_channels
-        WHERE id = ?
-        LIMIT 1
-        """,
-            (int(channel_id),),
-    ) as cur:
-        row = await cur.fetchone()
-        return int(row["allocated_views"] or 0) if row else 0
-
-async def list_task_posts_by_channel(db: aiosqlite.Connection, channel_id: int, limit: int = 20):
-    async with db.execute(
-            """
-        SELECT
-            id,
-            channel_post_id,
-            required_views,
-            current_views,
-            is_active,
-            created_at,
-            completed_at
-        FROM task_posts
-        WHERE channel_id = ?
-        ORDER BY channel_post_id DESC, id DESC
-        LIMIT ?
-        """,
-            (int(channel_id), int(limit)),
-    ) as cur:
-        return await cur.fetchall()
-
-async def auto_disable_task_channel_if_exhausted(
-        db: aiosqlite.Connection,
-        channel_id: int,
-) -> bool:
-    cur = await db.execute(
-        """
-        UPDATE task_channels
-        SET is_active = 0
-        WHERE id = ?
-          AND is_active = 1
-          AND allocated_views >= total_bought_views
-        """,
-        (int(channel_id),),
-    )
-    return cur.rowcount == 1
-
 def normalize_daily_cycle_day(cycle_day: int) -> int:
     if cycle_day <= 0:
         return 1
@@ -1380,82 +892,3 @@ def daily_checkin_reward(cycle_day: int) -> float:
     cycle_day = normalize_daily_cycle_day(cycle_day)
     return round(cycle_day * 0.05, 2)
 
-
-async def claim_daily_checkin(
-        db,
-        user_id: int,
-        username: Optional[str],
-        first_name: Optional[str] = None,
-        last_name: Optional[str] = None,
-):
-    uid = int(user_id)
-
-    now = datetime.now(timezone.utc)
-    today = now.date()
-    yesterday = today - timedelta(days=1)
-
-    async with tx(db, immediate=True):
-        await register_user(db, uid, username, first_name, last_name)
-
-        async with db.execute(
-                """
-            SELECT daily_checkin_cycle_day, last_daily_checkin_at
-            FROM users
-            WHERE user_id = ?
-            """,
-                (uid,),
-        ) as cur:
-            row = await cur.fetchone()
-
-        cycle_day = int(row["daily_checkin_cycle_day"] or 0)
-        last_checkin_raw = row["last_daily_checkin_at"]
-
-        last_date = None
-        if last_checkin_raw:
-            last_date = datetime.fromisoformat(last_checkin_raw).date()
-
-        if last_date == today:
-            balance = await get_balance(db, uid)
-            return False, "", balance
-
-        if last_date == yesterday:
-            new_cycle_day = normalize_daily_cycle_day(cycle_day + 1)
-        else:
-            new_cycle_day = 1
-
-        reward = daily_checkin_reward(new_cycle_day)
-        next_cycle_day = normalize_daily_cycle_day(new_cycle_day + 1)
-        next_reward = daily_checkin_reward(next_cycle_day)
-
-        await db.execute(
-            """
-            UPDATE users
-            SET daily_checkin_cycle_day = ?, last_daily_checkin_at = ?
-            WHERE user_id = ?
-            """,
-            (new_cycle_day, now.isoformat(), uid),
-        )
-
-        await apply_balance_delta(
-            db=db,
-            user_id=uid,
-            delta=reward,
-            reason="daily_bonus",
-            meta=json.dumps(
-                {
-                    "type": "daily_bonus",
-                    "cycle_day": new_cycle_day,
-                    "reward": reward,
-                },
-                ensure_ascii=False,
-            ),
-        )
-
-        balance = await get_balance(db, uid)
-
-        text = (
-            f"🎁 Вы получили {_fmt_stars(reward)}⭐\n\n"
-            f"📅 Приходите завтра и забирайте {_fmt_stars(next_reward)}⭐"
-        )
-
-        return True, text, balance

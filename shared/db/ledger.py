@@ -3,7 +3,8 @@ from typing import Optional
 
 import aiosqlite
 
-from shared.config import REFERRAL_PERCENT
+from shared.config import REFERRAL_PERCENT, SYSTEM_REASONS, GOOD_ACTIVITY_REASONS
+
 from shared.db.users import get_referrer_id
 
 logger = logging.getLogger(__name__)
@@ -186,3 +187,106 @@ async def apply_balance_debit_if_enough(
         (int(user_id), -amount, reason, campaign_key, withdrawal_id, meta),
     )
     return True
+
+async def get_user_earnings_breakdown(db: aiosqlite.Connection, user_id: int) -> dict[str, float]:
+    system_placeholders = ",".join("?" for _ in SYSTEM_REASONS)
+
+    query = f"""
+        SELECT
+            COALESCE(SUM(CASE WHEN reason = 'view_post_bonus' THEN delta ELSE 0 END), 0) AS view_post_bonus,
+            COALESCE(SUM(CASE WHEN reason = 'daily_bonus' THEN delta ELSE 0 END), 0) AS daily_bonus,
+            COALESCE(SUM(CASE WHEN reason = 'contest_bonus' THEN delta ELSE 0 END), 0) AS contest_bonus,
+            COALESCE(SUM(CASE WHEN reason = 'referral_bonus' THEN delta ELSE 0 END), 0) AS referral_bonus,
+            COALESCE(SUM(CASE WHEN reason = 'admin_adjust' THEN delta ELSE 0 END), 0) AS admin_adjust,
+            COALESCE(
+                SUM(
+                    CASE
+                        WHEN reason NOT IN ({system_placeholders})
+                        THEN delta ELSE 0
+                    END
+                ),
+                0
+            ) AS total_earned
+        FROM ledger
+        WHERE user_id = ?
+    """
+
+    params = (*SYSTEM_REASONS, int(user_id))
+    async with db.execute(query, params) as cursor:
+        row = await cursor.fetchone()
+
+    view_post_bonus = float(row["view_post_bonus"] or 0)
+    daily_bonus = float(row["daily_bonus"] or 0)
+    contest_bonus = float(row["contest_bonus"] or 0)
+    referral_bonus = float(row["referral_bonus"] or 0)
+    admin_adjust = float(row["admin_adjust"] or 0)
+    total = float(row["total_earned"] or 0)
+
+    def pct(value: float, total_value: float) -> float:
+        if total_value == 0:
+            return 0.0
+        return value * 100 / total_value
+
+    return {
+        "total": total,
+        "view_post_bonus": view_post_bonus,
+        "view_post_bonus_pct": pct(view_post_bonus, total),
+        "daily_bonus": daily_bonus,
+        "daily_bonus_pct": pct(daily_bonus, total),
+        "contest_bonus": contest_bonus,
+        "contest_bonus_pct": pct(contest_bonus, total),
+        "referral_bonus": referral_bonus,
+        "referral_bonus_pct": pct(referral_bonus, total),
+        "admin_adjust": admin_adjust,
+        "admin_adjust_pct": pct(admin_adjust, total),
+    }
+
+async def get_activity_index(db, user_id: int) -> float:
+    system_placeholders = ",".join("?" for _ in SYSTEM_REASONS)
+    good_placeholders = ",".join("?" for _ in GOOD_ACTIVITY_REASONS)
+
+    sql = f"""
+    SELECT
+        COALESCE(SUM(CASE
+            WHEN reason IN ({good_placeholders}) THEN delta
+            ELSE 0
+        END), 0) AS good_total,
+        COALESCE(SUM(delta), 0) AS total_earned
+    FROM ledger
+    WHERE user_id = ?
+      AND reason NOT IN ({system_placeholders})
+    """
+
+    params = [*GOOD_ACTIVITY_REASONS, int(user_id), *SYSTEM_REASONS]
+
+    async with db.execute(sql, params) as cur:
+        row = await cur.fetchone()
+
+    good_total = float(row["good_total"] or 0)
+    total_earned = float(row["total_earned"] or 0)
+
+    if total_earned <= 0:
+        return 0.0
+
+    return (good_total / total_earned) * 100.0
+
+
+async def balances_audit(db: aiosqlite.Connection, limit: int = 10):
+    async with db.execute(
+            """
+        SELECT
+          u.user_id,
+          u.username,
+          COALESCE(u.balance, 0) AS users_balance,
+          COALESCE(SUM(l.delta), 0) AS ledger_sum,
+          (COALESCE(u.balance, 0) - COALESCE(SUM(l.delta), 0)) AS diff
+        FROM users u
+        LEFT JOIN ledger l ON l.user_id = u.user_id
+        GROUP BY u.user_id
+        HAVING ABS(diff) > 1e-9
+        ORDER BY ABS(diff) DESC
+        LIMIT ?
+        """,
+            (int(limit),),
+    ) as cur:
+        return await cur.fetchall()

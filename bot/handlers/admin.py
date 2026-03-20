@@ -31,31 +31,29 @@ from bot.db import (
     add_winners, delete_winner_if_not_claimed,
 
     # stats
-    campaign_stats, list_winners, claimed_usernames, global_claims_stats, campaigns_status_counts, total_balances,
+    campaign_stats, list_winners, claimed_usernames, global_claims_stats, campaigns_status_counts,
     unclaimed_total_amount, total_assigned_amount, total_withdrawn_amount, pending_withdrawn_amount,
 
-    # users/growth
-    top_users_by_balance, users_total_count, users_new_since_hours, users_new_since_days, users_active_since_days,
-    users_growth_by_day, mark_user_suspicious, clear_user_suspicious,
-
     # ledger
-    apply_balance_delta, get_balance, balances_audit, xtr_ledger_add,
+    apply_balance_delta, get_balance, xtr_ledger_add,
 
     # withdraw
     list_withdrawals, get_withdrawal, set_withdrawal_status, mark_withdraw_fee_refunded, list_recent_fee_payments,
     find_withdraw_by_fee_charge_id,
-
-    # channels
-    list_task_channels, get_task_channel, create_task_channel, set_task_channel_active, task_channel_stats, update_task_channel_params,
-    get_task_channel_allocated_views, list_task_posts_by_channel,
 )
 
 from shared.db.users import (
-    _fmt_stars, build_user_stats_text, user_has_role, get_user_role_name, get_user_role_level, set_user_role_level,
-    role_title_from_level
+    fmt_stars, build_user_stats_text, user_has_role, get_user_role_name, get_user_role_level, set_user_role_level,
+    role_title_from_level, users_total_count, users_new_since_hours, users_new_since_days, users_active_since_days,
+    users_growth_by_day, total_balances, mark_user_suspicious, clear_user_suspicious, top_users_by_balance
 )
 from shared.db.ledger import (
     add_referral_bonus_for_paid_withdrawal, ledger_add, ledger_sum_by_reason, get_balance_adjusts_by_admin,
+    balances_audit,
+)
+from shared.db.tasks import (
+    get_task_channel, task_channel_stats, list_task_channels, set_task_channel_active, get_task_channel_allocated_views,
+    list_task_posts_by_channel, update_task_channel_params, create_task_channel
 )
 
 from bot.keyboards import (
@@ -705,7 +703,7 @@ async def adm_user_adjust_finish(message: Message, state: FSMContext, db):
     await message.answer(
         f"✅ Готово\n"
         f"Изменение: {delta:+.2f}⭐\n"
-        f"Новый баланс: {_fmt_stars(balance)}⭐",
+        f"Новый баланс: {fmt_stars(balance)}⭐",
         reply_markup=admin_user_kb(user_id)
     )
 
@@ -1011,15 +1009,15 @@ async def adm_audit_balances(callback: CallbackQuery, db):
 
     lines = [
         "🧮 Сверка балансов\n",
-        f"Баланс пользователей: {_fmt_stars(total_balances_sum)}⭐\n",
-        f"Получено в конкурсах (база): {_fmt_stars(total_claimed_all)}⭐",
-        f"Получено в конкурсах (леджер): {_fmt_stars(claimed_from_ledger)}⭐",
-        f"Получено за рефералов: {_fmt_stars(referral_bonus)}⭐\n"
-        f"Получено за просмотры постов: {_fmt_stars(view_post_bonus)}⭐\n"
-        f"Получено за ежедневный бонус: {_fmt_stars(daily_bonus)}⭐\n"
-        f"Получено от админа: {_fmt_stars(admin_added - admin_removed)}⭐\n",
-        f"Выведено: {_fmt_stars(total_withdrawn_sum)}⭐",
-        f"В обработке: {_fmt_stars(pending_withdrawn_sum)}⭐\n",
+        f"Баланс пользователей: {fmt_stars(total_balances_sum)}⭐\n",
+        f"Получено в конкурсах (база): {fmt_stars(total_claimed_all)}⭐",
+        f"Получено в конкурсах (леджер): {fmt_stars(claimed_from_ledger)}⭐",
+        f"Получено за рефералов: {fmt_stars(referral_bonus)}⭐\n"
+        f"Получено за просмотры постов: {fmt_stars(view_post_bonus)}⭐\n"
+        f"Получено за ежедневный бонус: {fmt_stars(daily_bonus)}⭐\n"
+        f"Получено от админа: {fmt_stars(admin_added - admin_removed)}⭐\n",
+        f"Выведено: {fmt_stars(total_withdrawn_sum)}⭐",
+        f"В обработке: {fmt_stars(pending_withdrawn_sum)}⭐\n",
     ]
 
     if not mismatches:
@@ -1039,9 +1037,9 @@ async def adm_audit_balances(callback: CallbackQuery, db):
 
             lines.append(
                 f"user_id={user_id} ({uname}): "
-                f"balance={_fmt_stars(balance)}⭐ / "
-                f"ledger={_fmt_stars(ledger_sum)}⭐ / "
-                f"diff={_fmt_stars(diff)}⭐"
+                f"balance={fmt_stars(balance)}⭐ / "
+                f"ledger={fmt_stars(ledger_sum)}⭐ / "
+                f"diff={fmt_stars(diff)}⭐"
             )
 
     await safe_edit_text(
