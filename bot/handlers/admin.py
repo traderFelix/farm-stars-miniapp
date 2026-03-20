@@ -32,19 +32,18 @@ from bot.db import (
 
     # stats
     campaign_stats, list_winners, claimed_usernames, global_claims_stats, campaigns_status_counts, total_balances,
-    unclaimed_total_amount, total_assigned_amount, admin_balance_changes, total_withdrawn_amount, pending_withdrawn_amount,
-    ledger_sum_by_reason,
+    unclaimed_total_amount, total_assigned_amount, total_withdrawn_amount, pending_withdrawn_amount,
 
     # users/growth
     top_users_by_balance, users_total_count, users_new_since_hours, users_new_since_days, users_active_since_days,
     users_growth_by_day, mark_user_suspicious, clear_user_suspicious,
 
     # ledger
-    ledger_add, apply_balance_delta, get_balance, balances_audit, xtr_ledger_add,
+    apply_balance_delta, get_balance, balances_audit, xtr_ledger_add,
 
     # withdraw
     list_withdrawals, get_withdrawal, set_withdrawal_status, mark_withdraw_fee_refunded, list_recent_fee_payments,
-    find_withdraw_by_fee_charge_id, add_referral_bonus_for_paid_withdrawal,
+    find_withdraw_by_fee_charge_id,
 
     # channels
     list_task_channels, get_task_channel, create_task_channel, set_task_channel_active, task_channel_stats, update_task_channel_params,
@@ -54,6 +53,9 @@ from bot.db import (
 from shared.db.users import (
     _fmt_stars, build_user_stats_text, user_has_role, get_user_role_name, get_user_role_level, set_user_role_level,
     role_title_from_level
+)
+from shared.db.ledger import (
+    add_referral_bonus_for_paid_withdrawal, ledger_add, ledger_sum_by_reason, get_balance_adjusts_by_admin,
 )
 
 from bot.keyboards import (
@@ -999,7 +1001,7 @@ async def adm_audit_balances(callback: CallbackQuery, db):
     mismatches = await balances_audit(db)
     total_balances_sum = await total_balances(db)
     claims_count_all, total_claimed_all = await global_claims_stats(db)
-    admin_added, admin_removed = await admin_balance_changes(db)
+    admin_added, admin_removed = await get_balance_adjusts_by_admin(db)
     total_withdrawn_sum = await total_withdrawn_amount(db)
     pending_withdrawn_sum = await pending_withdrawn_amount(db)
     claimed_from_ledger = await ledger_sum_by_reason(db, "contest_bonus")

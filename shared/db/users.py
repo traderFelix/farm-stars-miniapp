@@ -339,3 +339,15 @@ async def build_user_profile(db: aiosqlite.Connection, user_id: int) -> Optional
         "created_at": row["created_at"] if "created_at" in row.keys() else None,
         "last_seen_at": row["last_seen_at"] if "last_seen_at" in row.keys() else None,
     }
+
+async def get_referrer_id(db: aiosqlite.Connection, user_id: int) -> Optional[int]:
+    async with db.execute(
+            "SELECT referred_by FROM users WHERE user_id = ?",
+            (int(user_id),),
+    ) as cur:
+        row = await cur.fetchone()
+
+    if not row or row["referred_by"] is None:
+        return None
+
+    return int(row["referred_by"])

@@ -18,7 +18,7 @@ from shared.config import (
 
 from bot.db import (
     sum_recent_abuse_amount, has_pending_withdrawal, user_created_hours_ago,
-    register_user, get_balance, create_withdrawal, user_withdrawals, apply_balance_debit_if_enough,
+    register_user, get_balance, create_withdrawal, user_withdrawals,
     claim_reward, list_active_campaigns, log_abuse_event, count_recent_abuse_events, tx,
     wallet_used_by_another_user, wallet_users, ensure_user_registered, xtr_ledger_add, apply_balance_delta, bind_referrer,
     allocate_task_post_from_channel_post, get_referrals_count, claim_daily_checkin,
@@ -30,6 +30,9 @@ from shared.db.users import (
 from shared.db.tasks import (
     count_available_view_post_tasks_for_user, get_next_view_post_task_for_user, get_view_post_task_for_user,
     increment_task_post_views, add_task_post_view
+)
+from shared.db.ledger import (
+    apply_balance_debit_if_enough
 )
 
 from bot.keyboards import (
