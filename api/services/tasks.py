@@ -5,7 +5,6 @@ from api.db.connection import get_db
 from api.schemas.tasks import (
     TaskCheckResponse,
     TaskListItem,
-    TaskListResponse,
     TaskOpenResponse,
 )
 from shared.db.tasks import (
@@ -26,11 +25,18 @@ def build_task_post_url(chat_id: Optional[str], channel_post_id: Optional[str]) 
     return None
 
 
-def map_task_row_to_item(row) -> TaskListItem:
+def build_task_title(row) -> str:
+    channel_title = (row["channel_title"] or "").strip()
+    if channel_title:
+        return f"Посмотреть пост — {channel_title}"
+    return "Посмотреть пост"
+
+
+def map_view_post_task_row_to_item(row) -> TaskListItem:
     return TaskListItem(
         id=int(row["id"]),
         type="view_post",
-        title="Посмотреть пост",
+        title=build_task_title(row),
         description="Открой пост и подержи нужное время",
         reward=float(row["reward"] or 0),
         status="available",
@@ -43,7 +49,7 @@ def map_task_row_to_item(row) -> TaskListItem:
     )
 
 
-async def list_tasks_for_user(user_id: int) -> TaskListResponse:
+async def get_next_task_for_user(user_id: int) -> Optional[TaskListItem]:
     db = await get_db()
     try:
         row = await get_next_view_post_task_for_user(db, user_id)
@@ -51,9 +57,9 @@ async def list_tasks_for_user(user_id: int) -> TaskListResponse:
         await db.close()
 
     if not row:
-        return TaskListResponse(items=[])
+        return None
 
-    return TaskListResponse(items=[map_task_row_to_item(row)])
+    return map_view_post_task_row_to_item(row)
 
 
 async def open_task_for_user(user_id: int, task_id: int) -> TaskOpenResponse:

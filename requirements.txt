@@ -1,3 +1,5 @@
 httpx
 aiosqlite
+aiogram
+matplotlib
 PyJWT

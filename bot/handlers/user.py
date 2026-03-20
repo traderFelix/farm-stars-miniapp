@@ -28,7 +28,7 @@ from shared.db.users import (
     get_activity_index, _fmt_stars, user_has_role, get_user_role_level, role_title_from_level,
 )
 from shared.db.tasks import (
-    count_available_task_posts_for_user, get_next_view_post_task_for_user, get_view_post_task_for_user,
+    count_available_view_post_tasks_for_user, get_next_view_post_task_for_user, get_view_post_task_for_user,
     increment_task_post_views, add_task_post_view
 )
 
@@ -219,7 +219,7 @@ async def show_tasks(callback: CallbackQuery, db):
 
     user_id = callback.from_user.id
     balance = await get_balance(db, user_id)
-    available = await count_available_task_posts_for_user(db, user_id)
+    available = await count_available_view_post_tasks_for_user(db, user_id)
 
     await safe_edit_text(
         callback.message,
@@ -332,7 +332,7 @@ async def task_view_post(callback: CallbackQuery, bot: Bot, state: FSMContext, d
         )
 
         new_balance = await get_balance(db, user_id)
-        available = await count_available_task_posts_for_user(db, user_id)
+        available = await count_available_view_post_tasks_for_user(db, user_id)
 
     await bot.send_message(
         chat_id=user_id,

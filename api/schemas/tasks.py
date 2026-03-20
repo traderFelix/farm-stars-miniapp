@@ -24,10 +24,6 @@ class TaskListItem(BaseModel):
     hold_seconds: int = 0
 
 
-class TaskListResponse(BaseModel):
-    items: list[TaskListItem]
-
-
 class TaskOpenRequest(BaseModel):
     source: Optional[str] = Field(default="miniapp")
 

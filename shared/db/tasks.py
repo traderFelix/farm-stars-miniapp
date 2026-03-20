@@ -1,7 +1,7 @@
 import aiosqlite
 
 
-async def count_available_task_posts_for_user(
+async def count_available_view_post_tasks_for_user(
         db: aiosqlite.Connection,
         user_id: int,
 ) -> int:
@@ -34,6 +34,7 @@ async def get_next_view_post_task_for_user(
             p.id,
             p.channel_id,
             c.chat_id,
+            c.title AS channel_title,
             c.view_seconds,
             p.channel_post_id,
             p.reward,
@@ -69,6 +70,7 @@ async def get_view_post_task_for_user(
             p.id,
             p.channel_id,
             c.chat_id,
+            c.title AS channel_title,
             c.view_seconds,
             p.channel_post_id,
             p.reward,
