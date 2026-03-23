@@ -16,7 +16,16 @@ import type { TaskCheckResponse, TaskListItem } from "@/lib/tasks";
 import { getTelegramInitData, initTelegramMiniApp } from "@/lib/telegram";
 
 type BootstrapState = "idle" | "loading" | "ready" | "error";
-type TaskState = "idle" | "loading" | "ready" | "opening" | "opened" | "checking" | "done" | "empty" | "error";
+type TaskState =
+    | "idle"
+    | "loading"
+    | "ready"
+    | "opening"
+    | "opened"
+    | "checking"
+    | "done"
+    | "empty"
+    | "error";
 
 export default function HomePage() {
   const [bootstrapState, setBootstrapState] = useState<BootstrapState>("idle");
@@ -89,6 +98,12 @@ export default function HomePage() {
       return;
     }
 
+    if (task.already_completed || task.status === "completed") {
+      setOpenedAt(null);
+      clearOpenedTask();
+      return;
+    }
+
     const stored = getOpenedTask();
     if (!stored) {
       setOpenedAt(null);
@@ -107,32 +122,50 @@ export default function HomePage() {
 
   const elapsedSeconds = useElapsedSeconds(openedAt);
   const holdSeconds = task?.hold_seconds ?? 0;
+
   const remainingSeconds = useMemo(() => {
     return Math.max(0, holdSeconds - elapsedSeconds);
   }, [elapsedSeconds, holdSeconds]);
 
   const canCheck = Boolean(task && openedAt && remainingSeconds <= 0);
+  const isTaskCompleted = Boolean(task?.already_completed || task?.status === "completed");
 
   async function loadNextTask() {
     setTaskState("loading");
     setTaskMessage("");
 
-    const nextTask = await getNextTask();
+    try {
+      const nextTask = await getNextTask();
 
-    if (!nextTask) {
+      if (!nextTask) {
+        setTask(null);
+        clearOpenedTask();
+        setOpenedAt(null);
+        setTaskState("empty");
+        return;
+      }
+
+      setTask(nextTask);
+
+      if (nextTask.already_completed || nextTask.status === "completed") {
+        clearOpenedTask();
+        setOpenedAt(null);
+        setTaskState("done");
+        setTaskMessage("Задание уже выполнено.");
+        return;
+      }
+
+      setTaskState("ready");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Ошибка загрузки задания";
       setTask(null);
-      clearOpenedTask();
-      setOpenedAt(null);
-      setTaskState("empty");
-      return;
+      setTaskState("error");
+      setTaskMessage(message);
     }
-
-    setTask(nextTask);
-    setTaskState("ready");
   }
 
   async function handleOpenTask() {
-    if (!task) return;
+    if (!task || isTaskCompleted) return;
 
     try {
       setTaskState("opening");
@@ -143,8 +176,10 @@ export default function HomePage() {
       });
 
       if (!result.ok) {
-        // noinspection ExceptionCaughtLocallyJS
-        throw new Error("Не удалось открыть задание");
+        setTaskState("done");
+        setTaskMessage("Задание уже недоступно или было выполнено ранее.");
+        await loadNextTask();
+        return;
       }
 
       const openedTask = {
@@ -171,7 +206,7 @@ export default function HomePage() {
   }
 
   async function handleCheckTask() {
-    if (!task) return;
+    if (!task || isTaskCompleted) return;
 
     try {
       setTaskState("checking");
@@ -199,7 +234,11 @@ export default function HomePage() {
         );
 
         await loadNextTask();
-        setTaskState("done");
+        return;
+      }
+
+      if (result.status === "too_early") {
+        setTaskState("opened");
         return;
       }
 
@@ -253,10 +292,32 @@ export default function HomePage() {
                   )}
 
                   {taskState === "empty" && (
-                      <div className="text-sm text-white/70">Сейчас доступных заданий нет.</div>
+                      <div className="space-y-3">
+                        <div className="text-sm text-white/70">Сейчас доступных заданий нет.</div>
+                        <button
+                            type="button"
+                            onClick={loadNextTask}
+                            className="w-full rounded-xl border border-white/15 bg-white/10 px-4 py-3 text-sm font-medium text-white"
+                        >
+                          Обновить
+                        </button>
+                      </div>
                   )}
 
-                  {task && taskState !== "loading" && (
+                  {taskState === "error" && taskMessage && (
+                      <div className="space-y-3">
+                        <div className="text-sm text-red-200">{taskMessage}</div>
+                        <button
+                            type="button"
+                            onClick={loadNextTask}
+                            className="w-full rounded-xl border border-white/15 bg-white/10 px-4 py-3 text-sm font-medium text-white"
+                        >
+                          Повторить
+                        </button>
+                      </div>
+                  )}
+
+                  {task && taskState !== "loading" && taskState !== "empty" && (
                       <div className="space-y-3">
                         <div className="rounded-xl border border-white/10 bg-black/20 p-3">
                           <div className="text-sm font-medium">{task.title}</div>
@@ -269,7 +330,13 @@ export default function HomePage() {
                             <Stat label="Удержание" value={`${task.hold_seconds} сек`} />
                           </div>
 
-                          {openedAt && (
+                          {isTaskCompleted && (
+                              <div className="mt-3 rounded-lg border border-emerald-500/20 bg-emerald-500/10 p-2 text-sm text-emerald-200">
+                                Задание уже выполнено
+                              </div>
+                          )}
+
+                          {!isTaskCompleted && openedAt && (
                               <div className="mt-3 rounded-lg border border-white/10 bg-white/5 p-2 text-sm text-white/80">
                                 {remainingSeconds > 0
                                     ? `Подожди еще ${remainingSeconds} сек`
@@ -278,29 +345,39 @@ export default function HomePage() {
                           )}
                         </div>
 
-                        <div className="flex gap-2">
-                          <button
-                              type="button"
-                              onClick={handleOpenTask}
-                              disabled={taskState === "opening" || taskState === "checking"}
-                              className="flex-1 rounded-xl bg-white px-4 py-3 text-sm font-medium text-black disabled:cursor-not-allowed disabled:opacity-60"
-                          >
-                            {taskState === "opening" ? "Открываю..." : "Открыть пост"}
-                          </button>
+                        {!isTaskCompleted && (
+                            <div className="flex gap-2">
+                              <button
+                                  type="button"
+                                  onClick={handleOpenTask}
+                                  disabled={taskState === "opening" || taskState === "checking"}
+                                  className="flex-1 rounded-xl bg-white px-4 py-3 text-sm font-medium text-black disabled:cursor-not-allowed disabled:opacity-60"
+                              >
+                                {taskState === "opening" ? "Открываю..." : "Открыть пост"}
+                              </button>
 
-                          <button
-                              type="button"
-                              onClick={handleCheckTask}
-                              disabled={!canCheck || taskState === "checking"}
-                              className="flex-1 rounded-xl border border-white/15 bg-white/10 px-4 py-3 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
-                          >
-                            {taskState === "checking" ? "Проверяю..." : "Проверить"}
-                          </button>
-                        </div>
-
-                        {taskMessage && (
-                            <div className="text-sm text-white/75">{taskMessage}</div>
+                              <button
+                                  type="button"
+                                  onClick={handleCheckTask}
+                                  disabled={!canCheck || taskState === "checking"}
+                                  className="flex-1 rounded-xl border border-white/15 bg-white/10 px-4 py-3 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
+                              >
+                                {taskState === "checking" ? "Проверяю..." : "Проверить"}
+                              </button>
+                            </div>
                         )}
+
+                        {isTaskCompleted && (
+                            <button
+                                type="button"
+                                onClick={loadNextTask}
+                                className="w-full rounded-xl border border-white/15 bg-white/10 px-4 py-3 text-sm font-medium text-white"
+                            >
+                              Следующее задание
+                            </button>
+                        )}
+
+                        {taskMessage && <div className="text-sm text-white/75">{taskMessage}</div>}
                       </div>
                   )}
                 </section>

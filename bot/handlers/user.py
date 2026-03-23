@@ -28,7 +28,7 @@ from shared.db.users import (
     get_referrals_count, claim_daily_checkin,
 )
 from shared.db.tasks import (
-    count_available_view_post_tasks_for_user, allocate_task_post_from_channel_post
+    allocate_task_post_from_channel_post
 )
 from shared.db.ledger import (
     apply_balance_debit_if_enough, get_activity_index
@@ -227,16 +227,25 @@ async def show_tasks(callback: CallbackQuery, db):
 
     user_id = callback.from_user.id
     balance = await get_balance(db, user_id)
-    available = await count_available_view_post_tasks_for_user(db, user_id)
+
+    try:
+        next_task = await get_next_task(user_id)
+    except Exception:
+        next_task = None
+
+    if next_task:
+        tasks_status_text = "Сейчас есть доступные посты для просмотра."
+    else:
+        tasks_status_text = "Сейчас доступных постов нет."
 
     await safe_edit_text(
         callback.message,
         "📋 Задания\n\n"
         "👁 Просмотр постов из каналов\n"
         "За каждый просмотр начисляется награда.\n"
-        f"Доступно постов: {available}\n\n"
+        f"{tasks_status_text}\n\n"
         f"Баланс: {fmt_stars(balance)}⭐️",
-        reply_markup=tasks_menu()
+        reply_markup=tasks_menu(),
     )
 
 
@@ -262,7 +271,6 @@ async def task_view_post(callback: CallbackQuery, bot: Bot, state: FSMContext, d
         await log_abuse_event(db, user_id, "task_view_click")
 
     task_id = int(task["id"])
-    post_url = task.get("post_url")
     chat_id = task.get("chat_id")
     channel_post_id = task.get("channel_post_id")
     reward = float(task.get("reward") or 0)
@@ -341,14 +349,25 @@ async def task_view_post(callback: CallbackQuery, bot: Bot, state: FSMContext, d
     message_text = result.get("message") or "Готово"
     new_balance = float(result.get("new_balance") or 0)
 
+    try:
+        next_task = await get_next_task(user_id)
+    except Exception:
+        next_task = None
+
+    has_more_tasks = next_task is not None
+    remaining_text = (
+        "Доступные посты еще есть."
+        if has_more_tasks
+        else "Сейчас доступных постов больше нет."
+    )
+
     if status_value == "completed":
-        available = await count_available_view_post_tasks_for_user(db, user_id)
         await bot.send_message(
             chat_id=user_id,
             text=(
                 "✅ Просмотр засчитан\n\n"
                 f"Начислено: {fmt_stars(reward)}⭐\n"
-                f"Осталось доступно постов: {available}\n"
+                f"{remaining_text}\n"
                 f"Баланс: {fmt_stars(new_balance)}⭐️"
             ),
             reply_markup=task_after_view_kb(),

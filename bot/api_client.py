@@ -3,7 +3,6 @@ from typing import Any, Optional
 
 import httpx
 
-
 API_BASE_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:8000")
 API_TIMEOUT = float(os.getenv("API_TIMEOUT", "10"))
 
