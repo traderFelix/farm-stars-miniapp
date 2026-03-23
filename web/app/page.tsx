@@ -5,10 +5,13 @@ import { useEffect, useMemo, useState } from "react";
 import {
   authTelegram,
   checkTask,
+  claimCheckin,
   clearAccessToken,
+  getCheckinStatus,
   getMyProfile,
   getNextTask,
   openTask,
+  type CheckinStatus,
   type Profile,
 } from "@/lib/api";
 import { clearOpenedTask, getOpenedTask, saveOpenedTask } from "@/lib/opened-task";
@@ -16,6 +19,7 @@ import type { TaskCheckResponse, TaskListItem } from "@/lib/tasks";
 import { getTelegramInitData, initTelegramMiniApp } from "@/lib/telegram";
 
 type BootstrapState = "idle" | "loading" | "ready" | "error";
+
 type TaskState =
     | "idle"
     | "loading"
@@ -27,13 +31,21 @@ type TaskState =
     | "empty"
     | "error";
 
+type CheckinState = "idle" | "loading" | "ready" | "claiming" | "error";
+
 export default function HomePage() {
   const [bootstrapState, setBootstrapState] = useState<BootstrapState>("idle");
   const [profile, setProfile] = useState<Profile | null>(null);
+
+  const [checkin, setCheckin] = useState<CheckinStatus | null>(null);
+  const [checkinState, setCheckinState] = useState<CheckinState>("idle");
+  const [checkinMessage, setCheckinMessage] = useState("");
+
   const [task, setTask] = useState<TaskListItem | null>(null);
   const [taskState, setTaskState] = useState<TaskState>("idle");
   const [openedAt, setOpenedAt] = useState<number | null>(null);
-  const [taskMessage, setTaskMessage] = useState<string>("");
+  const [taskMessage, setTaskMessage] = useState("");
+
   const [debugMessage, setDebugMessage] = useState<string>("STEP 1: start");
   const [errorMessage, setErrorMessage] = useState<string>("");
 
@@ -66,17 +78,19 @@ export default function HomePage() {
         if (cancelled) return;
         setProfile(nextProfile);
 
-        setDebugMessage("STEP 5: task request");
-        await loadNextTask();
-
+        setDebugMessage("STEP 5: checkin request");
+        await loadCheckinStatus();
         if (cancelled) return;
+
+        setDebugMessage("STEP 6: task request");
+        await loadNextTask();
+        if (cancelled) return;
+
         setBootstrapState("ready");
-        setDebugMessage("STEP 6: ready");
+        setDebugMessage("STEP 7: ready");
       } catch (error) {
         if (cancelled) return;
-
         clearAccessToken();
-
         const message = error instanceof Error ? error.message : "Unknown bootstrap error";
         setBootstrapState("error");
         setErrorMessage(message);
@@ -129,6 +143,50 @@ export default function HomePage() {
 
   const canCheck = Boolean(task && openedAt && remainingSeconds <= 0);
   const isTaskCompleted = Boolean(task?.already_completed || task?.status === "completed");
+
+  async function loadCheckinStatus() {
+    setCheckinState("loading");
+    setCheckinMessage("");
+
+    try {
+      const status = await getCheckinStatus();
+      setCheckin(status);
+      setCheckinState("ready");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Ошибка загрузки daily bonus";
+      setCheckin(null);
+      setCheckinState("error");
+      setCheckinMessage(message);
+    }
+  }
+
+  async function handleClaimCheckin() {
+    if (!checkin?.can_claim || checkinState === "claiming") return;
+
+    try {
+      setCheckinState("claiming");
+      setCheckinMessage("");
+
+      const result = await claimCheckin();
+
+      setCheckinMessage(result.message);
+
+      setProfile((prev) =>
+          prev
+              ? {
+                ...prev,
+                balance: Number(result.balance ?? prev.balance),
+              }
+              : prev,
+      );
+
+      await loadCheckinStatus();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Ошибка получения daily bonus";
+      setCheckinState("error");
+      setCheckinMessage(message);
+    }
+  }
 
   async function loadNextTask() {
     setTaskState("loading");
@@ -213,7 +271,6 @@ export default function HomePage() {
       setTaskMessage("");
 
       const stored = getOpenedTask();
-
       const result: TaskCheckResponse = await checkTask(task.id, {
         session_id: stored?.session_id ?? null,
       });
@@ -251,24 +308,24 @@ export default function HomePage() {
   }
 
   return (
-      <main className="min-h-screen bg-neutral-950 text-white">
-        <div className="mx-auto flex min-h-screen w-full max-w-md flex-col gap-4 px-4 py-6">
+      <main className="min-h-screen bg-neutral-950 px-4 py-5 text-white">
+        <div className="mx-auto flex max-w-md flex-col gap-4">
           <header className="rounded-2xl border border-white/10 bg-white/5 p-4">
-            <div className="text-lg font-semibold">Felix Farm Stars</div>
-            <div className="mt-1 text-sm text-white/60">Главный экран</div>
+            <h1 className="text-xl font-semibold">Felix Farm Stars</h1>
+            <p className="mt-1 text-sm text-white/60">Главный экран</p>
           </header>
 
           {bootstrapState === "loading" && (
               <section className="rounded-2xl border border-white/10 bg-white/5 p-4">
-                <div className="text-base font-medium">Загрузка mini app...</div>
-                <div className="mt-2 text-sm text-white/70">{debugMessage}</div>
+                <div className="text-sm font-medium">Загрузка mini app...</div>
+                <div className="mt-2 text-xs text-white/60">{debugMessage}</div>
               </section>
           )}
 
           {bootstrapState === "error" && (
               <section className="rounded-2xl border border-red-500/30 bg-red-500/10 p-4">
-                <div className="text-base font-medium">Ошибка загрузки</div>
-                <div className="mt-2 text-sm text-white/70">{debugMessage}</div>
+                <div className="text-sm font-medium">Ошибка загрузки</div>
+                <div className="mt-2 text-xs text-white/60">{debugMessage}</div>
                 <div className="mt-2 text-sm text-red-200">{errorMessage}</div>
               </section>
           )}
@@ -276,82 +333,137 @@ export default function HomePage() {
           {bootstrapState === "ready" && profile && (
               <>
                 <section className="rounded-2xl border border-white/10 bg-white/5 p-4">
-                  <div className="mb-3 text-base font-medium">Профиль</div>
+                  <h2 className="text-sm font-semibold uppercase tracking-wide text-white/70">Профиль</h2>
+                  <div className="mt-3 grid gap-3">
+                    <Row label="ID" value={String(profile.user_id)} />
+                    <Row label="Username" value={profile.username ? `@${profile.username}` : "-"} />
+                    <Row label="Роль" value={profile.role || "пользователь"} />
+                  </div>
 
-                  <Row label="Баланс" value={`${formatBalance(profile.balance)}⭐`} />
-                  <Row label="Активность" value={formatActivity(profile.activity_index)} />
-                  <Row label="Роль" value={profile.role || "-"} />
-                  <Row label="Статус" value={debugMessage} />
+                  <div className="mt-4 grid grid-cols-2 gap-3">
+                    <Stat label="Баланс" value={`${formatBalance(profile.balance)} ⭐`} />
+                    <Stat label="Активность" value={formatActivity(profile.activity_index)} />
+                  </div>
                 </section>
 
                 <section className="rounded-2xl border border-white/10 bg-white/5 p-4">
-                  <div className="mb-3 text-base font-medium">Задание</div>
+                  <div className="flex items-center justify-between gap-3">
+                    <h2 className="text-sm font-semibold uppercase tracking-wide text-white/70">
+                      Daily bonus
+                    </h2>
+
+                    <button
+                        type="button"
+                        onClick={loadCheckinStatus}
+                        className="text-xs text-white/60 transition hover:text-white"
+                        disabled={checkinState === "loading" || checkinState === "claiming"}
+                    >
+                      Обновить
+                    </button>
+                  </div>
+
+                  {checkinState === "loading" && (
+                      <p className="mt-3 text-sm text-white/60">Загружаю статус daily bonus...</p>
+                  )}
+
+                  {checkinState === "error" && (
+                      <div className="mt-3 rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-200">
+                        {checkinMessage || "Не удалось загрузить daily bonus"}
+                      </div>
+                  )}
+
+                  {checkin && checkinState !== "loading" && (
+                      <>
+                        <div className="mt-3 grid grid-cols-2 gap-3">
+                          <Stat label="День цикла" value={String(checkin.current_cycle_day)} />
+                          <Stat label="Сегодня" value={`${formatBalance(checkin.reward_today)} ⭐`} />
+                          <Stat label="Завтра" value={`${formatBalance(checkin.next_reward)} ⭐`} />
+                          <Stat
+                              label="Статус"
+                              value={checkin.can_claim ? "Можно забрать" : "Уже получено"}
+                          />
+                        </div>
+
+                        <button
+                            type="button"
+                            onClick={handleClaimCheckin}
+                            disabled={!checkin.can_claim || checkinState === "claiming"}
+                            className="mt-4 w-full rounded-xl bg-white px-4 py-3 text-sm font-medium text-black transition disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          {checkinState === "claiming" ? "Забираю..." : "Забрать бонус"}
+                        </button>
+
+                        {checkinMessage && (
+                            <div className="mt-3 rounded-xl border border-white/10 bg-black/20 p-3 text-sm text-white/80">
+                              {checkinMessage}
+                            </div>
+                        )}
+                      </>
+                  )}
+                </section>
+
+                <section className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <h2 className="text-sm font-semibold uppercase tracking-wide text-white/70">
+                      Задание
+                    </h2>
+
+                    <button
+                        type="button"
+                        onClick={loadNextTask}
+                        className="text-xs text-white/60 transition hover:text-white"
+                        disabled={taskState === "loading" || taskState === "opening" || taskState === "checking"}
+                    >
+                      Обновить
+                    </button>
+                  </div>
 
                   {taskState === "loading" && (
-                      <div className="text-sm text-white/70">Загружаю следующее задание...</div>
+                      <p className="mt-3 text-sm text-white/60">Загружаю следующее задание...</p>
                   )}
 
                   {taskState === "empty" && (
-                      <div className="space-y-3">
-                        <div className="text-sm text-white/70">Сейчас доступных заданий нет.</div>
-                        <button
-                            type="button"
-                            onClick={loadNextTask}
-                            className="w-full rounded-xl border border-white/15 bg-white/10 px-4 py-3 text-sm font-medium text-white"
-                        >
-                          Обновить
-                        </button>
+                      <div className="mt-3">
+                        <p className="text-sm text-white/70">Сейчас доступных заданий нет.</p>
                       </div>
                   )}
 
                   {taskState === "error" && taskMessage && (
-                      <div className="space-y-3">
-                        <div className="text-sm text-red-200">{taskMessage}</div>
-                        <button
-                            type="button"
-                            onClick={loadNextTask}
-                            className="w-full rounded-xl border border-white/15 bg-white/10 px-4 py-3 text-sm font-medium text-white"
-                        >
-                          Повторить
-                        </button>
+                      <div className="mt-3 rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-200">
+                        {taskMessage}
                       </div>
                   )}
 
                   {task && taskState !== "loading" && taskState !== "empty" && (
-                      <div className="space-y-3">
-                        <div className="rounded-xl border border-white/10 bg-black/20 p-3">
-                          <div className="text-sm font-medium">{task.title}</div>
+                      <>
+                        <div className="mt-3">
+                          <div className="text-base font-medium">{task.title}</div>
                           <div className="mt-1 text-sm text-white/60">
                             {task.description || "Открой пост и подержи нужное время"}
                           </div>
-
-                          <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
-                            <Stat label="Награда" value={`${formatBalance(task.reward)}⭐`} />
-                            <Stat label="Удержание" value={`${task.hold_seconds} сек`} />
-                          </div>
-
-                          {isTaskCompleted && (
-                              <div className="mt-3 rounded-lg border border-emerald-500/20 bg-emerald-500/10 p-2 text-sm text-emerald-200">
-                                Задание уже выполнено
-                              </div>
-                          )}
-
-                          {!isTaskCompleted && openedAt && (
-                              <div className="mt-3 rounded-lg border border-white/10 bg-white/5 p-2 text-sm text-white/80">
-                                {remainingSeconds > 0
-                                    ? `Подожди еще ${remainingSeconds} сек`
-                                    : "Можно проверять выполнение"}
-                              </div>
-                          )}
                         </div>
 
+                        {isTaskCompleted && (
+                            <div className="mt-3 rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3 text-sm text-emerald-200">
+                              Задание уже выполнено
+                            </div>
+                        )}
+
+                        {!isTaskCompleted && openedAt && (
+                            <div className="mt-3 rounded-xl border border-white/10 bg-black/20 p-3 text-sm text-white/80">
+                              {remainingSeconds > 0
+                                  ? `Подожди еще ${remainingSeconds} сек`
+                                  : "Можно проверять выполнение"}
+                            </div>
+                        )}
+
                         {!isTaskCompleted && (
-                            <div className="flex gap-2">
+                            <div className="mt-4 grid grid-cols-2 gap-3">
                               <button
                                   type="button"
                                   onClick={handleOpenTask}
                                   disabled={taskState === "opening" || taskState === "checking"}
-                                  className="flex-1 rounded-xl bg-white px-4 py-3 text-sm font-medium text-black disabled:cursor-not-allowed disabled:opacity-60"
+                                  className="rounded-xl bg-white px-4 py-3 text-sm font-medium text-black transition disabled:cursor-not-allowed disabled:opacity-50"
                               >
                                 {taskState === "opening" ? "Открываю..." : "Открыть пост"}
                               </button>
@@ -359,8 +471,8 @@ export default function HomePage() {
                               <button
                                   type="button"
                                   onClick={handleCheckTask}
-                                  disabled={!canCheck || taskState === "checking"}
-                                  className="flex-1 rounded-xl border border-white/15 bg-white/10 px-4 py-3 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
+                                  disabled={!canCheck || taskState === "opening" || taskState === "checking"}
+                                  className="rounded-xl border border-white/15 bg-transparent px-4 py-3 text-sm font-medium text-white transition disabled:cursor-not-allowed disabled:opacity-50"
                               >
                                 {taskState === "checking" ? "Проверяю..." : "Проверить"}
                               </button>
@@ -371,14 +483,18 @@ export default function HomePage() {
                             <button
                                 type="button"
                                 onClick={loadNextTask}
-                                className="w-full rounded-xl border border-white/15 bg-white/10 px-4 py-3 text-sm font-medium text-white"
+                                className="mt-4 w-full rounded-xl bg-white px-4 py-3 text-sm font-medium text-black transition"
                             >
                               Следующее задание
                             </button>
                         )}
 
-                        {taskMessage && <div className="text-sm text-white/75">{taskMessage}</div>}
-                      </div>
+                        {taskMessage && (
+                            <div className="mt-3 rounded-xl border border-white/10 bg-black/20 p-3 text-sm text-white/80">
+                              {taskMessage}
+                            </div>
+                        )}
+                      </>
                   )}
                 </section>
               </>
@@ -390,24 +506,24 @@ export default function HomePage() {
 
 function Row({ label, value }: { label: string; value: string }) {
   return (
-      <div className="flex items-center justify-between border-b border-white/10 py-2 last:border-b-0">
-        <div className="text-sm text-white/60">{label}</div>
-        <div className="text-sm font-medium text-white">{value}</div>
+      <div className="flex items-center justify-between gap-3 rounded-xl border border-white/10 bg-black/20 px-3 py-2">
+        <span className="text-sm text-white/60">{label}</span>
+        <span className="text-sm font-medium text-white">{value}</span>
       </div>
   );
 }
 
 function Stat({ label, value }: { label: string; value: string }) {
   return (
-      <div className="rounded-lg border border-white/10 bg-white/5 p-2">
-        <div className="text-xs text-white/50">{label}</div>
-        <div className="mt-1 text-sm font-medium text-white">{value}</div>
+      <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+        <div className="text-xs uppercase tracking-wide text-white/50">{label}</div>
+        <div className="mt-1 text-base font-semibold text-white">{value}</div>
       </div>
   );
 }
 
 function useElapsedSeconds(openedAt: number | null): number {
-  const [now, setNow] = useState<number>(() => Math.floor(Date.now() / 1000));
+  const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
 
   useEffect(() => {
     if (!openedAt) return;
@@ -422,6 +538,7 @@ function useElapsedSeconds(openedAt: number | null): number {
   }, [openedAt]);
 
   if (!openedAt) return 0;
+
   return Math.max(0, now - openedAt);
 }
 

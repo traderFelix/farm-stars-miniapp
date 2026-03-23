@@ -440,6 +440,90 @@ async def clear_user_suspicious(db, user_id: int):
     await db.commit()
 
 
+def _build_daily_checkin_state(
+        cycle_day: int,
+        last_checkin_raw: Optional[str],
+        now: datetime,
+) -> dict[str, Any]:
+    today = now.date()
+    yesterday = today - timedelta(days=1)
+
+    last_date = None
+    if last_checkin_raw:
+        last_date = datetime.fromisoformat(last_checkin_raw).date()
+
+    already_claimed_today = last_date == today
+    claimed_yesterday = last_date == yesterday
+
+    if already_claimed_today:
+        current_cycle_day = normalize_daily_cycle_day(cycle_day if cycle_day > 0 else 1)
+        can_claim = False
+    elif claimed_yesterday:
+        current_cycle_day = normalize_daily_cycle_day(cycle_day + 1)
+        can_claim = True
+    else:
+        current_cycle_day = 1
+        can_claim = True
+
+    reward_today = daily_checkin_reward(current_cycle_day)
+    next_cycle_day = normalize_daily_cycle_day(current_cycle_day + 1)
+    next_reward = daily_checkin_reward(next_cycle_day)
+
+    return {
+        "already_claimed_today": already_claimed_today,
+        "claimed_yesterday": claimed_yesterday,
+        "can_claim": can_claim,
+        "current_cycle_day": current_cycle_day,
+        "reward_today": reward_today,
+        "next_cycle_day": next_cycle_day,
+        "next_reward": next_reward,
+        "last_checkin_raw": last_checkin_raw,
+    }
+
+
+async def get_daily_checkin_status(
+        db: aiosqlite.Connection,
+        user_id: int,
+        username: Optional[str] = None,
+        first_name: Optional[str] = None,
+        last_name: Optional[str] = None,
+) -> dict[str, Any]:
+    uid = int(user_id)
+    now = datetime.now(timezone.utc)
+
+    await register_user(db, uid, username, first_name, last_name)
+
+    async with db.execute(
+            """
+        SELECT daily_checkin_cycle_day, last_daily_checkin_at
+        FROM users
+        WHERE user_id = ?
+        """,
+            (uid,),
+    ) as cur:
+        row = await cur.fetchone()
+
+    cycle_day = int(row["daily_checkin_cycle_day"] or 0) if row else 0
+    last_checkin_raw = row["last_daily_checkin_at"] if row else None
+
+    state = _build_daily_checkin_state(
+        cycle_day=cycle_day,
+        last_checkin_raw=last_checkin_raw,
+        now=now,
+    )
+
+    return {
+        "can_claim": state["can_claim"],
+        "already_claimed_today": state["already_claimed_today"],
+        "current_cycle_day": state["current_cycle_day"],
+        "reward_today": float(state["reward_today"]),
+        "next_cycle_day": state["next_cycle_day"],
+        "next_reward": float(state["next_reward"]),
+        "last_checkin_at": state["last_checkin_raw"],
+        "server_time": now.isoformat(),
+    }
+
+
 async def claim_daily_checkin(
         db,
         user_id: int,
@@ -448,10 +532,7 @@ async def claim_daily_checkin(
         last_name: Optional[str] = None,
 ):
     uid = int(user_id)
-
     now = datetime.now(timezone.utc)
-    today = now.date()
-    yesterday = today - timedelta(days=1)
 
     async with tx(db, immediate=True):
         from shared.db.ledger import apply_balance_delta
@@ -468,25 +549,22 @@ async def claim_daily_checkin(
         ) as cur:
             row = await cur.fetchone()
 
-        cycle_day = int(row["daily_checkin_cycle_day"] or 0)
-        last_checkin_raw = row["last_daily_checkin_at"]
+        cycle_day = int(row["daily_checkin_cycle_day"] or 0) if row else 0
+        last_checkin_raw = row["last_daily_checkin_at"] if row else None
 
-        last_date = None
-        if last_checkin_raw:
-            last_date = datetime.fromisoformat(last_checkin_raw).date()
+        state = _build_daily_checkin_state(
+            cycle_day=cycle_day,
+            last_checkin_raw=last_checkin_raw,
+            now=now,
+        )
 
-        if last_date == today:
+        if not state["can_claim"]:
             balance = await get_balance(db, uid)
-            return False, "", balance
+            return False, "🎁 Бонус за сегодня уже получен", balance
 
-        if last_date == yesterday:
-            new_cycle_day = normalize_daily_cycle_day(cycle_day + 1)
-        else:
-            new_cycle_day = 1
-
-        reward = daily_checkin_reward(new_cycle_day)
-        next_cycle_day = normalize_daily_cycle_day(new_cycle_day + 1)
-        next_reward = daily_checkin_reward(next_cycle_day)
+        new_cycle_day = state["current_cycle_day"]
+        reward = state["reward_today"]
+        next_reward = state["next_reward"]
 
         await db.execute(
             """

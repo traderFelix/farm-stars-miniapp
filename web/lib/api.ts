@@ -27,6 +27,26 @@ export type Profile = {
     activity_index: number;
 };
 
+export type CheckinStatus = {
+    can_claim: boolean;
+    already_claimed_today: boolean;
+    current_cycle_day: number;
+    reward_today: number;
+    next_cycle_day: number;
+    next_reward: number;
+    last_checkin_at?: string | null;
+    server_time: string;
+};
+
+export type CheckinClaimResponse = {
+    ok: boolean;
+    claimed_amount: number;
+    current_cycle_day: number;
+    balance: number;
+    claimed_at: string;
+    message: string;
+};
+
 type RequestOptions = {
     method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
     body?: unknown;
@@ -162,6 +182,20 @@ export async function checkTask(
     return apiRequest<TaskCheckResponse>(`/tasks/${taskId}/check`, {
         method: "POST",
         body: payload,
+        auth: true,
+    });
+}
+
+export async function getCheckinStatus(): Promise<CheckinStatus> {
+    return apiRequest("/checkin/status", {
+        method: "GET",
+        auth: true,
+    });
+}
+
+export async function claimCheckin(): Promise<CheckinClaimResponse> {
+    return apiRequest("/checkin/claim", {
+        method: "POST",
         auth: true,
     });
 }
