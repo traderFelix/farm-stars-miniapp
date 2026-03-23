@@ -2,14 +2,8 @@ from fastapi import APIRouter, Depends
 
 from api.db.connection import get_db
 from api.dependencies.auth import get_current_user_id
-
 from api.schemas.checkin import CheckinStatusResponse, CheckinClaimResponse
-
-from shared.db.users import (
-    get_daily_checkin_status,
-    claim_daily_checkin,
-)
-
+from shared.db.users import get_daily_checkin_status, claim_daily_checkin
 
 router = APIRouter(prefix="/checkin", tags=["checkin"])
 
@@ -30,13 +24,19 @@ async def get_checkin_status(user_id: int = Depends(get_current_user_id)):
 
 @router.post("/claim", response_model=CheckinClaimResponse)
 async def claim_checkin(user_id: int = Depends(get_current_user_id)):
+    # 1) читаем status ДО claim на отдельном соединении
     db = await get_db()
     try:
-        status = await get_daily_checkin_status(
+        status_before = await get_daily_checkin_status(
             db=db,
             user_id=user_id,
         )
+    finally:
+        await db.close()
 
+    # 2) делаем сам claim на новом соединении
+    db = await get_db()
+    try:
         ok, message, balance = await claim_daily_checkin(
             db=db,
             user_id=user_id,
@@ -49,9 +49,9 @@ async def claim_checkin(user_id: int = Depends(get_current_user_id)):
 
     return CheckinClaimResponse(
         ok=ok,
-        claimed_amount=float(status["reward_today"]) if ok else 0.0,
-        current_cycle_day=int(status["current_cycle_day"]),
+        claimed_amount=float(status_before["reward_today"]) if ok else 0.0,
+        current_cycle_day=int(status_before["current_cycle_day"]),
         balance=float(balance),
-        claimed_at=status["server_time"],
+        claimed_at=status_before["server_time"],
         message=message,
     )

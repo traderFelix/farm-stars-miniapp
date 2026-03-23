@@ -477,7 +477,7 @@ def _build_daily_checkin_state(
         "reward_today": reward_today,
         "next_cycle_day": next_cycle_day,
         "next_reward": next_reward,
-        "last_checkin_raw": last_checkin_raw,
+        "last_checkin_at": last_checkin_raw,
     }
 
 
@@ -519,7 +519,7 @@ async def get_daily_checkin_status(
         "reward_today": float(state["reward_today"]),
         "next_cycle_day": state["next_cycle_day"],
         "next_reward": float(state["next_reward"]),
-        "last_checkin_at": state["last_checkin_raw"],
+        "last_checkin_at": state["last_checkin_at"],
         "server_time": now.isoformat(),
     }
 

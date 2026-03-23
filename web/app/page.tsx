@@ -79,7 +79,7 @@ export default function HomePage() {
         setProfile(nextProfile);
 
         setDebugMessage("STEP 5: checkin request");
-        await loadCheckinStatus();
+        await loadCheckinStatus({ preserveMessage: true });
         if (cancelled) return;
 
         setDebugMessage("STEP 6: task request");
@@ -144,9 +144,11 @@ export default function HomePage() {
   const canCheck = Boolean(task && openedAt && remainingSeconds <= 0);
   const isTaskCompleted = Boolean(task?.already_completed || task?.status === "completed");
 
-  async function loadCheckinStatus() {
+  async function loadCheckinStatus(options?: { preserveMessage?: boolean }) {
     setCheckinState("loading");
-    setCheckinMessage("");
+    if (!options?.preserveMessage) {
+      setCheckinMessage("");
+    }
 
     try {
       const status = await getCheckinStatus();
@@ -180,7 +182,7 @@ export default function HomePage() {
               : prev,
       );
 
-      await loadCheckinStatus();
+      await loadCheckinStatus({ preserveMessage: true });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Ошибка получения daily bonus";
       setCheckinState("error");
@@ -354,7 +356,7 @@ export default function HomePage() {
 
                     <button
                         type="button"
-                        onClick={loadCheckinStatus}
+                        onClick={() => loadCheckinStatus()}
                         className="text-xs text-white/60 transition hover:text-white"
                         disabled={checkinState === "loading" || checkinState === "claiming"}
                     >
