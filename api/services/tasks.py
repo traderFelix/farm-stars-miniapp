@@ -15,7 +15,11 @@ from shared.db.tasks import (
     increment_task_post_views,
 )
 
-def build_task_post_url(chat_id: Optional[str], channel_post_id: Optional[int]) -> Optional[str]:
+
+def build_task_post_url(
+        chat_id: Optional[str],
+        channel_post_id: Optional[int],
+) -> Optional[str]:
     if not chat_id or not channel_post_id:
         return None
 
@@ -44,7 +48,10 @@ def map_view_post_task_row_to_item(row) -> TaskListItem:
         status="available",
         chat_id=row["chat_id"],
         channel_post_id=int(row["channel_post_id"]),
-        post_url=build_task_post_url(row["chat_id"], row["channel_post_id"]),
+        post_url=build_task_post_url(
+            row["chat_id"],
+            row["channel_post_id"],
+        ),
         already_completed=False,
         can_claim=False,
         hold_seconds=int(row["view_seconds"] or 0),
@@ -77,20 +84,29 @@ async def open_task_for_user(user_id: int, task_id: int) -> TaskOpenResponse:
             task_id=task_id,
             opened_at=0,
             hold_seconds=0,
+            can_check_at=0,
             chat_id=None,
             channel_post_id=None,
             post_url=None,
             session_id=None,
         )
 
+    opened_at = int(time.time())
+    hold_seconds = int(row["view_seconds"] or 0)
+    can_check_at = opened_at + hold_seconds
+
     return TaskOpenResponse(
         ok=True,
         task_id=int(row["id"]),
-        opened_at=int(time.time()),
-        hold_seconds=int(row["view_seconds"] or 0),
+        opened_at=opened_at,
+        hold_seconds=hold_seconds,
+        can_check_at=can_check_at,
         chat_id=row["chat_id"],
         channel_post_id=int(row["channel_post_id"]),
-        post_url=build_task_post_url(row["chat_id"], row["channel_post_id"]),
+        post_url=build_task_post_url(
+            row["chat_id"],
+            row["channel_post_id"],
+        ),
         session_id=None,
     )
 

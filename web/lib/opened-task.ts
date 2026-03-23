@@ -2,7 +2,7 @@ import type { StoredOpenedTask } from "@/lib/tasks";
 
 const OPENED_TASK_KEY = "ffs_opened_task";
 
-export function saveOpenedTask(data: StoredOpenedTask) {
+export function saveOpenedTask(data: StoredOpenedTask): void {
     if (typeof window === "undefined") return;
     localStorage.setItem(OPENED_TASK_KEY, JSON.stringify(data));
 }
@@ -20,7 +20,7 @@ export function getOpenedTask(): StoredOpenedTask | null {
     }
 }
 
-export function clearOpenedTask() {
+export function clearOpenedTask(): void {
     if (typeof window === "undefined") return;
     localStorage.removeItem(OPENED_TASK_KEY);
 }

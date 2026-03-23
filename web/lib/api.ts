@@ -33,18 +33,6 @@ type RequestOptions = {
     auth?: boolean;
 };
 
-export class ApiError extends Error {
-    status: number;
-    data: unknown;
-
-    constructor(message: string, status: number, data: unknown) {
-        super(message);
-        this.name = "ApiError";
-        this.status = status;
-        this.data = data;
-    }
-}
-
 function isBrowser(): boolean {
     return typeof window !== "undefined";
 }
@@ -106,14 +94,18 @@ async function apiRequest<T>(
 
     if (!response.ok) {
         const message =
-            data?.detail || data?.message || `Request failed with status ${response.status}`;
-        throw new ApiError(message, response.status, data);
+            data?.detail ||
+            data?.message ||
+            `Request failed with status ${response.status}`;
+        throw new Error(message);
     }
 
     return data as T;
 }
 
-export async function authTelegram(initData: string): Promise<TelegramAuthResponse> {
+export async function authTelegram(
+    initData: string,
+): Promise<TelegramAuthResponse> {
     const result = await apiRequest<TelegramAuthResponse>("/auth/telegram", {
         method: "POST",
         body: {
@@ -144,7 +136,8 @@ export async function getNextTask(): Promise<TaskListItem | null> {
             auth: true,
         });
     } catch (error) {
-        if (error instanceof ApiError && error.status === 404) {
+        const message = error instanceof Error ? error.message : "";
+        if (message === "No available tasks") {
             return null;
         }
         throw error;
@@ -153,7 +146,7 @@ export async function getNextTask(): Promise<TaskListItem | null> {
 
 export async function openTask(
     taskId: number,
-    payload: TaskOpenRequest = { source: "miniapp" },
+    payload: TaskOpenRequest,
 ): Promise<TaskOpenResponse> {
     return apiRequest<TaskOpenResponse>(`/tasks/${taskId}/open`, {
         method: "POST",
@@ -164,7 +157,7 @@ export async function openTask(
 
 export async function checkTask(
     taskId: number,
-    payload: TaskCheckRequest = {},
+    payload: TaskCheckRequest,
 ): Promise<TaskCheckResponse> {
     return apiRequest<TaskCheckResponse>(`/tasks/${taskId}/check`, {
         method: "POST",

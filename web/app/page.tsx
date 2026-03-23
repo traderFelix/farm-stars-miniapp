@@ -151,6 +151,7 @@ export default function HomePage() {
         task_id: result.task_id,
         opened_at: result.opened_at,
         hold_seconds: result.hold_seconds,
+        can_check_at: result.can_check_at,
         session_id: result.session_id ?? null,
       };
 

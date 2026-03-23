@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 
 TaskType = Literal["view_post"]
 TaskStatus = Literal["available", "in_progress", "completed", "blocked"]
+TaskCheckStatus = Literal["completed", "already_completed", "too_early", "rejected"]
 
 
 class TaskListItem(BaseModel):
@@ -13,6 +14,7 @@ class TaskListItem(BaseModel):
     title: str
     description: Optional[str] = None
     reward: float
+
     status: TaskStatus = "available"
 
     chat_id: Optional[str] = None
@@ -33,6 +35,7 @@ class TaskOpenResponse(BaseModel):
     task_id: int
     opened_at: int
     hold_seconds: int = 0
+    can_check_at: int = 0
 
     chat_id: Optional[str] = None
     channel_post_id: Optional[int] = None
@@ -48,8 +51,9 @@ class TaskCheckRequest(BaseModel):
 class TaskCheckResponse(BaseModel):
     ok: bool
     task_id: int
-    status: Literal["completed", "already_completed", "too_early", "rejected"]
+    status: TaskCheckStatus
     message: str
+
     reward_granted: float = 0
     new_balance: float = 0
     task_completed: bool = False
