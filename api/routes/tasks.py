@@ -47,9 +47,6 @@ async def open_task(
         payload: TaskOpenRequest,
         user_id: int = Depends(get_current_user_id),
 ):
-    # payload пока сохраняем в контракте.
-    # source/session пригодятся дальше, но уже сейчас web и api
-    # работают по одному стабильному формату.
     _ = payload
 
     return await open_task_for_user(
@@ -68,19 +65,12 @@ async def check_task(
         payload: TaskCheckRequest,
         user_id: int = Depends(get_current_user_id),
 ):
-    # payload пока сохраняем в контракте.
-    # session_id можно будет подключить позже без ломки API.
     _ = payload
 
     return await check_task_for_user(
         user_id=user_id,
         task_id=task_id,
     )
-
-
-# ---- internal bot endpoints ----
-# Бот пока еще не полностью thin client, но уже должен ходить
-# в тот же task API, а не жить на отдельной логике.
 
 
 @router.get(
@@ -121,7 +111,10 @@ async def bot_open_task(
 async def bot_check_task(
         user_id: int,
         task_id: int,
+        payload: TaskCheckRequest,
 ):
+    _ = payload
+
     return await check_task_for_user(
         user_id=user_id,
         task_id=task_id,
