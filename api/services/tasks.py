@@ -54,6 +54,55 @@ async def _get_user_balance_safe(db, user_id: int) -> float:
         return float(row["balance"] or 0)
 
 
+async def _is_task_already_completed(db, user_id: int, task_post_id: int) -> bool:
+    async with db.execute(
+            """
+        SELECT 1
+        FROM task_post_views
+        WHERE user_id = ? AND task_post_id = ?
+        LIMIT 1
+        """,
+            (int(user_id), int(task_post_id)),
+    ) as cur:
+        row = await cur.fetchone()
+        return row is not None
+
+
+async def _apply_task_reward(
+        db,
+        *,
+        user_id: int,
+        reward: float,
+        reason: str,
+        meta: dict,
+) -> float:
+    updated_user = await db.execute(
+        """
+        UPDATE users
+        SET balance = COALESCE(balance, 0) + ?
+        WHERE user_id = ?
+        """,
+        (float(reward), int(user_id)),
+    )
+    if updated_user.rowcount != 1:
+        raise RuntimeError(f"User {user_id} not found while crediting reward")
+
+    await db.execute(
+        """
+        INSERT INTO ledger (user_id, delta, reason, meta)
+        VALUES (?, ?, ?, ?)
+        """,
+        (
+            int(user_id),
+            float(reward),
+            reason,
+            json.dumps(meta, ensure_ascii=False),
+        ),
+    )
+
+    return await _get_user_balance_safe(db, user_id)
+
+
 def get_task_type_from_row(row) -> str:
     return "view_post"
 
@@ -87,7 +136,24 @@ def map_task_row_to_item(row) -> TaskListItem:
     raise ValueError(f"Unsupported task type: {task_type}")
 
 
-async def open_view_post_task(row) -> TaskOpenResponse:
+async def open_view_post_task(db, user_id: int, row) -> TaskOpenResponse:
+    already_completed = await _is_task_already_completed(db, user_id, int(row["id"]))
+    if already_completed:
+        return TaskOpenResponse(
+            ok=False,
+            task_id=int(row["id"]),
+            opened_at=0,
+            hold_seconds=int(row["view_seconds"] or 0),
+            can_check_at=0,
+            chat_id=row["chat_id"],
+            channel_post_id=int(row["channel_post_id"]),
+            post_url=build_task_post_url(
+                row["chat_id"],
+                row["channel_post_id"],
+            ),
+            session_id=None,
+        )
+
     opened_at = int(time.time())
     hold_seconds = int(row["view_seconds"] or 0)
     can_check_at = opened_at + hold_seconds
@@ -109,15 +175,16 @@ async def open_view_post_task(row) -> TaskOpenResponse:
 
 
 async def check_view_post_task(db, user_id: int, row) -> TaskCheckResponse:
+    task_post_id = int(row["id"])
     reward = float(row["reward"] or 0)
 
-    inserted = await add_task_post_view(db, user_id, int(row["id"]), reward)
-    if not inserted:
+    already_completed = await _is_task_already_completed(db, user_id, task_post_id)
+    if already_completed:
         current_balance = await _get_user_balance_safe(db, user_id)
         await db.rollback()
         return TaskCheckResponse(
             ok=True,
-            task_id=int(row["id"]),
+            task_id=task_post_id,
             status="already_completed",
             message="Задание уже засчитано",
             reward_granted=0,
@@ -125,13 +192,27 @@ async def check_view_post_task(db, user_id: int, row) -> TaskCheckResponse:
             task_completed=True,
         )
 
-    updated_post = await increment_task_post_views(db, int(row["id"]))
+    inserted = await add_task_post_view(db, user_id, task_post_id, reward)
+    if not inserted:
+        current_balance = await _get_user_balance_safe(db, user_id)
+        await db.rollback()
+        return TaskCheckResponse(
+            ok=True,
+            task_id=task_post_id,
+            status="already_completed",
+            message="Задание уже засчитано",
+            reward_granted=0,
+            new_balance=current_balance,
+            task_completed=True,
+        )
+
+    updated_post = await increment_task_post_views(db, task_post_id)
     if not updated_post:
         current_balance = await _get_user_balance_safe(db, user_id)
         await db.rollback()
         return TaskCheckResponse(
             ok=True,
-            task_id=int(row["id"]),
+            task_id=task_post_id,
             status="rejected",
             message="Лимит просмотров достигнут или задание уже недоступно",
             reward_granted=0,
@@ -139,44 +220,23 @@ async def check_view_post_task(db, user_id: int, row) -> TaskCheckResponse:
             task_completed=False,
         )
 
-    updated_user = await db.execute(
-        """
-        UPDATE users
-        SET balance = COALESCE(balance, 0) + ?
-        WHERE user_id = ?
-        """,
-        (reward, int(user_id)),
+    new_balance = await _apply_task_reward(
+        db,
+        user_id=int(user_id),
+        reward=reward,
+        reason="view_post_bonus",
+        meta={
+            "task_post_id": task_post_id,
+            "channel_id": int(row["channel_id"]),
+            "channel_post_id": int(row["channel_post_id"]),
+        },
     )
-    if updated_user.rowcount != 1:
-        raise RuntimeError(f"User {user_id} not found while crediting reward")
-
-    await db.execute(
-        """
-        INSERT INTO ledger (user_id, delta, reason, meta)
-        VALUES (?, ?, ?, ?)
-        """,
-        (
-            int(user_id),
-            reward,
-            "view_post_bonus",
-            json.dumps(
-                {
-                    "task_post_id": int(row["id"]),
-                    "channel_id": int(row["channel_id"]),
-                    "channel_post_id": int(row["channel_post_id"]),
-                },
-                ensure_ascii=False,
-            ),
-        ),
-    )
-
-    new_balance = await _get_user_balance_safe(db, user_id)
 
     await db.commit()
 
     return TaskCheckResponse(
         ok=True,
-        task_id=int(row["id"]),
+        task_id=task_post_id,
         status="completed",
         message="Просмотр засчитан",
         reward_granted=reward,
@@ -185,11 +245,11 @@ async def check_view_post_task(db, user_id: int, row) -> TaskCheckResponse:
     )
 
 
-async def open_task_by_type(row) -> TaskOpenResponse:
+async def open_task_by_type(db, user_id: int, row) -> TaskOpenResponse:
     task_type = get_task_type_from_row(row)
 
     if task_type == "view_post":
-        return await open_view_post_task(row)
+        return await open_view_post_task(db, user_id, row)
 
     return TaskOpenResponse(
         ok=False,
@@ -227,37 +287,38 @@ async def get_next_task_for_user(user_id: int) -> Optional[TaskListItem]:
     db = await get_db()
     try:
         row = await get_next_view_post_task_for_user(db, user_id)
+        if not row:
+            return None
+
+        item = map_task_row_to_item(row)
+        item.already_completed = await _is_task_already_completed(db, user_id, item.id)
+        item.status = "completed" if item.already_completed else "available"
+        item.can_claim = not item.already_completed
+        return item
     finally:
         await db.close()
-
-    if not row:
-        return None
-
-    return map_task_row_to_item(row)
 
 
 async def open_task_for_user(user_id: int, task_id: int) -> TaskOpenResponse:
     db = await get_db()
     try:
         row = await get_view_post_task_for_user(db, user_id, task_id)
+        if not row:
+            return TaskOpenResponse(
+                ok=False,
+                task_id=task_id,
+                opened_at=0,
+                hold_seconds=0,
+                can_check_at=0,
+                chat_id=None,
+                channel_post_id=None,
+                post_url=None,
+                session_id=None,
+            )
+
+        return await open_task_by_type(db, user_id, row)
     finally:
         await db.close()
-
-    if not row:
-        return TaskOpenResponse(
-            ok=False,
-            task_id=task_id,
-            opened_at=0,
-            hold_seconds=0,
-            can_check_at=0,
-            chat_id=None,
-            channel_post_id=None,
-            post_url=None,
-            session_id=None,
-        )
-
-    response: TaskOpenResponse = await open_task_by_type(row)
-    return response
 
 
 async def check_task_for_user(user_id: int, task_id: int) -> TaskCheckResponse:
@@ -279,8 +340,7 @@ async def check_task_for_user(user_id: int, task_id: int) -> TaskCheckResponse:
                 task_completed=False,
             )
 
-        response: TaskCheckResponse = await check_task_by_type(db, user_id, row)
-        return response
+        return await check_task_by_type(db, user_id, row)
 
     except Exception:
         await db.rollback()
