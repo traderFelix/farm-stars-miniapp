@@ -32,14 +32,10 @@ from bot.db import (
 
     # stats
     campaign_stats, list_winners, claimed_usernames, global_claims_stats, campaigns_status_counts,
-    unclaimed_total_amount, total_assigned_amount, total_withdrawn_amount, pending_withdrawn_amount,
+    unclaimed_total_amount, total_assigned_amount,
 
     # ledger
     apply_balance_delta, get_balance, xtr_ledger_add,
-
-    # withdraw
-    list_withdrawals, get_withdrawal, set_withdrawal_status, mark_withdraw_fee_refunded, list_recent_fee_payments,
-    find_withdraw_by_fee_charge_id,
 )
 
 from shared.db.users import (
@@ -54,6 +50,10 @@ from shared.db.ledger import (
 from shared.db.tasks import (
     get_task_channel, task_channel_stats, list_task_channels, set_task_channel_active, get_task_channel_allocated_views,
     list_task_posts_by_channel, update_task_channel_params, create_task_channel
+)
+from shared.db.withdrawals import (
+    list_withdrawals, get_withdrawal, set_withdrawal_status, mark_withdraw_fee_refunded, total_withdrawn_amount,
+    pending_withdrawn_amount, list_recent_fee_payments, find_withdraw_by_fee_charge_id
 )
 
 from bot.keyboards import (

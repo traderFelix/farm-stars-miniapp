@@ -17,6 +17,7 @@ import {
 import { clearOpenedTask, getOpenedTask, saveOpenedTask } from "@/lib/opened-task";
 import type { TaskCheckResponse, TaskListItem } from "@/lib/tasks";
 import { getTelegramInitData, initTelegramMiniApp } from "@/lib/telegram";
+import WithdrawalPanel from "@/components/withdrawal/WithdrawalPanel";
 
 type BootstrapState = "idle" | "loading" | "ready" | "error";
 
@@ -402,6 +403,10 @@ export default function HomePage() {
                         )}
                       </>
                   )}
+                </section>
+
+                <section className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                  <WithdrawalPanel />
                 </section>
 
                 <section className="rounded-2xl border border-white/10 bg-white/5 p-4">

@@ -17,10 +17,8 @@ from shared.config import (
 )
 
 from bot.db import (
-    sum_recent_abuse_amount, has_pending_withdrawal,
-    register_user, get_balance, create_withdrawal, user_withdrawals,
+    sum_recent_abuse_amount, register_user, get_balance, ensure_user_registered, xtr_ledger_add,
     claim_reward, list_active_campaigns, log_abuse_event, count_recent_abuse_events, tx,
-    wallet_used_by_another_user, wallet_users, ensure_user_registered, xtr_ledger_add,
 )
 
 from shared.db.users import (
@@ -32,6 +30,9 @@ from shared.db.tasks import (
 )
 from shared.db.ledger import (
     apply_balance_debit_if_enough, get_activity_index
+)
+from shared.db.withdrawals import (
+    create_withdrawal, wallet_used_by_another_user, wallet_users, has_pending_withdrawal, user_withdrawals,
 )
 
 from bot.keyboards import (

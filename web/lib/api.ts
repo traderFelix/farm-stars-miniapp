@@ -47,6 +47,56 @@ export type CheckinClaimResponse = {
     message: string;
 };
 
+export type WithdrawalMethod = "ton" | "stars";
+export type WithdrawalStatus =
+    | "pending"
+    | "approved"
+    | "rejected"
+    | "paid"
+    | "cancelled";
+
+export type WithdrawalEligibilityResponse = {
+    can_withdraw: boolean;
+    min_withdraw: number;
+    min_task_percent: number;
+    has_pending_withdrawal: boolean;
+    account_age_hours: number;
+    required_account_age_hours: number;
+    task_earnings_percent: number;
+    available_balance: number;
+    message: string;
+};
+
+export type WithdrawalCreateRequest = {
+    method: WithdrawalMethod;
+    amount: number;
+    wallet?: string | null;
+};
+
+export type WithdrawalCreateResponse = {
+    ok: boolean;
+    withdrawal_id: number;
+    status: WithdrawalStatus;
+    message: string;
+};
+
+export type WithdrawalItem = {
+    id: number;
+    amount: number;
+    method: WithdrawalMethod;
+    status: WithdrawalStatus;
+    wallet?: string | null;
+    created_at: string;
+    processed_at?: string | null;
+    fee_xtr: number;
+    fee_paid: boolean;
+    fee_refunded: boolean;
+};
+
+export type WithdrawalListResponse = {
+    items: WithdrawalItem[];
+};
+
 type RequestOptions = {
     method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
     body?: unknown;
@@ -187,15 +237,41 @@ export async function checkTask(
 }
 
 export async function getCheckinStatus(): Promise<CheckinStatus> {
-    return apiRequest("/checkin/status", {
+    return apiRequest<CheckinStatus>("/checkin/status", {
         method: "GET",
         auth: true,
     });
 }
 
 export async function claimCheckin(): Promise<CheckinClaimResponse> {
-    return apiRequest("/checkin/claim", {
+    return apiRequest<CheckinClaimResponse>("/checkin/claim", {
         method: "POST",
+        auth: true,
+    });
+}
+
+export async function getWithdrawalEligibility(): Promise<WithdrawalEligibilityResponse> {
+    return apiRequest<WithdrawalEligibilityResponse>("/withdrawals/eligibility", {
+        method: "GET",
+        auth: true,
+    });
+}
+
+export async function createWithdrawal(
+    payload: WithdrawalCreateRequest,
+): Promise<WithdrawalCreateResponse> {
+    return apiRequest<WithdrawalCreateResponse>("/withdrawals", {
+        method: "POST",
+        body: payload,
+        auth: true,
+    });
+}
+
+export async function getMyWithdrawals(
+    limit: number = 20,
+): Promise<WithdrawalListResponse> {
+    return apiRequest<WithdrawalListResponse>(`/withdrawals/my?limit=${limit}`, {
+        method: "GET",
         auth: true,
     });
 }
