@@ -5,7 +5,13 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 
-async def create_withdrawal(db: aiosqlite.Connection, user_id: int, amount: float, method: str, wallet: Optional[str] = None) -> int:
+async def create_withdrawal(
+        db: aiosqlite.Connection,
+        user_id: int,
+        amount: float,
+        method: str,
+        wallet: Optional[str] = None,
+) -> int:
     cur = await db.execute(
         """
         INSERT INTO withdrawals (user_id, amount, method, wallet, status)
@@ -25,7 +31,21 @@ async def create_withdrawal(db: aiosqlite.Connection, user_id: int, amount: floa
 async def list_withdrawals(db: aiosqlite.Connection, status: str = "pending", limit: int = 20):
     async with db.execute(
             """
-        SELECT w.id, w.user_id, u.username, w.amount, w.method, w.wallet, w.status, w.created_at
+        SELECT
+            w.id,
+            w.user_id,
+            u.username,
+            w.amount,
+            w.method,
+            w.wallet,
+            w.status,
+            w.created_at,
+            w.processed_at,
+            w.fee_xtr,
+            w.fee_paid,
+            w.fee_refunded,
+            w.fee_telegram_charge_id,
+            w.fee_invoice_payload
         FROM withdrawals w
         LEFT JOIN users u ON u.user_id = w.user_id
         WHERE w.status = ?
@@ -40,7 +60,21 @@ async def list_withdrawals(db: aiosqlite.Connection, status: str = "pending", li
 async def get_withdrawal(db: aiosqlite.Connection, withdrawal_id: int):
     async with db.execute(
             """
-        SELECT w.id, w.user_id, u.username, w.amount, w.method, w.wallet, w.status, w.created_at
+        SELECT
+            w.id,
+            w.user_id,
+            u.username,
+            w.amount,
+            w.method,
+            w.wallet,
+            w.status,
+            w.created_at,
+            w.processed_at,
+            w.fee_xtr,
+            w.fee_paid,
+            w.fee_refunded,
+            w.fee_telegram_charge_id,
+            w.fee_invoice_payload
         FROM withdrawals w
         LEFT JOIN users u ON u.user_id = w.user_id
         WHERE w.id = ?
@@ -50,7 +84,12 @@ async def get_withdrawal(db: aiosqlite.Connection, withdrawal_id: int):
         return await cur.fetchone()
 
 
-async def set_withdrawal_status(db: aiosqlite.Connection, withdrawal_id: int, status: str, processed_by: Optional[int] = None) -> None:
+async def set_withdrawal_status(
+        db: aiosqlite.Connection,
+        withdrawal_id: int,
+        status: str,
+        processed_by: Optional[int] = None,
+) -> None:
     await db.execute(
         """
         UPDATE withdrawals
@@ -66,7 +105,19 @@ async def set_withdrawal_status(db: aiosqlite.Connection, withdrawal_id: int, st
 async def user_withdrawals(db: aiosqlite.Connection, user_id: int, limit: int = 20):
     async with db.execute(
             """
-        SELECT id, amount, method, status, created_at
+        SELECT
+            id,
+            amount,
+            method,
+            wallet,
+            status,
+            created_at,
+            processed_at,
+            fee_xtr,
+            fee_paid,
+            fee_refunded,
+            fee_telegram_charge_id,
+            fee_invoice_payload
         FROM withdrawals
         WHERE user_id = ?
         ORDER BY datetime(created_at) DESC

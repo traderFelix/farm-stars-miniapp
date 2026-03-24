@@ -233,20 +233,21 @@ async def get_my_withdrawals_for_user(
     async with get_db() as db:
         rows = await user_withdrawals(db, user_id=user_id, limit=limit)
 
-    items = [
-        WithdrawalItem(
-            id=int(row["id"]),
-            amount=float(row["amount"]),
-            method=row["method"],
-            status=row["status"],
-            wallet=row["wallet"] if "wallet" in row.keys() else None,
-            created_at=row["created_at"],
-            processed_at=row["processed_at"] if "processed_at" in row.keys() else None,
-            fee_xtr=int(row["fee_xtr"]) if "fee_xtr" in row.keys() and row["fee_xtr"] is not None else 0,
-            fee_paid=bool(row["fee_paid"]) if "fee_paid" in row.keys() and row["fee_paid"] is not None else False,
-            fee_refunded=bool(row["fee_refunded"]) if "fee_refunded" in row.keys() and row["fee_refunded"] is not None else False,
+    items = []
+    for row in rows:
+        items.append(
+            WithdrawalItem(
+                id=int(row["id"]),
+                amount=float(row["amount"]),
+                method=row["method"],
+                status=row["status"],
+                wallet=row["wallet"],
+                created_at=row["created_at"],
+                processed_at=row["processed_at"],
+                fee_xtr=int(row["fee_xtr"] or 0),
+                fee_paid=bool(row["fee_paid"] or 0),
+                fee_refunded=bool(row["fee_refunded"] or 0),
+            )
         )
-        for row in rows
-    ]
 
     return WithdrawalListResponse(items=items)

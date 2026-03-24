@@ -244,8 +244,9 @@ export default function WithdrawalPanel() {
                                 <div className="mt-2 grid gap-1 text-xs text-white/60">
                                     <div>Метод: {methodLabel(item.method)}</div>
                                     <div>Создано: {item.created_at || "-"}</div>
+                                    {item.processed_at ? <div>Обработано: {item.processed_at}</div> : null}
                                     {item.wallet ? <div>Кошелек: {item.wallet}</div> : null}
-                                    <div>Комиссия: {item.fee_xtr ?? 0} XTR</div>
+                                    <div>Комиссия: {feeAmountLabel(item)}</div>
                                     <div>Статус комиссии: {feeStatusLabel(item)}</div>
                                 </div>
                             </div>
@@ -301,5 +302,12 @@ function methodLabel(method: string): string {
 function feeStatusLabel(item: WithdrawalItem): string {
     if (item.fee_refunded) return "возвращена";
     if (item.fee_paid) return "оплачена";
+    if (Number(item.fee_xtr || 0) <= 0) return "не требуется";
     return "не оплачена";
+}
+
+function feeAmountLabel(item: WithdrawalItem): string {
+    const fee = Number(item.fee_xtr || 0);
+    if (fee <= 0) return "не требуется";
+    return `${fee} XTR`;
 }
