@@ -105,3 +105,18 @@ async def get_ledger_sum(user_id: int) -> dict[str, Any]:
         "GET",
         f"/ledger/bot/{int(user_id)}/sum",
     )
+
+
+async def get_withdrawal_eligibility_via_api(user_id: int) -> dict[str, Any]:
+    return await _request(
+        "GET",
+        f"/withdrawals/bot/eligibility/{int(user_id)}",
+    )
+
+
+async def get_my_withdrawals_via_api(user_id: int, limit: int = 20) -> dict[str, Any]:
+    return await _request(
+        "GET",
+        f"/withdrawals/bot/my/{int(user_id)}",
+        params={"limit": limit},
+    )

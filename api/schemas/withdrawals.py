@@ -2,7 +2,6 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel
 
-
 WithdrawalMethod = Literal["ton", "stars"]
 WithdrawalStatus = Literal["pending", "approved", "rejected", "paid", "cancelled"]
 
@@ -23,6 +22,11 @@ class WithdrawalCreateRequest(BaseModel):
     method: WithdrawalMethod
     amount: float
     wallet: Optional[str] = None
+
+    # bot finalize payload
+    paid_fee: int = 0
+    fee_payment_charge_id: Optional[str] = None
+    fee_invoice_payload: Optional[str] = None
 
 
 class WithdrawalCreateResponse(BaseModel):

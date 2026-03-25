@@ -31,7 +31,7 @@ from shared.db.ledger import (
     apply_balance_debit_if_enough, get_activity_index
 )
 from shared.db.withdrawals import (
-    create_withdrawal, wallet_used_by_another_user, wallet_users, has_pending_withdrawal, user_withdrawals,
+    create_withdrawal, wallet_used_by_another_user, wallet_users, has_pending_withdrawal,
 )
 
 from bot.keyboards import (
@@ -47,6 +47,7 @@ from bot.api_client import (
     check_task,
     get_daily_checkin_status,
     claim_daily_checkin_via_api,
+    get_my_withdrawals_via_api,
 )
 
 router = Router()
@@ -997,13 +998,14 @@ async def on_successful_payment(message: Message, state: FSMContext, db):
 
 
 @router.callback_query(F.data == "withdraw:my")
-async def withdraw_my(callback: CallbackQuery, db):
+async def withdraw_my(callback: CallbackQuery):
     await callback.answer()
     user_id = callback.from_user.id
 
-    rows = await user_withdrawals(db, user_id, limit=20)
+    data = await get_my_withdrawals_via_api(user_id=user_id, limit=20)
+    items = data.get("items", [])
 
-    if not rows:
+    if not items:
         await safe_edit_text(
             callback.message,
             "📜 Мои заявки\n\n"
@@ -1015,16 +1017,38 @@ async def withdraw_my(callback: CallbackQuery, db):
     status_map = {
         "pending": "⏳ В обработке",
         "paid": "✅ Выплачено",
+        "approved": "✅ Одобрено",
         "rejected": "❌ Отклонено",
+        "cancelled": "🚫 Отменено",
     }
 
     lines = []
-    for r in rows:
-        wid, amount, method, status, created = r[0], r[1], r[2], r[3], r[4]
-        lines.append(
-            f"#{wid} • {float(amount):g}⭐ • {str(method).upper()} • {status_map.get(status, status)}\n"
+    for item in items:
+        wid = item["id"]
+        amount = float(item["amount"])
+        method = item["method"]
+        status = item["status"]
+        created = item["created_at"]
+
+        line = (
+            f"#{wid} • {amount:g}⭐ • {str(method).upper()} • {status_map.get(status, status)}\n"
             f"{created}"
         )
+
+        fee_xtr = int(item.get("fee_xtr") or 0)
+        fee_paid = bool(item.get("fee_paid") or False)
+        fee_refunded = bool(item.get("fee_refunded") or False)
+
+        if fee_paid and fee_xtr > 0:
+            line += f"\nКомиссия: {fee_xtr} XTR"
+            if fee_refunded:
+                line += " (возвращена)"
+
+        wallet = item.get("wallet")
+        if wallet and method == "ton":
+            line += f"\nКошелек: {wallet}"
+
+        lines.append(line)
 
     await safe_edit_text(
         callback.message,
