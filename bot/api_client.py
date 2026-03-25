@@ -18,12 +18,18 @@ async def _request(
         path: str,
         *,
         json: Optional[dict[str, Any]] = None,
+        params: Optional[dict[str, Any]] = None,
 ) -> Any:
     url = f"{API_BASE_URL.rstrip('/')}/{path.lstrip('/')}"
 
     try:
         async with httpx.AsyncClient(timeout=API_TIMEOUT) as client:
-            response = await client.request(method, url, json=json)
+            response = await client.request(
+                method,
+                url,
+                json=json,
+                params=params,
+            )
     except httpx.HTTPError as e:
         raise ApiClientError(f"API request failed: {e}") from e
 
@@ -83,4 +89,19 @@ async def claim_daily_checkin_via_api(user_id: int) -> dict[str, Any]:
         "POST",
         f"/checkin/bot/claim/{int(user_id)}",
         json={},
+    )
+
+
+async def get_ledger(user_id: int, limit: int = 20) -> dict[str, Any]:
+    return await _request(
+        "GET",
+        f"/ledger/bot/{int(user_id)}",
+        params={"limit": limit},
+    )
+
+
+async def get_ledger_sum(user_id: int) -> dict[str, Any]:
+    return await _request(
+        "GET",
+        f"/ledger/bot/{int(user_id)}/sum",
     )
