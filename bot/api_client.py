@@ -69,3 +69,18 @@ async def check_task(user_id: int, task_id: int) -> dict[str, Any]:
         f"/tasks/bot/{int(task_id)}/check/{int(user_id)}",
         json={},
     )
+
+
+async def get_daily_checkin_status(user_id: int) -> dict[str, Any]:
+    return await _request(
+        "GET",
+        f"/checkin/bot/status/{int(user_id)}",
+    )
+
+
+async def claim_daily_checkin_via_api(user_id: int) -> dict[str, Any]:
+    return await _request(
+        "POST",
+        f"/checkin/bot/claim/{int(user_id)}",
+        json={},
+    )

@@ -20,6 +20,30 @@ router = APIRouter(
 )
 
 
+async def _get_next_task_or_404(user_id: int) -> TaskListItem:
+    task = await get_next_task_for_user(user_id)
+    if not task:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No available tasks",
+        )
+    return task
+
+
+async def _open_task(user_id: int, task_id: int) -> TaskOpenResponse:
+    return await open_task_for_user(
+        user_id=user_id,
+        task_id=task_id,
+    )
+
+
+async def _check_task(user_id: int, task_id: int) -> TaskCheckResponse:
+    return await check_task_for_user(
+        user_id=user_id,
+        task_id=task_id,
+    )
+
+
 @router.get(
     "/next",
     response_model=TaskListItem,
@@ -28,13 +52,7 @@ router = APIRouter(
 async def get_next_task(
         user_id: int = Depends(get_current_user_id),
 ):
-    task = await get_next_task_for_user(user_id)
-    if not task:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="No available tasks",
-        )
-    return task
+    return await _get_next_task_or_404(user_id)
 
 
 @router.post(
@@ -48,8 +66,7 @@ async def open_task(
         user_id: int = Depends(get_current_user_id),
 ):
     _ = payload
-
-    return await open_task_for_user(
+    return await _open_task(
         user_id=user_id,
         task_id=task_id,
     )
@@ -66,8 +83,7 @@ async def check_task(
         user_id: int = Depends(get_current_user_id),
 ):
     _ = payload
-
-    return await check_task_for_user(
+    return await _check_task(
         user_id=user_id,
         task_id=task_id,
     )
@@ -79,13 +95,7 @@ async def check_task(
     summary="Bot internal: get next task for user",
 )
 async def bot_get_next_task(user_id: int):
-    task = await get_next_task_for_user(user_id)
-    if not task:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="No available tasks",
-        )
-    return task
+    return await _get_next_task_or_404(user_id)
 
 
 @router.post(
@@ -97,7 +107,7 @@ async def bot_open_task(
         user_id: int,
         task_id: int,
 ):
-    return await open_task_for_user(
+    return await _open_task(
         user_id=user_id,
         task_id=task_id,
     )
@@ -114,8 +124,7 @@ async def bot_check_task(
         payload: TaskCheckRequest,
 ):
     _ = payload
-
-    return await check_task_for_user(
+    return await _check_task(
         user_id=user_id,
         task_id=task_id,
     )

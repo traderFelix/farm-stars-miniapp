@@ -2,7 +2,6 @@ import asyncio, logging
 
 from typing import Optional
 
-from datetime import datetime, timedelta, timezone
 from aiogram.filters import CommandStart, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.enums import ParseMode
@@ -23,7 +22,7 @@ from bot.db import (
 
 from shared.db.users import (
     fmt_stars, user_has_role, get_user_role_level, role_title_from_level, bind_referrer, user_created_hours_ago,
-    get_referrals_count, claim_daily_checkin,
+    get_referrals_count,
 )
 from shared.db.tasks import (
     allocate_task_post_from_channel_post
@@ -46,6 +45,8 @@ from bot.api_client import (
     get_next_task,
     open_task,
     check_task,
+    get_daily_checkin_status,
+    claim_daily_checkin_via_api,
 )
 
 router = Router()
@@ -1150,47 +1151,13 @@ def daily_checkin_text(current_day: int, already_claimed_today: bool) -> str:
     )
 
 @router.callback_query(F.data == "daily_checkin")
-async def daily_checkin_open(callback: CallbackQuery, db):
-    await register_user(
-        db,
-        callback.from_user.id,
-        callback.from_user.username,
-        callback.from_user.first_name,
-        callback.from_user.last_name,
-    )
-
-    async with db.execute(
-            """
-        SELECT daily_checkin_cycle_day, last_daily_checkin_at
-        FROM users
-        WHERE user_id = ?
-        """,
-            (callback.from_user.id,),
-    ) as cur:
-        row = await cur.fetchone()
-
-    stored_day = int(row["daily_checkin_cycle_day"] or 0)
-    last_checkin_raw = row["last_daily_checkin_at"]
-
-    today = datetime.now(timezone.utc).date()
-    yesterday = today - timedelta(days=1)
-
-    last_date = None
-
-    if last_checkin_raw:
-        last_date = datetime.fromisoformat(last_checkin_raw).date()
-
-    already_claimed_today = last_date == today
-
-    if already_claimed_today:
-        current_day = stored_day if stored_day > 0 else 1
-    else:
-        if last_date == yesterday:
-            current_day = stored_day + 1 if stored_day < 30 else 1
-        else:
-            current_day = 1
-
+async def daily_checkin_open(callback: CallbackQuery):
     await callback.answer()
+
+    status = await get_daily_checkin_status(callback.from_user.id)
+
+    current_day = int(status["current_cycle_day"])
+    already_claimed_today = bool(status["already_claimed_today"])
 
     await safe_edit_text(
         callback.message,
@@ -1209,38 +1176,26 @@ async def daily_checkin_noop(callback: CallbackQuery):
     await callback.answer()
 
 @router.callback_query(F.data == "daily_checkin:claim")
-async def daily_checkin_claim(callback: CallbackQuery, db):
-    _, alert_text, _ = await claim_daily_checkin(
-        db=db,
-        user_id=callback.from_user.id,
-        username=callback.from_user.username,
-        first_name=callback.from_user.first_name,
-        last_name=callback.from_user.last_name,
-    )
+async def daily_checkin_claim(callback: CallbackQuery):
+    result = await claim_daily_checkin_via_api(callback.from_user.id)
 
+    alert_text = result.get("message") or "Готово"
     await callback.answer(alert_text, show_alert=True)
 
-    async with db.execute(
-            """
-        SELECT daily_checkin_cycle_day, last_daily_checkin_at
-        FROM users
-        WHERE user_id = ?
-        """,
-            (callback.from_user.id,),
-    ) as cur:
-        row = await cur.fetchone()
+    status = await get_daily_checkin_status(callback.from_user.id)
 
-    current_day = int(row["daily_checkin_cycle_day"] or 1)
+    current_day = int(status["current_cycle_day"])
+    already_claimed_today = bool(status["already_claimed_today"])
 
     await safe_edit_text(
         callback.message,
         daily_checkin_text(
             current_day=current_day,
-            already_claimed_today=True,
+            already_claimed_today=already_claimed_today,
         ),
         reply_markup=daily_checkin_kb(
             current_day=current_day,
-            already_claimed_today=True,
+            already_claimed_today=already_claimed_today,
         ),
     )
 

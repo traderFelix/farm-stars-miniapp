@@ -13,7 +13,7 @@ from api.routes.ledger import router as ledger_router
 from api.routes.checkin import router as checkin_router
 from api.routes.withdrawals import router as withdrawals_router
 
-app = FastAPI(title="Farm Stars API")
+app = FastAPI(title="Farm Stars")
 
 allowed_origins = [WEB_ORIGIN_DEV]
 if WEB_ORIGIN_NGROK:
