@@ -35,7 +35,7 @@ from bot.db import (
     unclaimed_total_amount, total_assigned_amount,
 
     # ledger
-    apply_balance_delta, get_balance, xtr_ledger_add,
+    apply_balance_delta, get_balance,
 )
 
 from shared.db.users import (
@@ -55,6 +55,7 @@ from shared.db.withdrawals import (
     list_withdrawals, get_withdrawal, set_withdrawal_status, mark_withdraw_fee_refunded, total_withdrawn_amount,
     pending_withdrawn_amount, list_recent_fee_payments, find_withdraw_by_fee_charge_id
 )
+from shared.db.xtr_ledger import xtr_ledger_add
 
 from bot.keyboards import (
     admin_menu_kb, admin_back_kb, campaigns_list_kb, campaign_manage_kb, stats_list_kb, admin_fee_refund_kb,

@@ -120,3 +120,11 @@ async def get_my_withdrawals_via_api(user_id: int, limit: int = 20) -> dict[str,
         f"/withdrawals/bot/my/{int(user_id)}",
         params={"limit": limit},
     )
+
+
+async def create_withdrawal_via_api(user_id: int, payload: dict[str, Any]) -> dict[str, Any]:
+    return await _request(
+        "POST",
+        f"/withdrawals/bot/create/{int(user_id)}",
+        json=payload,
+    )

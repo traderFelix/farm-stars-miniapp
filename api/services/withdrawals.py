@@ -12,14 +12,26 @@ from api.schemas.withdrawals import (
     WithdrawalListResponse,
 )
 from shared.config import REQUIRED_ACCOUNT_AGE_HOURS, MIN_WITHDRAW, MIN_WITHDRAW_PERCENT
-from shared.db.ledger import get_user_earnings_breakdown
+from shared.db.abuse import (
+    count_recent_abuse_events,
+    log_abuse_event,
+    sum_recent_abuse_amount,
+)
+from shared.db.ledger import (
+    apply_balance_debit_if_enough,
+    get_activity_index,
+    get_user_earnings_breakdown,
+)
 from shared.db.users import get_user_by_id, user_created_hours_ago
 from shared.db.withdrawals import (
     create_withdrawal,
     has_pending_withdrawal,
+    is_first_withdraw,
+    set_withdrawal_fee_info,
     user_withdrawals,
     wallet_used_by_another_user,
 )
+from shared.db.xtr_ledger import xtr_ledger_add
 
 
 @dataclass
@@ -46,9 +58,25 @@ def _extract_task_percent(breakdown: dict) -> float:
     total = _safe_float(breakdown.get("total"))
     if total <= 0:
         return 0.0
-
     tasks_amount = _safe_float(breakdown.get("view_post_bonus", 0))
     return round((tasks_amount / total) * 100, 2)
+
+
+def _normalize_wallet(method: str, wallet: Optional[str]) -> Optional[str]:
+    if method != "ton":
+        return None
+    normalized = (wallet or "").strip()
+    return normalized or None
+
+
+def get_withdraw_fee(amount: float, is_first: bool) -> int:
+    if is_first:
+        return 0
+    if amount >= 500:
+        return 0
+    if amount >= 200:
+        return 3
+    return 5
 
 
 async def _build_eligibility(user_id: int) -> EligibilityCheckResult:
@@ -71,7 +99,6 @@ async def _build_eligibility(user_id: int) -> EligibilityCheckResult:
         balance = _safe_float(user["balance"])
         account_age_hours = _safe_float(await user_created_hours_ago(db, user_id))
         pending = await has_pending_withdrawal(db, user_id)
-
         breakdown = await get_user_earnings_breakdown(db, user_id)
         task_percent = _extract_task_percent(breakdown)
 
@@ -145,10 +172,50 @@ async def _build_eligibility(user_id: int) -> EligibilityCheckResult:
         await db.close()
 
 
+async def _validate_withdraw_rules(db, user_id: int, amount: float) -> Optional[str]:
+    user = await get_user_by_id(db, user_id)
+    balance = _safe_float(user["balance"] if user else 0)
+
+    if amount < MIN_WITHDRAW:
+        return f"❌ Минимальная сумма вывода: {MIN_WITHDRAW:g}⭐"
+
+    if amount > balance:
+        return "❌ Недостаточно звезд на балансе"
+
+    user_age_hours = await user_created_hours_ago(db, user_id)
+    if user_age_hours < 24:
+        return "⏳ Вывод доступен только через 24 часа после регистрации."
+
+    if await has_pending_withdrawal(db, user_id):
+        return "⏳ У тебя уже есть заявка на вывод в обработке."
+
+    recent_withdraw_count = await count_recent_abuse_events(db, user_id, "withdraw_create", 1440)
+    if recent_withdraw_count >= 3:
+        return "Лимит: не более 3 заявок на вывод в сутки."
+
+    recent_withdraw_sum = await sum_recent_abuse_amount(db, user_id, "withdraw_create", 24)
+    if recent_withdraw_sum + amount > 1000:
+        return "Суточный лимит вывода превышен."
+
+    activity_index = await get_activity_index(db, user_id)
+    if activity_index <= 0:
+        return "❌ Вывод пока недоступен."
+
+    if activity_index < MIN_WITHDRAW_PERCENT * 100:
+        return (
+            "❌ Вывод пока недоступен\n\n"
+            f"Для вывода нужен Индекс Активности не ниже {MIN_WITHDRAW_PERCENT * 100:.0f}%.\n\n"
+            f"• Индекс Активности: {activity_index:.1f}%"
+        )
+
+    return None
+
+
 async def get_withdrawal_eligibility_for_user(
         user_id: int,
 ) -> WithdrawalEligibilityResponse:
     result = await _build_eligibility(user_id)
+
     return WithdrawalEligibilityResponse(
         can_withdraw=result.can_withdraw,
         min_withdraw=result.min_withdraw,
@@ -162,36 +229,27 @@ async def get_withdrawal_eligibility_for_user(
     )
 
 
-def _normalize_wallet(method: str, wallet: Optional[str]) -> Optional[str]:
-    if method != "ton":
-        return None
-    normalized = (wallet or "").strip()
-    return normalized or None
-
-
 async def create_withdrawal_for_user(
         user_id: int,
         payload: WithdrawalCreateRequest,
 ) -> WithdrawalCreateResponse:
-    eligibility = await _build_eligibility(user_id)
-    if not eligibility.can_withdraw:
-        raise ValueError(eligibility.message)
-
     method = payload.method
     amount = _safe_float(payload.amount)
     wallet = _normalize_wallet(method, payload.wallet)
 
+    paid_fee = int(payload.paid_fee or 0)
+    fee_payment_charge_id = payload.fee_payment_charge_id
+    fee_invoice_payload = payload.fee_invoice_payload
+
     if amount <= 0:
         raise ValueError("Сумма вывода должна быть больше нуля.")
 
-    if amount < MIN_WITHDRAW:
-        raise ValueError(f"Минимальная сумма вывода — {MIN_WITHDRAW:.0f}⭐️.")
-
-    if amount > eligibility.available_balance:
-        raise ValueError("Недостаточно средств для вывода.")
-
     db = await get_db()
     try:
+        error_text = await _validate_withdraw_rules(db, user_id, amount)
+        if error_text:
+            raise ValueError(error_text)
+
         if method == "ton":
             if not wallet:
                 raise ValueError("Для вывода в TON нужно указать кошелек.")
@@ -200,32 +258,63 @@ async def create_withdrawal_for_user(
             if wallet_in_use:
                 raise ValueError("Этот TON-кошелек уже используется другим пользователем.")
 
-            withdrawal_id = await create_withdrawal(
+        first = await is_first_withdraw(db, user_id)
+        expected_fee = get_withdraw_fee(amount, first)
+        if paid_fee != expected_fee:
+            raise ValueError("Сумма комиссии не совпадает с ожидаемой.")
+
+        withdrawal_id = await create_withdrawal(
+            db=db,
+            user_id=user_id,
+            amount=amount,
+            method=method,
+            wallet=wallet,
+        )
+
+        await set_withdrawal_fee_info(
+            db=db,
+            withdrawal_id=withdrawal_id,
+            fee_xtr=paid_fee,
+            fee_paid=paid_fee > 0,
+            fee_payment_charge_id=fee_payment_charge_id,
+            fee_invoice_payload=fee_invoice_payload,
+        )
+
+        if paid_fee > 0:
+            await xtr_ledger_add(
                 db=db,
                 user_id=user_id,
-                amount=amount,
-                method=method,
-                wallet=wallet,
+                withdrawal_id=withdrawal_id,
+                delta_xtr=paid_fee,
+                reason="withdraw_fee_paid",
+                telegram_payment_charge_id=fee_payment_charge_id,
+                invoice_payload=fee_invoice_payload,
+                meta=f"method={method}",
             )
-        else:
-            withdrawal_id = await create_withdrawal(
-                db=db,
-                user_id=user_id,
-                amount=amount,
-                method=method,
-                wallet=None,
-            )
+
+        await log_abuse_event(db, user_id, "withdraw_create", amount=amount)
+
+        ok = await apply_balance_debit_if_enough(
+            db=db,
+            user_id=user_id,
+            amount=amount,
+            reason="withdraw_hold",
+            withdrawal_id=withdrawal_id,
+            meta=f"method={method};fee_xtr={paid_fee}",
+        )
+        if not ok:
+            raise ValueError("insufficient_balance")
 
         await db.commit()
+
+        return WithdrawalCreateResponse(
+            ok=True,
+            withdrawal_id=withdrawal_id,
+            status="pending",
+            message="Заявка на вывод создана.",
+        )
     finally:
         await db.close()
-
-    return WithdrawalCreateResponse(
-        ok=True,
-        withdrawal_id=withdrawal_id,
-        status="pending",
-        message="Заявка на вывод создана.",
-    )
 
 
 async def get_my_withdrawals_for_user(

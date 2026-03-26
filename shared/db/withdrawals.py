@@ -266,3 +266,45 @@ async def find_withdraw_by_fee_charge_id(db, charge_id: str):
     row = await cur.fetchone()
     await cur.close()
     return row
+
+
+async def is_first_withdraw(db: aiosqlite.Connection, user_id: int) -> bool:
+    async with db.execute(
+            """
+        SELECT 1
+        FROM withdrawals
+        WHERE user_id = ?
+        LIMIT 1
+        """,
+            (int(user_id),),
+    ) as cur:
+        row = await cur.fetchone()
+    return row is None
+
+
+async def set_withdrawal_fee_info(
+        db: aiosqlite.Connection,
+        withdrawal_id: int,
+        fee_xtr: int,
+        fee_paid: bool,
+        fee_payment_charge_id: Optional[str] = None,
+        fee_invoice_payload: Optional[str] = None,
+) -> None:
+    await db.execute(
+        """
+        UPDATE withdrawals
+        SET fee_xtr = ?,
+            fee_paid = ?,
+            fee_refunded = 0,
+            fee_telegram_charge_id = ?,
+            fee_invoice_payload = ?
+        WHERE id = ?
+        """,
+        (
+            int(fee_xtr),
+            1 if fee_paid else 0,
+            fee_payment_charge_id,
+            fee_invoice_payload,
+            int(withdrawal_id),
+        ),
+    )

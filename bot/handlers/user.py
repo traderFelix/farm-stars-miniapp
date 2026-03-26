@@ -16,23 +16,17 @@ from shared.config import (
 )
 
 from bot.db import (
-    sum_recent_abuse_amount, register_user, get_balance, ensure_user_registered, xtr_ledger_add,
-    claim_reward, list_active_campaigns, log_abuse_event, count_recent_abuse_events, tx,
+    register_user, get_balance, ensure_user_registered, claim_reward, list_active_campaigns, tx,
 )
 
 from shared.db.users import (
     fmt_stars, user_has_role, get_user_role_level, role_title_from_level, bind_referrer, user_created_hours_ago,
     get_referrals_count,
 )
-from shared.db.tasks import (
-    allocate_task_post_from_channel_post
-)
-from shared.db.ledger import (
-    apply_balance_debit_if_enough, get_activity_index
-)
-from shared.db.withdrawals import (
-    create_withdrawal, wallet_used_by_another_user, wallet_users, has_pending_withdrawal,
-)
+from shared.db.tasks import allocate_task_post_from_channel_post
+from shared.db.withdrawals import wallet_used_by_another_user, wallet_users, has_pending_withdrawal, is_first_withdraw
+from shared.db.ledger import get_activity_index
+from shared.db.abuse import count_recent_abuse_events, log_abuse_event, sum_recent_abuse_amount
 
 from bot.keyboards import (
     subscribe_keyboard, main_menu, tasks_menu, bottom_menu_kb, withdraw_stars_amount_kb, task_after_view_kb,
@@ -48,6 +42,7 @@ from bot.api_client import (
     get_daily_checkin_status,
     claim_daily_checkin_via_api,
     get_my_withdrawals_via_api,
+    create_withdrawal_via_api,
 )
 
 router = Router()
@@ -519,15 +514,6 @@ def get_withdraw_fee(amount: float, is_first_withdraw: bool) -> int:
     return 5
 
 
-async def is_first_withdraw(db, user_id: int) -> bool:
-    async with db.execute(
-            "SELECT 1 FROM withdrawals WHERE user_id = ? LIMIT 1",
-            (user_id,)
-    ) as cur:
-        row = await cur.fetchone()
-    return row is None
-
-
 async def validate_withdraw_rules(db, user_id: int, amount: float) -> Optional[str]:
     balance = await get_balance(db, user_id)
 
@@ -578,65 +564,32 @@ async def finalize_withdraw_request(
         fee_payment_charge_id: Optional[str] = None,
         fee_invoice_payload: Optional[str] = None,
 ):
-    async with tx(db):
-        wid = await create_withdrawal(db, user_id, amount, method=method, wallet=wallet)
+    result = await create_withdrawal_via_api(
+        user_id=user_id,
+        payload={
+            "method": method,
+            "amount": amount,
+            "wallet": wallet,
+            "paid_fee": paid_fee,
+            "fee_payment_charge_id": fee_payment_charge_id,
+            "fee_invoice_payload": fee_invoice_payload,
+        },
+    )
 
-        await db.execute(
-            """
-            UPDATE withdrawals
-            SET fee_xtr = ?,
-                fee_paid = ?,
-                fee_refunded = 0,
-                fee_telegram_charge_id = ?,
-                fee_invoice_payload = ?
-            WHERE id = ?
-            """,
-            (
-                paid_fee,
-                1 if paid_fee > 0 else 0,
-                fee_payment_charge_id,
-                fee_invoice_payload,
-                wid,
-            )
-        )
-
-        if paid_fee > 0:
-            await xtr_ledger_add(
-                db,
-                user_id=user_id,
-                withdrawal_id=wid,
-                delta_xtr=paid_fee,
-                reason="withdraw_fee_paid",
-                telegram_payment_charge_id=fee_payment_charge_id,
-                invoice_payload=fee_invoice_payload,
-                meta=f"method={method}",
-            )
-
-        await log_abuse_event(db, user_id, "withdraw_create", amount=amount)
-
-        ok = await apply_balance_debit_if_enough(
-            db,
-            user_id=user_id,
-            amount=amount,
-            reason="withdraw_hold",
-            withdrawal_id=wid,
-            meta=f"method={method};fee_xtr={paid_fee}",
-        )
-        if not ok:
-            raise ValueError("insufficient_balance")
+    wid = int(result["withdrawal_id"])
 
     username = message.from_user.username
     name = f"@{username}" if username else f"id:{user_id}"
 
     admin_text = (
-        f"💸 Новая заявка на вывод\n\n"
+        f"📤 Новая заявка на вывод\n\n"
         f"👤 {name}\n"
         f"⭐ {amount:g}\n"
-        f"🔧 {method.upper()}\n"
+        f"💸 {method.upper()}\n"
     )
 
     if wallet:
-        admin_text += f"🧾 {wallet}\n"
+        admin_text += f"🏦 {wallet}\n"
 
     if paid_fee > 0:
         admin_text += f"💳 Комиссия оплачена: {paid_fee} XTR\n"
@@ -663,6 +616,7 @@ async def finalize_withdraw_request(
                     f"Уже использовали:\n{used_by_text}"
                 )
 
+                bot: Bot = message.bot
                 for admin_id in ADMIN_IDS:
                     try:
                         await bot.send_message(admin_id, abuse_text)
@@ -670,6 +624,7 @@ async def finalize_withdraw_request(
                         pass
 
     await state.clear()
+
     new_balance = await get_balance(db, user_id)
 
     success_text = (

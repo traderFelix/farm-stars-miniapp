@@ -23,7 +23,6 @@ class WithdrawalCreateRequest(BaseModel):
     amount: float
     wallet: Optional[str] = None
 
-    # bot finalize payload
     paid_fee: int = 0
     fee_payment_charge_id: Optional[str] = None
     fee_invoice_payload: Optional[str] = None
