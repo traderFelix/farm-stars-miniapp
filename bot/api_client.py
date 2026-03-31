@@ -128,3 +128,30 @@ async def create_withdrawal_via_api(user_id: int, payload: dict[str, Any]) -> di
         f"/withdrawals/bot/create/{int(user_id)}",
         json=payload,
     )
+
+
+async def bootstrap_bot_user(
+        user_id: int,
+        username: Optional[str],
+        first_name: Optional[str],
+        last_name: Optional[str],
+        start_referrer_id: Optional[int] = None,
+) -> dict[str, Any]:
+    return await _request(
+        "POST",
+        "/bot/users/bootstrap",
+        json={
+            "user_id": int(user_id),
+            "username": username,
+            "first_name": first_name,
+            "last_name": last_name,
+            "start_referrer_id": int(start_referrer_id) if start_referrer_id is not None else None,
+        },
+    )
+
+
+async def get_bot_user_profile(user_id: int) -> dict[str, Any]:
+    return await _request(
+        "GET",
+        f"/bot/users/{int(user_id)}/profile",
+    )

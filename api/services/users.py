@@ -5,6 +5,7 @@ from fastapi import HTTPException
 
 from shared.db.users import (
     build_user_profile,
+    bind_referrer,
     get_user_by_id,
     register_user,
     update_user_telegram_fields,
@@ -56,3 +57,32 @@ async def get_profile_by_user_id(
     if not profile:
         raise HTTPException(status_code=404, detail="User not found")
     return profile
+
+
+async def bootstrap_bot_user(
+        db: aiosqlite.Connection,
+        user_id: int,
+        username: str | None,
+        first_name: str | None,
+        last_name: str | None,
+        start_referrer_id: int | None = None,
+) -> tuple[dict[str, Any], bool]:
+    await register_user(
+        db=db,
+        user_id=int(user_id),
+        username=username,
+        first_name=first_name,
+        last_name=last_name,
+    )
+
+    referrer_bound = False
+    if start_referrer_id is not None:
+        referrer_bound = await bind_referrer(
+            db=db,
+            user_id=int(user_id),
+            referrer_id=int(start_referrer_id),
+        )
+
+    await db.commit()
+    profile = await get_profile_by_user_id(db, int(user_id))
+    return profile, referrer_bound
