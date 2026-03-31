@@ -16,11 +16,11 @@ from shared.config import (
 )
 
 from bot.db import (
-    register_user, get_balance, ensure_user_registered, claim_reward, list_active_campaigns, tx,
+    get_balance, ensure_user_registered, claim_reward, list_active_campaigns, tx,
 )
 
 from shared.db.users import (
-    fmt_stars, user_has_role, get_user_role_level, role_title_from_level, bind_referrer, user_created_hours_ago,
+    fmt_stars, user_has_role, get_user_role_level, role_title_from_level, user_created_hours_ago,
     get_referrals_count,
 )
 from shared.db.tasks import allocate_task_post_from_channel_post
@@ -36,6 +36,9 @@ from bot.keyboards import (
 from bot.states import WithdrawCreate
 
 from bot.api_client import (
+    ApiClientError,
+    bootstrap_bot_user,
+    get_bot_user_profile,
     get_next_task,
     open_task,
     check_task,
@@ -72,8 +75,13 @@ WITHDRAW_TEXT = f"""
 Выберите нужный вариант ниже! 👇
 """
 
-def menu_text(balance: float, role_level: int = ROLE_USER, activity_index: float = 0.0) -> str:
-    role_name = role_title_from_level(role_level)
+def menu_text(
+        balance: float,
+        role_name: Optional[str] = None,
+        activity_index: float = 0.0,
+) -> str:
+    if role_name is None:
+        role_name = role_title_from_level(ROLE_USER)
 
     return (
         "🏠 Главное меню\n\n"
@@ -83,9 +91,49 @@ def menu_text(balance: float, role_level: int = ROLE_USER, activity_index: float
     )
 
 
-async def build_main_menu_text(db, user_id: int, balance: float, role_level: int) -> str:
-    activity_index = await get_activity_index(db, user_id)
-    return menu_text(balance, role_level, activity_index)
+def build_main_menu_text(profile: dict) -> str:
+    return menu_text(
+        balance=float(profile.get("balance") or 0),
+        role_name=str(profile.get("role") or "пользователь"),
+        activity_index=float(profile.get("activity_index") or 0),
+    )
+
+
+async def report_internal_error(bot: Bot, source: str, error: Exception, user_id: int | None = None):
+    logger.exception("%s failed user_id=%s error=%s", source, user_id, error)
+
+    text = (
+        "🚨 Bot/API error\n"
+        f"Source: {source}\n"
+        f"User ID: {user_id}\n"
+        f"Error: {error}"
+    )
+    for admin_id in ADMIN_IDS:
+        try:
+            await bot.send_message(int(admin_id), text)
+        except Exception:
+            logger.exception("Failed to deliver error notification to admin_id=%s", admin_id)
+
+
+def normalize_profile_data(profile: dict) -> dict:
+    role_level = int(profile.get("role_level") or ROLE_USER)
+    role_name = str(profile.get("role") or role_title_from_level(role_level))
+
+    return {
+        "user_id": int(profile.get("user_id") or 0),
+        "username": profile.get("username"),
+        "first_name": profile.get("first_name"),
+        "last_name": profile.get("last_name"),
+        "balance": float(profile.get("balance") or 0),
+        "role_level": role_level,
+        "role": role_name,
+        "activity_index": float(profile.get("activity_index") or 0),
+    }
+
+
+async def load_profile_for_bot(user_id: int) -> dict:
+    profile_data = await get_bot_user_profile(user_id)
+    return normalize_profile_data(profile_data)
 
 @router.channel_post()
 async def ingest_task_channel_post(message: Message, db):
@@ -113,15 +161,22 @@ async def ingest_task_channel_post(message: Message, db):
 async def open_main_menu_from_bottom_button(message: Message, state: FSMContext, db):
     await state.clear()
 
-    async with tx(db, immediate=False):
-        await ensure_user_registered(message, db)
-
     user_id = message.from_user.id
-    balance = await get_balance(db, user_id)
-    role_level = await get_user_role_level(db, user_id)
+    try:
+        await bootstrap_bot_user(
+            user_id=user_id,
+            username=message.from_user.username,
+            first_name=message.from_user.first_name,
+            last_name=message.from_user.last_name,
+        )
+        profile = await load_profile_for_bot(user_id)
+    except ApiClientError as e:
+        await report_internal_error(message.bot, "open_main_menu_from_bottom_button", e, user_id)
+        return
+    role_level = int(profile.get("role_level") or ROLE_USER)
 
     await message.answer(
-        await build_main_menu_text(db, user_id, balance, role_level),
+        build_main_menu_text(profile),
         reply_markup=main_menu(role_level)
     )
 
@@ -139,22 +194,23 @@ async def start(message: Message, bot: Bot, db):
         start_arg = parts[1].strip()
 
     logger.info("START user_id=%s text=%r start_arg=%r", user_id, message.text, start_arg)
-
-    async with tx(db, immediate=False):
-        await register_user(db, user_id, username, first_name, last_name)
-
-        if start_arg and start_arg.isdigit():
-            try:
-                bound = await bind_referrer(db, user_id, int(start_arg))
-                logger.info(
-                    "bind_referrer user_id=%s referrer_id=%s bound=%s",
-                    user_id, int(start_arg), bound
-                )
-            except Exception:
-                logger.exception(
-                    "Failed to bind referrer user_id=%s referrer_id=%s",
-                    user_id, start_arg
-                )
+    try:
+        result = await bootstrap_bot_user(
+            user_id=user_id,
+            username=username,
+            first_name=first_name,
+            last_name=last_name,
+            start_referrer_id=int(start_arg) if start_arg and start_arg.isdigit() else None,
+        )
+        bound = bool(result.get("referrer_bound"))
+    except ApiClientError as e:
+        await report_internal_error(bot, "start.bootstrap_bot_user", e, user_id)
+        return
+    if start_arg and start_arg.isdigit():
+        logger.info(
+            "bind_referrer user_id=%s referrer_id=%s bound=%s",
+            user_id, int(start_arg), bound
+        )
 
     try:
         member = await bot.get_chat_member(CHANNEL_ID, user_id)
@@ -167,8 +223,8 @@ async def start(message: Message, bot: Bot, db):
 
     try:
         if member.status in ("member", "administrator", "creator"):
-            balance = await get_balance(db, user_id)
-            role_level = await get_user_role_level(db, user_id)
+            profile = await load_profile_for_bot(user_id)
+            role_level = int(profile.get("role_level") or ROLE_USER)
 
             await message.answer(
                 "Нажми кнопку снизу, чтобы открыть меню 👇",
@@ -176,7 +232,7 @@ async def start(message: Message, bot: Bot, db):
             )
 
             await message.answer(
-                await build_main_menu_text(db, user_id, balance, role_level),
+                build_main_menu_text(profile),
                 reply_markup=main_menu(role_level)
             )
         else:
@@ -192,8 +248,17 @@ async def start(message: Message, bot: Bot, db):
 async def check_subscription(callback: CallbackQuery, bot: Bot, db):
     user_id = callback.from_user.id
 
-    async with tx(db, immediate=False):
-        await ensure_user_registered(callback, db)
+    try:
+        await bootstrap_bot_user(
+            user_id=user_id,
+            username=callback.from_user.username,
+            first_name=callback.from_user.first_name,
+            last_name=callback.from_user.last_name,
+        )
+    except ApiClientError as e:
+        await report_internal_error(callback.bot, "check_subscription.bootstrap_bot_user", e, user_id)
+        await callback.answer()
+        return
 
     try:
         member = await bot.get_chat_member(CHANNEL_ID, user_id)
@@ -202,8 +267,8 @@ async def check_subscription(callback: CallbackQuery, bot: Bot, db):
         return
 
     if member.status in ("member", "administrator", "creator"):
-        balance = await get_balance(db, user_id)
-        role_level = await get_user_role_level(db, user_id)
+        profile = await load_profile_for_bot(user_id)
+        role_level = int(profile.get("role_level") or ROLE_USER)
 
         await callback.message.answer(
             "Нажми кнопку снизу, чтобы открыть меню 👇",
@@ -212,7 +277,7 @@ async def check_subscription(callback: CallbackQuery, bot: Bot, db):
 
         await safe_edit_text(
             callback.message,
-            await build_main_menu_text(db, user_id, balance, role_level),
+            build_main_menu_text(profile),
             reply_markup=main_menu(role_level)
         )
     else:
@@ -224,7 +289,13 @@ async def show_tasks(callback: CallbackQuery, db):
     await callback.answer()
 
     user_id = callback.from_user.id
-    balance = await get_balance(db, user_id)
+    try:
+        profile = await load_profile_for_bot(user_id)
+    except ApiClientError as e:
+        await report_internal_error(callback.bot, "show_tasks.load_profile_for_bot", e, user_id)
+        await callback.answer()
+        return
+    balance = float(profile.get("balance") or 0)
 
     try:
         next_task = await get_next_task(user_id)
@@ -390,15 +461,20 @@ async def task_view_post(callback: CallbackQuery, bot: Bot, state: FSMContext, d
 @router.callback_query(F.data == "back")
 async def back_to_main(callback: CallbackQuery, bot: Bot, state: FSMContext, db):
     user_id = callback.from_user.id
-    balance = await get_balance(db, user_id)
-    role_level = await get_user_role_level(db, user_id)
+    try:
+        profile = await load_profile_for_bot(user_id)
+    except ApiClientError as e:
+        await report_internal_error(callback.bot, "back_to_main.load_profile_for_bot", e, user_id)
+        await callback.answer()
+        return
+    role_level = int(profile.get("role_level") or ROLE_USER)
 
     await _delete_last_task_post(bot, user_id, state)
 
     await callback.answer()
     await safe_edit_text(
         callback.message,
-        await build_main_menu_text(db, user_id, balance, role_level),
+        build_main_menu_text(profile),
         reply_markup=main_menu(role_level)
     )
 
@@ -1177,4 +1253,3 @@ async def daily_checkin_claim(callback: CallbackQuery):
             already_claimed_today=already_claimed_today,
         ),
     )
-
