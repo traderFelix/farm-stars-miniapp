@@ -67,12 +67,6 @@ async def bootstrap_bot_user(
         last_name: str | None,
         start_referrer_id: int | None = None,
 ) -> tuple[dict[str, Any], bool]:
-    """
-    Bot-side bootstrap:
-    - upsert user telegram fields;
-    - optionally bind referrer from /start payload;
-    - commit and return fresh profile snapshot + binding flag.
-    """
     await register_user(
         db=db,
         user_id=int(user_id),
