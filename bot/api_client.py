@@ -185,6 +185,12 @@ class WithdrawalsApi(ApiSection):
             f"/withdrawals/bot/eligibility/{int(user_id)}",
         )
 
+    async def preview(self, user_id: int, payload: JsonDict) -> JsonDict:
+        return await self._post(
+            f"/withdrawals/bot/preview/{int(user_id)}",
+            json=payload,
+        )
+
     async def list_my(self, user_id: int, limit: int = 20) -> JsonDict:
         return await self._get(
             f"/withdrawals/bot/my/{int(user_id)}",
@@ -386,6 +392,10 @@ async def get_withdrawal_eligibility_via_api(user_id: int) -> JsonDict:
     return await api_client.withdrawals.get_eligibility(user_id)
 
 
+async def preview_withdrawal_via_api(user_id: int, payload: JsonDict) -> JsonDict:
+    return await api_client.withdrawals.preview(user_id, payload)
+
+
 async def get_my_withdrawals_via_api(user_id: int, limit: int = 20) -> JsonDict:
     return await api_client.withdrawals.list_my(user_id, limit=limit)
 
@@ -410,6 +420,7 @@ __all__ = [
     "get_ledger",
     "get_ledger_sum",
     "get_withdrawal_eligibility_via_api",
+    "preview_withdrawal_via_api",
     "get_my_withdrawals_via_api",
     "create_withdrawal_via_api",
 ]

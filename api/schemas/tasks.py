@@ -33,6 +33,7 @@ class TaskOpenRequest(BaseModel):
 class TaskOpenResponse(BaseModel):
     ok: bool
     task_id: int
+    message: Optional[str] = None
     opened_at: int
     hold_seconds: int = 0
     can_check_at: int = 0

@@ -7,11 +7,14 @@ from api.schemas.withdrawals import (
     WithdrawalCreateRequest,
     WithdrawalCreateResponse,
     WithdrawalListResponse,
+    WithdrawalPreviewRequest,
+    WithdrawalPreviewResponse,
 )
 from api.services.withdrawals import (
     get_withdrawal_eligibility_for_user,
     create_withdrawal_for_user,
     get_my_withdrawals_for_user,
+    preview_withdrawal_for_user,
 )
 
 router = APIRouter(prefix="/withdrawals", tags=["withdrawals"])
@@ -19,6 +22,10 @@ router = APIRouter(prefix="/withdrawals", tags=["withdrawals"])
 
 async def _create_withdrawal(user_id: int, payload: WithdrawalCreateRequest) -> WithdrawalCreateResponse:
     return await create_withdrawal_for_user(user_id, payload)
+
+
+async def _preview_withdrawal(user_id: int, payload: WithdrawalPreviewRequest) -> WithdrawalPreviewResponse:
+    return await preview_withdrawal_for_user(user_id, payload)
 
 
 async def _get_my_withdrawals(user_id: int, limit: int) -> WithdrawalListResponse:
@@ -51,6 +58,25 @@ async def create_withdrawal(
         )
 
 
+@router.post("/preview", response_model=WithdrawalPreviewResponse)
+async def preview_withdrawal(
+        payload: WithdrawalPreviewRequest,
+        user_id: int = Depends(get_current_user_id),
+) -> WithdrawalPreviewResponse:
+    try:
+        return await _preview_withdrawal(user_id, payload)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to preview withdrawal: {e}",
+        )
+
+
 @router.get("/my", response_model=WithdrawalListResponse)
 async def get_my_withdrawals(
         limit: int = Query(20, ge=1, le=100),
@@ -71,6 +97,26 @@ async def bot_get_withdrawal_eligibility(
         _: None = Depends(require_internal_token),
 ) -> WithdrawalEligibilityResponse:
     return await get_withdrawal_eligibility_for_user(user_id)
+
+
+@router.post("/bot/preview/{user_id}", response_model=WithdrawalPreviewResponse)
+async def bot_preview_withdrawal(
+        user_id: int,
+        payload: WithdrawalPreviewRequest,
+        _: None = Depends(require_internal_token),
+) -> WithdrawalPreviewResponse:
+    try:
+        return await _preview_withdrawal(user_id, payload)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to preview withdrawal: {e}",
+        )
 
 
 @router.get("/bot/my/{user_id}", response_model=WithdrawalListResponse)

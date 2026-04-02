@@ -10,6 +10,8 @@ from api.schemas.withdrawals import (
     WithdrawalEligibilityResponse,
     WithdrawalItem,
     WithdrawalListResponse,
+    WithdrawalPreviewRequest,
+    WithdrawalPreviewResponse,
 )
 from shared.config import REQUIRED_ACCOUNT_AGE_HOURS, MIN_WITHDRAW, MIN_WITHDRAW_PERCENT
 from shared.db.abuse import (
@@ -22,7 +24,7 @@ from shared.db.ledger import (
     get_activity_index,
     get_user_earnings_breakdown,
 )
-from shared.db.users import get_user_by_id, user_created_hours_ago
+from shared.db.users import get_balance, get_user_by_id, user_created_hours_ago
 from shared.db.withdrawals import (
     create_withdrawal,
     has_pending_withdrawal,
@@ -229,6 +231,50 @@ async def get_withdrawal_eligibility_for_user(
     )
 
 
+async def preview_withdrawal_for_user(
+        user_id: int,
+        payload: WithdrawalPreviewRequest,
+) -> WithdrawalPreviewResponse:
+    method = payload.method
+    amount = _safe_float(payload.amount)
+    wallet = _normalize_wallet(method, payload.wallet)
+
+    db = await get_db()
+    try:
+        user = await get_user_by_id(db, user_id)
+        available_balance = _safe_float(user["balance"] if user else 0)
+
+        if amount <= 0:
+            raise ValueError("Сумма вывода должна быть больше нуля.")
+
+        error_text = await _validate_withdraw_rules(db, user_id, amount)
+        if error_text:
+            raise ValueError(error_text)
+
+        if method == "ton":
+            if not wallet:
+                raise ValueError("Для вывода в TON нужно указать кошелек.")
+
+            wallet_in_use = await wallet_used_by_another_user(db, user_id, wallet)
+            if wallet_in_use:
+                raise ValueError("Этот TON-кошелек уже используется другим пользователем.")
+
+        first = await is_first_withdraw(db, user_id)
+        expected_fee = get_withdraw_fee(amount, first)
+
+        return WithdrawalPreviewResponse(
+            ok=True,
+            amount=amount,
+            method=method,
+            wallet=wallet,
+            available_balance=available_balance,
+            expected_fee=expected_fee,
+            message="ok",
+        )
+    finally:
+        await db.close()
+
+
 async def create_withdrawal_for_user(
         user_id: int,
         payload: WithdrawalCreateRequest,
@@ -305,6 +351,7 @@ async def create_withdrawal_for_user(
         if not ok:
             raise ValueError("insufficient_balance")
 
+        balance = await get_balance(db, user_id)
         await db.commit()
 
         return WithdrawalCreateResponse(
@@ -312,6 +359,8 @@ async def create_withdrawal_for_user(
             withdrawal_id=withdrawal_id,
             status="pending",
             message="Заявка на вывод создана.",
+            balance=float(balance or 0),
+            fee_xtr=paid_fee,
         )
     finally:
         await db.close()

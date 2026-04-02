@@ -28,11 +28,29 @@ class WithdrawalCreateRequest(BaseModel):
     fee_invoice_payload: Optional[str] = None
 
 
+class WithdrawalPreviewRequest(BaseModel):
+    method: WithdrawalMethod
+    amount: float
+    wallet: Optional[str] = None
+
+
+class WithdrawalPreviewResponse(BaseModel):
+    ok: bool
+    amount: float
+    method: WithdrawalMethod
+    wallet: Optional[str] = None
+    available_balance: float
+    expected_fee: int
+    message: str
+
+
 class WithdrawalCreateResponse(BaseModel):
     ok: bool
     withdrawal_id: int
     status: WithdrawalStatus
     message: str
+    balance: float = 0
+    fee_xtr: int = 0
 
 
 class WithdrawalItem(BaseModel):

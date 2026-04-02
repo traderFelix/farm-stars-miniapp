@@ -14,6 +14,7 @@ from shared.db.tasks import (
     get_view_post_task_for_user,
     increment_task_post_views,
 )
+from shared.db.abuse import count_recent_abuse_events, log_abuse_event
 
 
 def build_task_post_url(
@@ -137,13 +138,16 @@ def map_task_row_to_item(row) -> TaskListItem:
 
 
 async def open_view_post_task(db, user_id: int, row) -> TaskOpenResponse:
-    already_completed = await _is_task_already_completed(db, user_id, int(row["id"]))
-    if already_completed:
+    hold_seconds = int(row["view_seconds"] or 0)
+
+    recent_clicks = await count_recent_abuse_events(db, user_id, "task_view_click", 1)
+    if hold_seconds > 0 and recent_clicks >= 60 / hold_seconds:
         return TaskOpenResponse(
             ok=False,
             task_id=int(row["id"]),
+            message="⏳ Слишком часто.\nПопробуй через минуту.",
             opened_at=0,
-            hold_seconds=int(row["view_seconds"] or 0),
+            hold_seconds=hold_seconds,
             can_check_at=0,
             chat_id=row["chat_id"],
             channel_post_id=int(row["channel_post_id"]),
@@ -154,13 +158,33 @@ async def open_view_post_task(db, user_id: int, row) -> TaskOpenResponse:
             session_id=None,
         )
 
+    already_completed = await _is_task_already_completed(db, user_id, int(row["id"]))
+    if already_completed:
+        return TaskOpenResponse(
+            ok=False,
+            task_id=int(row["id"]),
+            message="Задание уже засчитано",
+            opened_at=0,
+            hold_seconds=hold_seconds,
+            can_check_at=0,
+            chat_id=row["chat_id"],
+            channel_post_id=int(row["channel_post_id"]),
+            post_url=build_task_post_url(
+                row["chat_id"],
+                row["channel_post_id"],
+            ),
+            session_id=None,
+        )
+
+    await log_abuse_event(db, user_id, "task_view_click")
+
     opened_at = int(time.time())
-    hold_seconds = int(row["view_seconds"] or 0)
     can_check_at = opened_at + hold_seconds
 
     return TaskOpenResponse(
         ok=True,
         task_id=int(row["id"]),
+        message="Показываю пост...",
         opened_at=opened_at,
         hold_seconds=hold_seconds,
         can_check_at=can_check_at,
@@ -307,6 +331,7 @@ async def open_task_for_user(user_id: int, task_id: int) -> TaskOpenResponse:
             return TaskOpenResponse(
                 ok=False,
                 task_id=task_id,
+                message="Task not found",
                 opened_at=0,
                 hold_seconds=0,
                 can_check_at=0,
@@ -316,7 +341,9 @@ async def open_task_for_user(user_id: int, task_id: int) -> TaskOpenResponse:
                 session_id=None,
             )
 
-        return await open_task_by_type(db, user_id, row)
+        response = await open_task_by_type(db, user_id, row)
+        await db.commit()
+        return response
     finally:
         await db.close()
 

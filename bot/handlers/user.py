@@ -16,17 +16,15 @@ from shared.config import (
 )
 
 from bot.db import (
-    get_balance, ensure_user_registered, claim_reward, list_active_campaigns, tx,
+    claim_reward, list_active_campaigns, tx,
 )
 
 from shared.db.users import (
-    fmt_stars, user_has_role, user_created_hours_ago,
+    fmt_stars, user_has_role,
     get_referrals_count,
 )
 from shared.db.tasks import allocate_task_post_from_channel_post
-from shared.db.withdrawals import wallet_used_by_another_user, wallet_users, has_pending_withdrawal, is_first_withdraw
-from shared.db.ledger import get_activity_index
-from shared.db.abuse import count_recent_abuse_events, log_abuse_event, sum_recent_abuse_amount
+from shared.db.abuse import count_recent_abuse_events, log_abuse_event
 
 from bot.keyboards import (
     subscribe_keyboard, main_menu, tasks_menu, bottom_menu_kb, withdraw_stars_amount_kb, task_after_view_kb,
@@ -36,6 +34,7 @@ from bot.keyboards import (
 from bot.states import WithdrawCreate
 
 from bot.api_client import (
+    ApiClientError,
     bootstrap_bot_user_via_api,
     get_next_task,
     open_task,
@@ -44,6 +43,8 @@ from bot.api_client import (
     get_bot_main_menu_via_api,
     get_daily_checkin_status,
     claim_daily_checkin_via_api,
+    get_withdrawal_eligibility_via_api,
+    preview_withdrawal_via_api,
     get_my_withdrawals_via_api,
     create_withdrawal_via_api,
 )
@@ -215,11 +216,12 @@ async def check_subscription(callback: CallbackQuery, bot: Bot):
 
 
 @router.callback_query(F.data == "tasks")
-async def show_tasks(callback: CallbackQuery, db):
+async def show_tasks(callback: CallbackQuery):
     await callback.answer()
 
     user_id = callback.from_user.id
-    balance = await get_balance(db, user_id)
+    menu_payload = await get_bot_main_menu_via_api(user_id)
+    balance = float(menu_payload.get("balance") or 0)
 
     try:
         next_task = await get_next_task(user_id)
@@ -243,32 +245,34 @@ async def show_tasks(callback: CallbackQuery, db):
 
 
 @router.callback_query(F.data == "task:view_post")
-async def task_view_post(callback: CallbackQuery, bot: Bot, state: FSMContext, db):
+async def task_view_post(callback: CallbackQuery, bot: Bot, state: FSMContext):
     user_id = callback.from_user.id
-
-    async with tx(db, immediate=False):
-        await ensure_user_registered(callback, db)
-
-        task = await get_next_task(user_id)
-        if not task:
-            await callback.answer("❌ Доступных постов пока нет.", show_alert=True)
-            return
-
-        view_seconds = int(task["hold_seconds"] or 0)
-
-        recent_clicks = await count_recent_abuse_events(db, user_id, "task_view_click", 1)
-        if view_seconds > 0 and recent_clicks >= 60 / view_seconds:
-            await callback.answer("⏳ Слишком часто.\nПопробуй через минуту.", show_alert=True)
-            return
-
-        await log_abuse_event(db, user_id, "task_view_click")
+    task = await get_next_task(user_id)
+    if not task:
+        await callback.answer("❌ Доступных постов пока нет.", show_alert=True)
+        return
 
     task_id = int(task["id"])
     chat_id = task.get("chat_id")
     channel_post_id = task.get("channel_post_id")
-    reward = float(task.get("reward") or 0)
 
-    await callback.answer("Показываю пост...")
+    try:
+        open_result = await open_task(user_id, task_id)
+    except Exception:
+        await callback.answer("❌ Не удалось открыть задание.", show_alert=True)
+        return
+
+    if not open_result.get("ok"):
+        await callback.answer(
+            open_result.get("message") or "❌ Не удалось открыть задание.",
+            show_alert=True,
+        )
+        return
+
+    reward = float(task.get("reward") or 0)
+    view_seconds = int(open_result.get("hold_seconds") or task.get("hold_seconds") or 0)
+
+    await callback.answer(open_result.get("message") or "Показываю пост...")
     await _delete_last_task_post(bot, user_id, state)
 
     try:
@@ -280,24 +284,6 @@ async def task_view_post(callback: CallbackQuery, bot: Bot, state: FSMContext, d
         await bot.send_message(
             chat_id=user_id,
             text="❌ У задания нет данных поста.",
-            reply_markup=task_after_view_kb(),
-        )
-        return
-
-    try:
-        open_result = await open_task(user_id, task_id)
-    except Exception:
-        await bot.send_message(
-            chat_id=user_id,
-            text="❌ Не удалось открыть задание.",
-            reply_markup=task_after_view_kb(),
-        )
-        return
-
-    if not open_result.get("ok"):
-        await bot.send_message(
-            chat_id=user_id,
-            text="❌ Не удалось открыть задание.",
             reply_markup=task_after_view_kb(),
         )
         return
@@ -472,12 +458,12 @@ async def claim_for_campaign(callback: CallbackQuery, db):
     )
 
 @router.callback_query(F.data == "withdraw")
-async def withdraw_menu(callback: CallbackQuery, state: FSMContext, db):
+async def withdraw_menu(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     await state.clear()
 
-    user_id = callback.from_user.id
-    balance = await get_balance(db, user_id)
+    eligibility = await get_withdrawal_eligibility_via_api(callback.from_user.id)
+    balance = float(eligibility.get("available_balance") or 0)
 
     await safe_edit_text(
         callback.message,
@@ -488,7 +474,7 @@ async def withdraw_menu(callback: CallbackQuery, state: FSMContext, db):
 
 
 @router.callback_query(F.data == "withdraw:new")
-async def withdraw_new(callback: CallbackQuery, state: FSMContext, db):
+async def withdraw_new(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     await state.clear()
 
@@ -499,57 +485,8 @@ async def withdraw_new(callback: CallbackQuery, state: FSMContext, db):
     )
 
 
-def get_withdraw_fee(amount: float, is_first_withdraw: bool) -> int:
-    if is_first_withdraw:
-        return 0
-    if amount >= 500:
-        return 0
-    if amount >= 200:
-        return 3
-    return 5
-
-
-async def validate_withdraw_rules(db, user_id: int, amount: float) -> Optional[str]:
-    balance = await get_balance(db, user_id)
-
-    if amount < MIN_WITHDRAW:
-        return f"❌ Минимальная сумма вывода: {MIN_WITHDRAW:g}⭐"
-
-    if amount > balance:
-        return "❌ Недостаточно звезд на балансе"
-
-    user_age_hours = await user_created_hours_ago(db, user_id)
-    if user_age_hours < 24:
-        return "⏳ Вывод доступен только через 24 часа после регистрации."
-
-    if await has_pending_withdrawal(db, user_id):
-        return "⏳ У тебя уже есть заявка на вывод в обработке."
-
-    recent_withdraw_count = await count_recent_abuse_events(db, user_id, "withdraw_create", 1440)
-    if recent_withdraw_count >= 3:
-        return "🚫 Лимит: не более 3 заявок на вывод в сутки."
-
-    recent_withdraw_sum = await sum_recent_abuse_amount(db, user_id, "withdraw_create", 24)
-    if recent_withdraw_sum + amount > 1000:
-        return "🚫 Суточный лимит вывода превышен."
-
-    activity_index = await get_activity_index(db, user_id)
-    if activity_index <= 0:
-        return "❌ Вывод пока недоступен."
-
-    if activity_index < MIN_WITHDRAW_PERCENT * 100:
-        return (
-            "❌ Вывод пока недоступен\n\n"
-            f"Для вывода нужен Индекс Активности не ниже {MIN_WITHDRAW_PERCENT * 100:.0f}%.\n\n"
-            f"• Индекс Активности: {activity_index:.1f}%"
-        )
-
-    return None
-
-
 async def finalize_withdraw_request(
         message: Message,
-        db,
         state: FSMContext,
         user_id: int,
         amount: float,
@@ -572,6 +509,7 @@ async def finalize_withdraw_request(
     )
 
     wid = int(result["withdrawal_id"])
+    new_balance = float(result.get("balance") or 0)
 
     username = message.from_user.username
     name = f"@{username}" if username else f"id:{user_id}"
@@ -598,29 +536,7 @@ async def finalize_withdraw_request(
         except Exception:
             pass
 
-        if method == "ton" and wallet:
-            wallet_abuse = await wallet_used_by_another_user(db, user_id, wallet)
-            if wallet_abuse:
-                used_by = await wallet_users(db, wallet)
-                used_by_text = "\n".join(used_by) if used_by else "нет данных"
-
-                abuse_text = (
-                    f"🚨 Подозрение на мультиаккаунт\n\n"
-                    f"Новый пользователь: @{message.from_user.username or 'no_username'} (id={user_id})\n"
-                    f"Кошелек:\n{wallet}\n\n"
-                    f"Уже использовали:\n{used_by_text}"
-                )
-
-                bot: Bot = message.bot
-                for admin_id in ADMIN_IDS:
-                    try:
-                        await bot.send_message(admin_id, abuse_text)
-                    except Exception:
-                        pass
-
     await state.clear()
-
-    new_balance = await get_balance(db, user_id)
 
     success_text = (
         f"✅ Заявка на вывод создана\n"
@@ -642,27 +558,35 @@ async def finalize_withdraw_request(
 
 async def start_fee_payment_or_create(
         message: Message,
-        db,
         state: FSMContext,
         user_id: int,
         amount: float,
         method: str,
         wallet: Optional[str] = None,
 ):
-    error_text = await validate_withdraw_rules(db, user_id, amount)
-    if error_text:
+    try:
+        preview = await preview_withdrawal_via_api(
+            user_id=user_id,
+            payload={
+                "method": method,
+                "amount": amount,
+                "wallet": wallet,
+            },
+        )
+    except ApiClientError as e:
         await safe_edit_text(
-            message, error_text, reply_markup=withdraw_back_kb())
+            message,
+            e.detail,
+            reply_markup=withdraw_back_kb(),
+        )
         return
 
-    first_withdraw = await is_first_withdraw(db, user_id)
-    fee = get_withdraw_fee(amount, first_withdraw)
+    fee = int(preview.get("expected_fee") or 0)
 
     if fee <= 0:
         try:
             await finalize_withdraw_request(
                 message=message,
-                db=db,
                 state=state,
                 user_id=user_id,
                 amount=amount,
@@ -672,11 +596,11 @@ async def start_fee_payment_or_create(
                 fee_payment_charge_id=None,
                 fee_invoice_payload=None,
             )
-        except Exception as e:
-            if isinstance(e, ValueError) and str(e) == "insufficient_balance":
+        except ApiClientError as e:
+            if e.detail == "insufficient_balance":
                 await message.answer("❌ Недостаточно звезд на балансе")
                 return
-            await message.answer(f"❌ Ошибка создания заявки: {type(e).__name__}: {e}")
+            await message.answer(f"❌ Ошибка создания заявки: {e.detail}")
         return
 
     await state.update_data(
@@ -704,15 +628,15 @@ async def start_fee_payment_or_create(
 
 
 @router.callback_query(F.data.startswith("withdraw:method:"))
-async def withdraw_choose_method(callback: CallbackQuery, state: FSMContext, db):
+async def withdraw_choose_method(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
     method = callback.data.split(":")[2]  # ton | stars
     await state.update_data(method=method)
     await state.set_state(WithdrawCreate.amount)
 
-    user_id = callback.from_user.id
-    balance = await get_balance(db, user_id)
+    eligibility = await get_withdrawal_eligibility_via_api(callback.from_user.id)
+    balance = float(eligibility.get("available_balance") or 0)
 
     await state.clear()
     await state.update_data(method=method)
@@ -736,7 +660,7 @@ async def withdraw_choose_method(callback: CallbackQuery, state: FSMContext, db)
 
 
 @router.callback_query(F.data.startswith("withdraw:stars_amount:"))
-async def withdraw_stars_fixed_amount(callback: CallbackQuery, state: FSMContext, db):
+async def withdraw_stars_fixed_amount(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
     user_id = callback.from_user.id
@@ -744,20 +668,29 @@ async def withdraw_stars_fixed_amount(callback: CallbackQuery, state: FSMContext
 
     await state.update_data(method="stars", amount=amount)
 
-    error_text = await validate_withdraw_rules(db, user_id, amount)
-    if error_text:
+    try:
+        preview = await preview_withdrawal_via_api(
+            user_id=user_id,
+            payload={
+                "method": "stars",
+                "amount": amount,
+                "wallet": None,
+            },
+        )
+    except ApiClientError as e:
         await safe_edit_text(
-            callback.message, error_text, reply_markup=withdraw_back_kb())
+            callback.message,
+            e.detail,
+            reply_markup=withdraw_back_kb(),
+        )
         return
 
-    first_withdraw = await is_first_withdraw(db, user_id)
-    fee = get_withdraw_fee(amount, first_withdraw)
+    fee = int(preview.get("expected_fee") or 0)
 
     if fee <= 0:
         try:
             await finalize_withdraw_request(
                 message=callback.message,
-                db=db,
                 state=state,
                 user_id=user_id,
                 amount=amount,
@@ -767,11 +700,11 @@ async def withdraw_stars_fixed_amount(callback: CallbackQuery, state: FSMContext
                 fee_payment_charge_id=None,
                 fee_invoice_payload=None,
             )
-        except Exception as e:
-            if isinstance(e, ValueError) and str(e) == "insufficient_balance":
+        except ApiClientError as e:
+            if e.detail == "insufficient_balance":
                 await callback.message.answer("❌ Недостаточно звезд на балансе")
                 return
-            await callback.message.answer(f"❌ Ошибка создания заявки: {type(e).__name__}: {e}")
+            await callback.message.answer(f"❌ Ошибка создания заявки: {e.detail}")
         return
 
     await state.update_data(
@@ -798,7 +731,7 @@ async def withdraw_stars_fixed_amount(callback: CallbackQuery, state: FSMContext
     )
 
 @router.message(WithdrawCreate.amount)
-async def withdraw_enter_amount(message: Message, state: FSMContext, db):
+async def withdraw_enter_amount(message: Message, state: FSMContext):
     data = await state.get_data()
     method = data.get("method")
 
@@ -820,7 +753,7 @@ async def withdraw_enter_amount(message: Message, state: FSMContext, db):
     await message.answer("Введи TON-адрес кошелька для выплаты:")
 
 @router.message(WithdrawCreate.wallet)
-async def withdraw_enter_details(message: Message, state: FSMContext, db):
+async def withdraw_enter_details(message: Message, state: FSMContext):
     user_id = message.from_user.id
     data = await state.get_data()
     amount = float(data["amount"])
@@ -834,7 +767,6 @@ async def withdraw_enter_details(message: Message, state: FSMContext, db):
 
     await start_fee_payment_or_create(
         message=message,
-        db=db,
         state=state,
         user_id=user_id,
         amount=amount,
@@ -874,7 +806,7 @@ async def process_pre_checkout_query(pre_checkout_query: PreCheckoutQuery, state
 
 
 @router.message(F.successful_payment)
-async def on_successful_payment(message: Message, state: FSMContext, db):
+async def on_successful_payment(message: Message, state: FSMContext):
     payment = message.successful_payment
 
     print("PAYMENT:", payment)
@@ -910,21 +842,9 @@ async def on_successful_payment(message: Message, state: FSMContext, db):
         )
         return
 
-    error_text = await validate_withdraw_rules(db, user_id, amount)
-    if error_text:
-        await safe_edit_text(
-            message,
-            "⚠️ Комиссия оплачена, но заявка не может быть создана автоматически.\n\n"
-            f"{error_text}\n\n"
-            "Напиши администратору.",
-            reply_markup=withdraw_back_kb()
-        )
-        return
-
     try:
         await finalize_withdraw_request(
             message=message,
-            db=db,
             state=state,
             user_id=user_id,
             amount=amount,
@@ -934,8 +854,8 @@ async def on_successful_payment(message: Message, state: FSMContext, db):
             fee_payment_charge_id=payment.telegram_payment_charge_id,
             fee_invoice_payload=payment.invoice_payload,
         )
-    except Exception as e:
-        if isinstance(e, ValueError) and str(e) == "insufficient_balance":
+    except ApiClientError as e:
+        if e.detail == "insufficient_balance":
             await message.answer(
                 "⚠️ Комиссия оплачена, но на момент создания заявки на балансе уже не хватило звезд.\n\n"
                 "Напишите администратору."
@@ -943,7 +863,9 @@ async def on_successful_payment(message: Message, state: FSMContext, db):
             return
 
         await message.answer(
-            f"⚠️ Комиссия оплачена, но произошла ошибка создания заявки. Напишите администратору."
+            "⚠️ Комиссия оплачена, но заявка не может быть создана автоматически.\n\n"
+            f"{e.detail}\n\n"
+            "Напиши администратору."
         )
 
 
