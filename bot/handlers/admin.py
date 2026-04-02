@@ -60,7 +60,7 @@ from shared.config import LEDGER_PAGE_SIZE, ROLE_ADMIN
 
 from bot.handlers.user import safe_edit_text
 
-from shared.db.users import fmt_stars
+from shared.formatting import fmt_stars
 
 from bot.keyboards import (
     admin_menu_kb, admin_back_kb, campaigns_list_kb, campaign_manage_kb, stats_list_kb, admin_fee_refund_kb,

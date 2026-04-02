@@ -5,10 +5,10 @@ import aiosqlite
 from fastapi import HTTPException
 
 from shared.db.common import tx
+from shared.formatting import fmt_stars
 from shared.db.users import (
     bind_referrer,
     build_user_profile,
-    fmt_stars,
     get_referrals_count,
     get_user_by_id,
     register_user,

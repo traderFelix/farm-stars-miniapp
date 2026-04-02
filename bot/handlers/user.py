@@ -15,9 +15,7 @@ from shared.config import (
     CHANNEL_ID, ADMIN_IDS, MIN_WITHDRAW, MIN_WITHDRAW_PERCENT, ROLE_CLIENT, ROLE_PARTNER
 )
 
-from shared.db.users import (
-    fmt_stars,
-)
+from shared.formatting import fmt_stars
 
 from bot.keyboards import (
     subscribe_keyboard, main_menu, tasks_menu, bottom_menu_kb, withdraw_stars_amount_kb, task_after_view_kb,

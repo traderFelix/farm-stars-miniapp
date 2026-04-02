@@ -3,6 +3,7 @@ from typing import Optional, Any
 from datetime import datetime, timedelta, timezone
 
 from shared.db.common import tx, normalize_daily_cycle_day, daily_checkin_reward
+from shared.formatting import fmt_stars
 from shared.config import (
     OWNER_ID, ADMIN_IDS, ROLE_USER, ROLE_CLIENT, ROLE_PARTNER, ROLE_ADMIN, ROLE_OWNER,
 )
@@ -226,13 +227,6 @@ async def get_user_admin_details(db: aiosqlite.Connection, user_id: int):
             (int(user_id),),
     ) as cursor:
         return await cursor.fetchone()
-
-
-def fmt_stars(value: float) -> str:
-    text = f"{float(value):.2f}"
-    text = text.rstrip("0").rstrip(".")
-    return text if text else "0"
-
 
 async def build_user_stats_text(db: aiosqlite.Connection, user_id: int) -> str:
     from shared.db.ledger import get_user_earnings_breakdown
