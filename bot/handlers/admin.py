@@ -97,6 +97,28 @@ def _is_static_admin_user(user_id: int) -> bool:
     return int(user_id) in STATIC_ADMIN_IDS
 
 
+def _to_optional_int(value: Any) -> Optional[int]:
+    if value is None or isinstance(value, bool):
+        return None
+
+    if isinstance(value, int):
+        return value
+
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return None
+        try:
+            return int(stripped)
+        except ValueError:
+            return None
+
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
 async def _get_admin_guard_status(
         user_id: int,
         *,
@@ -1086,11 +1108,10 @@ async def adm_withdraw_paid(callback: CallbackQuery):
         amount = float(withdrawal["amount"] or 0)
         method = str(withdrawal["method"])
         bonus_added = bool(referral_bonus.get("added") or False)
-        referrer_id = referral_bonus.get("referrer_id")
+        referrer_id_value = _to_optional_int(referral_bonus.get("referrer_id"))
         bonus_amount = float(referral_bonus.get("amount") or 0)
 
-        if bonus_added and referrer_id is not None and bonus_amount > 0:
-            referrer_id_value = int(referrer_id)
+        if bonus_added and referrer_id_value is not None and bonus_amount > 0:
             try:
                 await bot.send_message(
                     referrer_id_value,
