@@ -7,10 +7,14 @@ from bot.api_client import (
     ApiClientError,
     adjust_user_balance,
     clear_user_suspicious,
+    create_task_channel_via_api,
     get_withdrawal_details,
+    get_task_channel_posts_via_api,
+    get_task_channel_via_api,
     get_user_profile,
     list_withdrawals_queue,
     list_recent_fee_payments_via_api,
+    list_task_channels_via_api,
     lookup_user,
     mark_user_suspicious,
     mark_withdrawal_paid,
@@ -18,6 +22,8 @@ from bot.api_client import (
     record_withdrawal_fee_refund,
     reject_withdrawal,
     set_user_role,
+    toggle_task_channel_via_api,
+    update_task_channel_params_via_api,
 )
 from bot.profile_texts import format_user_profile_card
 
@@ -55,10 +61,6 @@ from shared.db.users import (
     users_new_since_days, users_active_since_days, users_growth_by_day, total_balances, top_users_by_balance
 )
 from shared.db.ledger import ledger_sum_by_reason, get_balance_adjusts_by_admin, balances_audit
-from shared.db.tasks import (
-    get_task_channel, task_channel_stats, list_task_channels, set_task_channel_active, get_task_channel_allocated_views,
-    list_task_posts_by_channel, update_task_channel_params, create_task_channel
-)
 from shared.db.withdrawals import total_withdrawn_amount, pending_withdrawn_amount
 
 from bot.keyboards import (
@@ -148,6 +150,44 @@ def _user_ledger_nav_kb(user_id: int, page: int, has_next: bool) -> InlineKeyboa
 async def _get_user_card_text(user_id: int) -> str:
     profile = await get_user_profile(user_id)
     return format_user_profile_card(profile)
+
+
+def _build_task_channel_card_text(detail: dict) -> tuple[str, bool, int]:
+    channel = detail["channel"]
+    stats = detail["stats"]
+
+    channel_id = int(channel["id"])
+    title = channel.get("title") or "Без названия"
+    chat_id = channel["chat_id"]
+    is_active = bool(channel.get("is_active") or False)
+    total_bought = int(channel.get("total_bought_views") or 0)
+    views_per_post = int(channel.get("views_per_post") or 0)
+    allocated = int(channel.get("allocated_views") or 0)
+    remaining = int(channel.get("remaining_views") or 0)
+    view_seconds = int(channel.get("view_seconds") or 0)
+    total_posts = int(stats.get("total_posts") or 0)
+    total_required = int(stats.get("total_required") or 0)
+    total_current = int(stats.get("total_current") or 0)
+    active_posts = int(stats.get("active_posts") or 0)
+
+    status_text = "🟢 Включен" if is_active else "🔴 Отключен"
+
+    text = (
+        "📺 Канал просмотров\n\n"
+        f"Название: {title}\n"
+        f"ID канала: {chat_id}\n"
+        f"Статус: {status_text}\n\n"
+        f"Куплено просмотров: {total_bought}\n"
+        f"На один пост: {views_per_post}\n"
+        f"Секунд просмотра: {view_seconds}\n"
+        f"Уже распределено: {allocated}\n"
+        f"Осталось распределить: {remaining}\n\n"
+        f"Постов в системе: {total_posts}\n"
+        f"Активных постов: {active_posts}\n"
+        f"Всего нужно просмотров по постам: {total_required}\n"
+        f"Фактически набрано: {total_current}"
+    )
+    return text, is_active, channel_id
 
 
 async def _render_campaign_card(callback: CallbackQuery, key: str, db):
@@ -1284,51 +1324,43 @@ async def adm_fee_refund_manual_finish(message: Message, state: FSMContext):
         f"charge_id={charge_id}"
     )
 
-async def _render_task_channel_card(callback: CallbackQuery, channel_id: int, db):
-    row = await get_task_channel(db, channel_id)
-    if not row:
-        await safe_edit_text(callback.message, "❌ Канал не найден.", reply_markup=admin_back_kb())
+async def _render_task_channel_card(callback: CallbackQuery, channel_id: int):
+    try:
+        detail = await get_task_channel_via_api(channel_id)
+    except ApiClientError as e:
+        if e.status_code == 404:
+            await safe_edit_text(callback.message, "❌ Канал не найден.", reply_markup=admin_back_kb())
+            return
+
+        await safe_edit_text(
+            callback.message,
+            f"❌ Не удалось загрузить канал из API.\n\n{e.detail}",
+            reply_markup=admin_back_kb(),
+        )
         return
 
-    stats = await task_channel_stats(db, channel_id)
-
-    title = row["title"] or "Без названия"
-    chat_id = row["chat_id"]
-    is_active = int(row["is_active"] or 0) == 1
-    total_bought = int(row["total_bought_views"] or 0)
-    views_per_post = int(row["views_per_post"] or 0)
-    allocated = int(row["allocated_views"] or 0)
-    remaining = int(row["remaining_views"] or 0)
-    view_seconds = int(row["view_seconds"] or 0)
-    total_posts = int(stats["total_posts"] or 0)
-    total_required = int(stats["total_required"] or 0)
-    total_current = int(stats["total_current"] or 0)
-    active_posts = int(stats["active_posts"] or 0)
-
-    status_text = "🟢 Включен" if is_active else "🔴 Отключен"
-
+    text, is_active, resolved_channel_id = _build_task_channel_card_text(detail)
     await safe_edit_text(
         callback.message,
-        "📺 Канал просмотров\n\n"
-        f"Название: {title}\n"
-        f"ID канала: {chat_id}\n"
-        f"Статус: {status_text}\n\n"
-        f"Куплено просмотров: {total_bought}\n"
-        f"На один пост: {views_per_post}\n"
-        f"Секунд просмотра: {view_seconds}\n"
-        f"Уже распределено: {allocated}\n"
-        f"Осталось распределить: {remaining}\n\n"
-        f"Постов в системе: {total_posts}\n"
-        f"Активных постов: {active_posts}\n"
-        f"Всего нужно просмотров по постам: {total_required}\n"
-        f"Фактически набрано: {total_current}",
-        reply_markup=admin_task_channel_card_kb(channel_id, is_active),
+        text,
+        reply_markup=admin_task_channel_card_kb(resolved_channel_id, is_active),
     )
 
 @router.callback_query(F.data == "adm:tch:list")
-async def adm_task_channels_list(callback: CallbackQuery, db):
+async def adm_task_channels_list(callback: CallbackQuery):
     await callback.answer()
-    rows = await list_task_channels(db)
+
+    try:
+        result = await list_task_channels_via_api()
+    except ApiClientError as e:
+        await safe_edit_text(
+            callback.message,
+            f"❌ Не удалось загрузить каналы из API.\n\n{e.detail}",
+            reply_markup=admin_back_kb(),
+        )
+        return
+
+    rows = result.get("items") or []
 
     if not rows:
         await safe_edit_text(
@@ -1411,38 +1443,57 @@ async def adm_task_channel_new_views_per_post(message: Message, state: FSMContex
 
 
 @router.callback_query(F.data.startswith("adm:tch:open:"))
-async def adm_task_channel_open(callback: CallbackQuery, db):
+async def adm_task_channel_open(callback: CallbackQuery):
     await callback.answer()
     channel_id = int(callback.data.split(":")[3])
-    await _render_task_channel_card(callback, channel_id, db)
+    await _render_task_channel_card(callback, channel_id)
 
 
 @router.callback_query(F.data.startswith("adm:tch:toggle:"))
-async def adm_task_channel_toggle(callback: CallbackQuery, db):
+async def adm_task_channel_toggle(callback: CallbackQuery):
     await callback.answer()
     channel_id = int(callback.data.split(":")[3])
 
-    row = await get_task_channel(db, channel_id)
-    if not row:
-        await safe_edit_text(callback.message, "❌ Канал не найден.", reply_markup=admin_back_kb())
+    try:
+        detail = await toggle_task_channel_via_api(channel_id)
+    except ApiClientError as e:
+        if e.status_code == 404:
+            await safe_edit_text(callback.message, "❌ Канал не найден.", reply_markup=admin_back_kb())
+            return
+
+        await safe_edit_text(
+            callback.message,
+            f"❌ Не удалось обновить канал через API.\n\n{e.detail}",
+            reply_markup=admin_back_kb(),
+        )
         return
 
-    new_active = 0 if int(row["is_active"] or 0) == 1 else 1
-
-    async with tx(db):
-        await set_task_channel_active(db, channel_id, new_active)
-
-    await _render_task_channel_card(callback, channel_id, db)
+    text, is_active, resolved_channel_id = _build_task_channel_card_text(detail)
+    await safe_edit_text(
+        callback.message,
+        text,
+        reply_markup=admin_task_channel_card_kb(resolved_channel_id, is_active),
+    )
 
 @router.callback_query(F.data.startswith("adm:tch:edit:"))
-async def adm_task_channel_edit_start(callback: CallbackQuery, state: FSMContext, db):
+async def adm_task_channel_edit_start(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     channel_id = int(callback.data.split(":")[3])
 
-    row = await get_task_channel(db, channel_id)
-    if not row:
-        await safe_edit_text(callback.message, "❌ Канал не найден.", reply_markup=admin_back_kb())
+    try:
+        detail = await get_task_channel_via_api(channel_id)
+    except ApiClientError as e:
+        if e.status_code == 404:
+            await safe_edit_text(callback.message, "❌ Канал не найден.", reply_markup=admin_back_kb())
+            return
+        await safe_edit_text(
+            callback.message,
+            f"❌ Не удалось загрузить канал из API.\n\n{e.detail}",
+            reply_markup=admin_back_kb(),
+        )
         return
+
+    channel = detail["channel"]
 
     await state.set_state(TaskChannelEdit.total_bought_views)
     await state.update_data(channel_id=channel_id)
@@ -1450,17 +1501,17 @@ async def adm_task_channel_edit_start(callback: CallbackQuery, state: FSMContext
     await safe_edit_text(
         callback.message,
         "⚙️ Редактирование параметров канала\n\n"
-        f"Текущий chat_id: {row['chat_id']}\n"
-        f"Сейчас куплено просмотров: {int(row['total_bought_views'] or 0)}\n"
-        f"Сейчас просмотров на 1 пост: {int(row['views_per_post'] or 0)}\n"
-        f"Сейчас секунд просмотра: {int(row['view_seconds'] or 0)}\n"
-        f"Уже распределено по постам: {int(row['allocated_views'] or 0)}\n\n"
+        f"Текущий chat_id: {channel['chat_id']}\n"
+        f"Сейчас куплено просмотров: {int(channel.get('total_bought_views') or 0)}\n"
+        f"Сейчас просмотров на 1 пост: {int(channel.get('views_per_post') or 0)}\n"
+        f"Сейчас секунд просмотра: {int(channel.get('view_seconds') or 0)}\n"
+        f"Уже распределено по постам: {int(channel.get('allocated_views') or 0)}\n\n"
         "Введи новое общее количество купленных просмотров:",
         reply_markup=admin_back_kb(),
     )
 
 @router.message(TaskChannelEdit.total_bought_views)
-async def adm_task_channel_edit_total_views(message: Message, state: FSMContext, db):
+async def adm_task_channel_edit_total_views(message: Message, state: FSMContext):
     try:
         total_bought_views = int((message.text or "").strip())
         if total_bought_views <= 0:
@@ -1472,7 +1523,13 @@ async def adm_task_channel_edit_total_views(message: Message, state: FSMContext,
     data = await state.get_data()
     channel_id = int(data["channel_id"])
 
-    allocated_views = await get_task_channel_allocated_views(db, channel_id)
+    try:
+        detail = await get_task_channel_via_api(channel_id)
+    except ApiClientError as e:
+        await message.answer(f"❌ {e.detail}")
+        return
+
+    allocated_views = int(detail["channel"].get("allocated_views") or 0)
     if total_bought_views < allocated_views:
         await message.answer(
             "❌ Нельзя поставить меньше, чем уже распределено по постам.\n\n"
@@ -1485,7 +1542,7 @@ async def adm_task_channel_edit_total_views(message: Message, state: FSMContext,
     await message.answer("Теперь введи новое количество просмотров на 1 пост:")
 
 @router.message(TaskChannelEdit.views_per_post)
-async def adm_task_channel_edit_views_per_post(message: Message, state: FSMContext, db):
+async def adm_task_channel_edit_views_per_post(message: Message, state: FSMContext):
     try:
         views_per_post = int((message.text or "").strip())
         if views_per_post <= 0:
@@ -1508,18 +1565,26 @@ async def adm_task_channel_edit_views_per_post(message: Message, state: FSMConte
 
 
 @router.callback_query(F.data.startswith("adm:tch:posts:"))
-async def adm_task_channel_posts(callback: CallbackQuery, db):
+async def adm_task_channel_posts(callback: CallbackQuery):
     await callback.answer()
     channel_id = int(callback.data.split(":")[3])
 
-    channel = await get_task_channel(db, channel_id)
-    if not channel:
-        await safe_edit_text(callback.message, "❌ Канал не найден.", reply_markup=admin_back_kb())
+    try:
+        result = await get_task_channel_posts_via_api(channel_id, limit=20)
+    except ApiClientError as e:
+        if e.status_code == 404:
+            await safe_edit_text(callback.message, "❌ Канал не найден.", reply_markup=admin_back_kb())
+            return
+        await safe_edit_text(
+            callback.message,
+            f"❌ Не удалось загрузить посты канала из API.\n\n{e.detail}",
+            reply_markup=admin_back_kb(),
+        )
         return
 
-    rows = await list_task_posts_by_channel(db, channel_id, limit=20)
-
-    title = channel["title"] or channel["chat_id"]
+    channel = result["channel"]
+    rows = result.get("items") or []
+    title = channel.get("title") or channel["chat_id"]
 
     if not rows:
         await safe_edit_text(
@@ -1568,7 +1633,7 @@ async def adm_task_channel_posts(callback: CallbackQuery, db):
     )
 
 @router.message(TaskChannelEdit.view_seconds)
-async def adm_task_channel_edit_view_seconds(message: Message, state: FSMContext, db):
+async def adm_task_channel_edit_view_seconds(message: Message, state: FSMContext):
     try:
         view_seconds = int((message.text or "").strip())
         if view_seconds <= 0:
@@ -1582,34 +1647,31 @@ async def adm_task_channel_edit_view_seconds(message: Message, state: FSMContext
     total_bought_views = int(data["total_bought_views"])
     views_per_post = int(data["views_per_post"])
 
-    async with tx(db):
-        await update_task_channel_params(
-            db=db,
-            channel_id=channel_id,
+    try:
+        detail = await update_task_channel_params_via_api(
+            channel_id,
             total_bought_views=total_bought_views,
             views_per_post=views_per_post,
             view_seconds=view_seconds,
         )
-
-    await state.clear()
-
-    row = await get_task_channel(db, channel_id)
-    if not row:
-        await message.answer("✅ Параметры обновлены.")
+    except ApiClientError as e:
+        await message.answer(f"❌ {e.detail}")
         return
 
-    stats = await task_channel_stats(db, channel_id)
+    await state.clear()
+    channel = detail["channel"]
+    stats = detail["stats"]
 
-    title = row["title"] or "Без названия"
-    chat_id = row["chat_id"]
-    is_active = int(row["is_active"] or 0) == 1
-    allocated = int(row["allocated_views"] or 0)
-    remaining = int(row["remaining_views"] or 0)
+    title = channel.get("title") or "Без названия"
+    chat_id = channel["chat_id"]
+    is_active = bool(channel.get("is_active") or False)
+    allocated = int(channel.get("allocated_views") or 0)
+    remaining = int(channel.get("remaining_views") or 0)
 
-    total_posts = int(stats["total_posts"] or 0)
-    active_posts = int(stats["active_posts"] or 0)
-    total_required = int(stats["total_required"] or 0)
-    total_current = int(stats["total_current"] or 0)
+    total_posts = int(stats.get("total_posts") or 0)
+    active_posts = int(stats.get("active_posts") or 0)
+    total_required = int(stats.get("total_required") or 0)
+    total_current = int(stats.get("total_current") or 0)
 
     status_text = "🟢 Включен" if is_active else "🔴 Отключен"
 
@@ -1618,9 +1680,9 @@ async def adm_task_channel_edit_view_seconds(message: Message, state: FSMContext
         f"Название: {title}\n"
         f"chat_id: {chat_id}\n"
         f"Статус: {status_text}\n\n"
-        f"Куплено просмотров: {int(row['total_bought_views'] or 0)}\n"
-        f"На 1 пост: {int(row['views_per_post'] or 0)}\n"
-        f"Секунд просмотра: {int(row['view_seconds'] or 0)}\n"
+        f"Куплено просмотров: {int(channel.get('total_bought_views') or 0)}\n"
+        f"На 1 пост: {int(channel.get('views_per_post') or 0)}\n"
+        f"Секунд просмотра: {int(channel.get('view_seconds') or 0)}\n"
         f"Уже распределено: {allocated}\n"
         f"Осталось распределить: {remaining}\n\n"
         f"Постов в системе: {total_posts}\n"
@@ -1631,7 +1693,7 @@ async def adm_task_channel_edit_view_seconds(message: Message, state: FSMContext
     )
 
 @router.message(TaskChannelCreate.view_seconds)
-async def adm_task_channel_new_view_seconds(message: Message, state: FSMContext, db):
+async def adm_task_channel_new_view_seconds(message: Message, state: FSMContext):
     try:
         view_seconds = int((message.text or "").strip())
         if view_seconds <= 0:
@@ -1645,17 +1707,20 @@ async def adm_task_channel_new_view_seconds(message: Message, state: FSMContext,
     total_bought_views = int(data["total_bought_views"])
     views_per_post = int(data["views_per_post"])
 
-    async with tx(db):
-        new_id = await create_task_channel(
-            db=db,
+    try:
+        detail = await create_task_channel_via_api(
             chat_id=chat_id,
             title=None,
             total_bought_views=total_bought_views,
             views_per_post=views_per_post,
             view_seconds=view_seconds,
         )
+    except ApiClientError as e:
+        await message.answer(f"❌ {e.detail}")
+        return
 
     await state.clear()
+    new_id = int(detail["channel"]["id"])
 
     await message.answer(
         "✅ Канал подключен\n\n"

@@ -368,11 +368,58 @@ class AdminCampaignsApi(ApiSection):
     """
 
 
-class AdminTaskChannelsApi(ApiSection):
-    """
-    Reserved for admin task-channel endpoints.
-    Admin UI stays in Telegram bot, while business logic will move to API gradually.
-    """
+class TaskChannelsApi(ApiSection):
+    async def list(self) -> JsonDict:
+        return await self._get("/admin/task-channels")
+
+    async def get(self, channel_id: int) -> JsonDict:
+        return await self._get(f"/admin/task-channels/{int(channel_id)}")
+
+    async def create(
+            self,
+            *,
+            chat_id: str,
+            title: Optional[str],
+            total_bought_views: int,
+            views_per_post: int,
+            view_seconds: int,
+    ) -> JsonDict:
+        return await self._post(
+            "/admin/task-channels",
+            json={
+                "chat_id": chat_id,
+                "title": title,
+                "total_bought_views": int(total_bought_views),
+                "views_per_post": int(views_per_post),
+                "view_seconds": int(view_seconds),
+            },
+        )
+
+    async def toggle(self, channel_id: int) -> JsonDict:
+        return await self._post(f"/admin/task-channels/{int(channel_id)}/toggle", json={})
+
+    async def update_params(
+            self,
+            channel_id: int,
+            *,
+            total_bought_views: int,
+            views_per_post: int,
+            view_seconds: int,
+    ) -> JsonDict:
+        return await self._post(
+            f"/admin/task-channels/{int(channel_id)}/params",
+            json={
+                "total_bought_views": int(total_bought_views),
+                "views_per_post": int(views_per_post),
+                "view_seconds": int(view_seconds),
+            },
+        )
+
+    async def get_posts(self, channel_id: int, *, limit: int = 20) -> JsonDict:
+        return await self._get(
+            f"/admin/task-channels/{int(channel_id)}/posts",
+            params={"limit": int(limit)},
+        )
 
 
 class BotApiClient:
@@ -396,7 +443,7 @@ class BotApiClient:
         self.users = UsersApi(self)
         self.withdrawals_review = ReviewWithdrawalsApi(self)
         self.admin_campaigns = AdminCampaignsApi(self)
-        self.admin_task_channels = AdminTaskChannelsApi(self)
+        self.task_channels = TaskChannelsApi(self)
 
     def _build_headers(self) -> dict[str, str]:
         if not self.internal_token:
@@ -548,6 +595,54 @@ async def record_fee_refund_by_charge_id(
     )
 
 
+async def list_task_channels_via_api() -> JsonDict:
+    return await api_client.task_channels.list()
+
+
+async def get_task_channel_via_api(channel_id: int) -> JsonDict:
+    return await api_client.task_channels.get(channel_id)
+
+
+async def create_task_channel_via_api(
+        *,
+        chat_id: str,
+        title: Optional[str],
+        total_bought_views: int,
+        views_per_post: int,
+        view_seconds: int,
+) -> JsonDict:
+    return await api_client.task_channels.create(
+        chat_id=chat_id,
+        title=title,
+        total_bought_views=total_bought_views,
+        views_per_post=views_per_post,
+        view_seconds=view_seconds,
+    )
+
+
+async def toggle_task_channel_via_api(channel_id: int) -> JsonDict:
+    return await api_client.task_channels.toggle(channel_id)
+
+
+async def update_task_channel_params_via_api(
+        channel_id: int,
+        *,
+        total_bought_views: int,
+        views_per_post: int,
+        view_seconds: int,
+) -> JsonDict:
+    return await api_client.task_channels.update_params(
+        channel_id,
+        total_bought_views=total_bought_views,
+        views_per_post=views_per_post,
+        view_seconds=view_seconds,
+    )
+
+
+async def get_task_channel_posts_via_api(channel_id: int, *, limit: int = 20) -> JsonDict:
+    return await api_client.task_channels.get_posts(channel_id, limit=limit)
+
+
 async def get_active_campaigns_via_api() -> JsonDict:
     return await api_client.campaigns.list_active()
 
@@ -688,6 +783,12 @@ __all__ = [
     "list_recent_fee_payments_via_api",
     "record_withdrawal_fee_refund",
     "record_fee_refund_by_charge_id",
+    "list_task_channels_via_api",
+    "get_task_channel_via_api",
+    "create_task_channel_via_api",
+    "toggle_task_channel_via_api",
+    "update_task_channel_params_via_api",
+    "get_task_channel_posts_via_api",
     "get_active_campaigns_via_api",
     "claim_campaign_reward_via_api",
     "bootstrap_bot_user_via_api",
