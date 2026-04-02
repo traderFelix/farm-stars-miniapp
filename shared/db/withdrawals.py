@@ -216,7 +216,6 @@ async def mark_withdraw_fee_refunded(db, withdrawal_id: int):
         """,
         (withdrawal_id,),
     )
-    await db.commit()
 
 
 async def list_recent_fee_payments(db, limit: int = 10):

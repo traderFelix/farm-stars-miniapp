@@ -317,6 +317,49 @@ class ReviewWithdrawalsApi(ApiSection):
     async def get(self, withdrawal_id: int) -> JsonDict:
         return await self._get(f"/admin/withdrawals/{int(withdrawal_id)}")
 
+    async def mark_paid(self, withdrawal_id: int, *, admin_id: int) -> JsonDict:
+        return await self._post(
+            f"/admin/withdrawals/{int(withdrawal_id)}/mark-paid",
+            json={"admin_id": int(admin_id)},
+        )
+
+    async def reject(self, withdrawal_id: int, *, admin_id: int) -> JsonDict:
+        return await self._post(
+            f"/admin/withdrawals/{int(withdrawal_id)}/reject",
+            json={"admin_id": int(admin_id)},
+        )
+
+    async def list_recent_fee_payments(self, *, limit: int = 10) -> JsonDict:
+        return await self._get(
+            "/admin/withdrawals/fee-payments/recent",
+            params={"limit": int(limit)},
+        )
+
+    async def record_fee_refund(
+            self,
+            withdrawal_id: int,
+            *,
+            meta: Optional[str] = None,
+    ) -> JsonDict:
+        return await self._post(
+            f"/admin/withdrawals/{int(withdrawal_id)}/fee-refund",
+            json={"meta": meta},
+        )
+
+    async def record_fee_refund_by_charge_id(
+            self,
+            charge_id: str,
+            *,
+            meta: Optional[str] = None,
+    ) -> JsonDict:
+        return await self._post(
+            "/admin/withdrawals/fee-refunds/by-charge-id",
+            json={
+                "charge_id": charge_id,
+                "meta": meta,
+            },
+        )
+
 
 class AdminCampaignsApi(ApiSection):
     """
@@ -471,6 +514,40 @@ async def get_withdrawal_details(withdrawal_id: int) -> JsonDict:
     return await api_client.withdrawals_review.get(withdrawal_id)
 
 
+async def mark_withdrawal_paid(withdrawal_id: int, *, admin_id: int) -> JsonDict:
+    return await api_client.withdrawals_review.mark_paid(withdrawal_id, admin_id=admin_id)
+
+
+async def reject_withdrawal(withdrawal_id: int, *, admin_id: int) -> JsonDict:
+    return await api_client.withdrawals_review.reject(withdrawal_id, admin_id=admin_id)
+
+
+async def list_recent_fee_payments_via_api(*, limit: int = 10) -> JsonDict:
+    return await api_client.withdrawals_review.list_recent_fee_payments(limit=limit)
+
+
+async def record_withdrawal_fee_refund(
+        withdrawal_id: int,
+        *,
+        meta: Optional[str] = None,
+) -> JsonDict:
+    return await api_client.withdrawals_review.record_fee_refund(
+        withdrawal_id,
+        meta=meta,
+    )
+
+
+async def record_fee_refund_by_charge_id(
+        charge_id: str,
+        *,
+        meta: Optional[str] = None,
+) -> JsonDict:
+    return await api_client.withdrawals_review.record_fee_refund_by_charge_id(
+        charge_id,
+        meta=meta,
+    )
+
+
 async def get_active_campaigns_via_api() -> JsonDict:
     return await api_client.campaigns.list_active()
 
@@ -606,6 +683,11 @@ __all__ = [
     "clear_user_suspicious",
     "list_withdrawals_queue",
     "get_withdrawal_details",
+    "mark_withdrawal_paid",
+    "reject_withdrawal",
+    "list_recent_fee_payments_via_api",
+    "record_withdrawal_fee_refund",
+    "record_fee_refund_by_charge_id",
     "get_active_campaigns_via_api",
     "claim_campaign_reward_via_api",
     "bootstrap_bot_user_via_api",

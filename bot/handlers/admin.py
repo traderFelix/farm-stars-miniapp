@@ -10,8 +10,13 @@ from bot.api_client import (
     get_withdrawal_details,
     get_user_profile,
     list_withdrawals_queue,
+    list_recent_fee_payments_via_api,
     lookup_user,
     mark_user_suspicious,
+    mark_withdrawal_paid,
+    record_fee_refund_by_charge_id,
+    record_withdrawal_fee_refund,
+    reject_withdrawal,
     set_user_role,
 )
 from bot.profile_texts import format_user_profile_card
@@ -43,28 +48,18 @@ from bot.db import (
     # stats
     campaign_stats, list_winners, claimed_usernames, global_claims_stats, campaigns_status_counts,
     unclaimed_total_amount, total_assigned_amount,
-
-    # ledger
-    apply_balance_delta,
 )
 
 from shared.db.users import (
     fmt_stars, build_user_stats_text, user_has_role, users_total_count, users_new_since_hours,
     users_new_since_days, users_active_since_days, users_growth_by_day, total_balances, top_users_by_balance
 )
-from shared.db.ledger import (
-    add_referral_bonus_for_paid_withdrawal, ledger_add, ledger_sum_by_reason, get_balance_adjusts_by_admin,
-    balances_audit,
-)
+from shared.db.ledger import ledger_sum_by_reason, get_balance_adjusts_by_admin, balances_audit
 from shared.db.tasks import (
     get_task_channel, task_channel_stats, list_task_channels, set_task_channel_active, get_task_channel_allocated_views,
     list_task_posts_by_channel, update_task_channel_params, create_task_channel
 )
-from shared.db.withdrawals import (
-    get_withdrawal, set_withdrawal_status, mark_withdraw_fee_refunded, total_withdrawn_amount,
-    pending_withdrawn_amount, list_recent_fee_payments, find_withdraw_by_fee_charge_id
-)
-from shared.db.xtr_ledger import xtr_ledger_add
+from shared.db.withdrawals import total_withdrawn_amount, pending_withdrawn_amount
 
 from bot.keyboards import (
     admin_menu_kb, admin_back_kb, campaigns_list_kb, campaign_manage_kb, stats_list_kb, admin_fee_refund_kb,
@@ -802,85 +797,33 @@ async def adm_withdraw_open(callback: CallbackQuery):
 
 
 @router.callback_query(F.data.startswith("adm:wd:paid:"))
-async def adm_withdraw_paid(callback: CallbackQuery, db):
+async def adm_withdraw_paid(callback: CallbackQuery):
     await callback.answer()
 
     wid = int(callback.data.split(":")[3])
     admin_id = callback.from_user.id
 
-    row = await get_withdrawal(db, wid)
-    if not row:
-        await callback.answer("❌ Заявка не найдена", show_alert=True)
-        return
-
-    _id, user_id, username, amount, method, wallet, status, created_at = (
-        row[0], row[1], row[2], row[3], row[4], row[5], row[6], row[7]
-    )
-
-    if status != "pending":
-        await callback.answer("⚠️ Уже обработана", show_alert=True)
-        return
-
     try:
-        async with tx(db):
-            row2 = await get_withdrawal(db, wid)
-            if not row2:
-                await callback.answer("❌ Заявка не найдена", show_alert=True)
-                return
+        result = await mark_withdrawal_paid(wid, admin_id=admin_id)
+        withdrawal = result["withdrawal"]
+        referral_bonus = result.get("referral_bonus") or {}
 
-            status2 = row2[6]
-            if status2 != "pending":
-                await callback.answer("⚠️ Уже обработана", show_alert=True)
-                return
+        user_id = int(withdrawal["user_id"])
+        amount = float(withdrawal["amount"] or 0)
+        method = str(withdrawal["method"])
+        bonus_added = bool(referral_bonus.get("added") or False)
+        referrer_id = referral_bonus.get("referrer_id")
+        bonus_amount = float(referral_bonus.get("amount") or 0)
 
-            await set_withdrawal_status(db, wid, "paid", admin_id)
-
-            logger.info(
-                "WITHDRAW PAID | wid=%s user_id=%s amount=%s",
-                wid, user_id, amount
-            )
-
-            await ledger_add(
-                db,
-                user_id=user_id,
-                delta=0.0,
-                reason="withdraw_paid",
-                withdrawal_id=wid,
-                meta=f"method={method}",
-            )
-
+        if bonus_added and referrer_id and bonus_amount > 0:
             try:
-                bonus_added, referrer_id, bonus_amount = await add_referral_bonus_for_paid_withdrawal(
-                    db,
-                    referred_user_id=int(user_id),
-                    withdrawal_id=int(wid),
-                    withdraw_amount=float(amount),
-                )
-                logger.info(
-                    "REF BONUS CHECK | wid=%s referred_user_id=%s bonus_added=%s referrer_id=%s bonus_amount=%s",
-                    wid, user_id, bonus_added, referrer_id, bonus_amount
+                await callback.bot.send_message(
+                    int(referrer_id),
+                    f"🎉 Ваш друг вывел {float(amount):g}⭐.\n"
+                    f"Вы получили рефбек: {bonus_amount:g}⭐"
                 )
             except Exception:
-                logger.exception(
-                    "Failed to add referral bonus: wid=%s referred_user_id=%s amount=%s",
-                    wid, user_id, amount
-                )
-                raise
-
-            if bonus_added and referrer_id and bonus_amount > 0:
-                try:
-                    await callback.bot.send_message(
-                        referrer_id,
-                        f"🎉 Ваш друг вывел {float(amount):g}⭐.\n"
-                        f"Вы получили рефбек: {bonus_amount:g}⭐"
-                    )
-                except Exception:
-                    logger.exception("Failed to notify referrer %s for withdrawal %s", referrer_id, wid)
-
-            logger.info(
-                "REF BONUS SENT | wid=%s referrer_id=%s referred_user_id=%s bonus_amount=%s",
-                wid, referrer_id, user_id, bonus_amount
-            )
+                logger.exception("Failed to notify referrer %s for withdrawal %s", referrer_id, wid)
 
         try:
             await callback.bot.send_message(
@@ -892,6 +835,9 @@ async def adm_withdraw_paid(callback: CallbackQuery, db):
         except Exception:
             pass  # юзер мог заблокировать бота / закрыть ЛС
 
+    except ApiClientError as e:
+        await callback.answer(f"❌ {e.detail}", show_alert=True)
+        return
     except Exception as e:
         await callback.answer(f"❌ Ошибка: {type(e).__name__}: {e}", show_alert=True)
         return
@@ -900,32 +846,18 @@ async def adm_withdraw_paid(callback: CallbackQuery, db):
     await _render_withdraw_card(callback, wid)
 
 
-async def refund_withdraw_fee_if_needed(bot: Bot, db, withdrawal_id: int) -> tuple[bool, str]:
-    async with db.execute(
-        """
-        SELECT user_id, fee_xtr, fee_paid, fee_refunded, fee_telegram_charge_id
-        FROM withdrawals
-        WHERE id = ?
-        """,
-        (withdrawal_id,)
-    ) as cur:
-        row = await cur.fetchone()
+async def refund_withdraw_fee_if_needed(
+        bot: Bot,
+        withdrawal_id: int,
+        fee_refund: dict,
+) -> tuple[bool, str]:
+    refund_status = str(fee_refund.get("status") or "no_fee_paid")
 
-    if not row:
-        return False, "withdrawal_not_found"
+    if refund_status != "ready":
+        return refund_status in {"no_fee_paid", "already_refunded"}, refund_status
 
-    user_id = int(row["user_id"])
-    fee_xtr = int(row["fee_xtr"] or 0)
-    fee_paid = int(row["fee_paid"] or 0)
-    fee_refunded = int(row["fee_refunded"] or 0)
-    charge_id = row["fee_telegram_charge_id"]
-
-    if fee_xtr <= 0 or not fee_paid:
-        return True, "no_fee_paid"
-
-    if fee_refunded:
-        return True, "already_refunded"
-
+    user_id = int(fee_refund["user_id"])
+    charge_id = fee_refund.get("charge_id")
     if not charge_id:
         return False, "missing_charge_id"
 
@@ -939,79 +871,47 @@ async def refund_withdraw_fee_if_needed(bot: Bot, db, withdrawal_id: int) -> tup
     if not ok:
         return False, "refund_failed"
 
-    await mark_withdraw_fee_refunded(db, withdrawal_id)
+    try:
+        result = await record_withdrawal_fee_refund(
+            withdrawal_id,
+            meta="status=rejected",
+        )
+    except ApiClientError:
+        return False, "refund_record_failed"
 
-    await xtr_ledger_add(
-        db,
-        user_id=int(user_id),
-        withdrawal_id=withdrawal_id,
-        delta_xtr=-int(fee_xtr),
-        reason="withdraw_fee_refunded",
-        telegram_payment_charge_id=charge_id,
-        meta="status=rejected",
-    )
-
-    return True, "refunded"
+    final_status = str(result.get("status") or "refund_record_failed")
+    return final_status == "refunded", final_status
 
 
 @router.callback_query(F.data.startswith("adm:wd:reject:"))
-async def adm_withdraw_reject(callback: CallbackQuery, db):
+async def adm_withdraw_reject(callback: CallbackQuery):
     wid = int(callback.data.split(":")[3])
     admin_id = callback.from_user.id
     bot = callback.bot
 
-    row = await get_withdrawal(db, wid)
-    if not row:
-        await callback.answer("❌ Заявка не найдена", show_alert=True)
-        return
-
-    _id, user_id, username, amount, method, wallet, status, created_at = (
-        row[0], row[1], row[2], row[3], row[4], row[5], row[6], row[7]
-    )
-
-    if status != "pending":
-        await callback.answer("⚠️ Уже обработана", show_alert=True)
-        return
-
     try:
-        async with tx(db):
-            row2 = await get_withdrawal(db, wid)
-            if not row2:
-                await callback.answer("❌ Заявка не найдена", show_alert=True)
-                return
-
-            status2 = row2[6]
-            if status2 != "pending":
-                await callback.answer("⚠️ Уже обработана", show_alert=True)
-                return
-
-            await set_withdrawal_status(db, wid, "rejected", admin_id)
-            await apply_balance_delta(
-                db,
-                user_id=int(user_id),
-                delta=float(amount),
-                reason="withdraw_release",
-                withdrawal_id=int(wid),
-                meta="rejected",
-            )
+        result = await reject_withdrawal(wid, admin_id=admin_id)
+        withdrawal = result["withdrawal"]
+        fee_refund = result.get("fee_refund") or {}
+        user_id = int(withdrawal["user_id"])
+        amount = float(withdrawal["amount"] or 0)
 
         fee_refund_text = ""
 
-        refunded, refund_status = await refund_withdraw_fee_if_needed(bot, db, wid)
+        refunded, refund_status = await refund_withdraw_fee_if_needed(bot, wid, fee_refund)
 
         if refund_status == "refunded":
-            fee_row = await get_withdrawal(db, wid)
-            fee_xtr = int(fee_row["fee_xtr"] or 0)
+            fee_xtr = int(fee_refund.get("fee_xtr") or 0)
             fee_refund_text = f"\nКомиссия {fee_xtr}⭐ возвращена."
 
         elif refund_status == "refund_failed":
             fee_refund_text = "\n⚠️ Комиссию вернуть не удалось."
 
+        elif refund_status == "refund_record_failed":
+            fee_refund_text = "\n⚠️ Комиссия возвращена в Telegram, но статус возврата не записался."
+
         elif refund_status == "missing_charge_id":
             fee_refund_text = "\n⚠️ У комиссии нет charge_id, вернуть автоматически не удалось."
-
-        elif refund_status == "withdrawal_not_found":
-            fee_refund_text = "\n⚠️ Заявка на вывод не найдена."
 
         try:
             await callback.bot.send_message(
@@ -1023,6 +923,9 @@ async def adm_withdraw_reject(callback: CallbackQuery, db):
         except Exception:
             pass
 
+    except ApiClientError as e:
+        await callback.answer(f"❌ {e.detail}", show_alert=True)
+        return
     except Exception as e:
         await callback.answer(f"❌ Ошибка: {type(e).__name__}: {e}", show_alert=True)
         return
@@ -1252,10 +1155,21 @@ async def adm_user_stats(callback: CallbackQuery, db):
     await callback.answer()
 
 @router.callback_query(F.data == "adm:fee_refund_menu")
-async def adm_fee_refund_menu(callback: CallbackQuery, db):
+async def adm_fee_refund_menu(callback: CallbackQuery):
     await callback.answer()
 
-    rows = await list_recent_fee_payments(db, limit=10)
+    try:
+        result = await list_recent_fee_payments_via_api(limit=10)
+    except ApiClientError as e:
+        await safe_edit_text(
+            callback.message,
+            "↩️ Возврат комиссии\n\n"
+            f"Не удалось загрузить оплаты комиссии из API.\n\n{e.detail}",
+            reply_markup=admin_fee_refund_kb(),
+        )
+        return
+
+    rows = result.get("items") or []
 
     if not rows:
         await safe_edit_text(
@@ -1306,7 +1220,7 @@ async def adm_fee_refund_manual(callback: CallbackQuery, state: FSMContext):
         )
 
 @router.message(AdminRefundFee.waiting_manual_data)
-async def adm_fee_refund_manual_finish(message: Message, state: FSMContext, db):
+async def adm_fee_refund_manual_finish(message: Message, state: FSMContext):
     text = (message.text or "").strip()
     parts = text.split(maxsplit=1)
 
@@ -1344,20 +1258,20 @@ async def adm_fee_refund_manual_finish(message: Message, state: FSMContext, db):
         await message.answer("❌ Telegram вернул неуспешный результат.")
         return
 
-    row = await find_withdraw_by_fee_charge_id(db, charge_id)
-    if row and not int(row["fee_refunded"] or 0):
-        await mark_withdraw_fee_refunded(db, row["withdrawal_id"])
-
-        await xtr_ledger_add(
-            db,
-            user_id=int(row["user_id"]),
-            withdrawal_id=int(row["withdrawal_id"]),
-            delta_xtr=-int(row["fee_xtr"] or 0),
-            reason="withdraw_fee_refunded",
-            telegram_payment_charge_id=charge_id,
+    try:
+        result = await record_fee_refund_by_charge_id(
+            charge_id,
             meta="status=manual_refund",
         )
-    elif not row:
+    except ApiClientError as e:
+        await state.clear()
+        await message.answer(
+            "⚠️ Refund в Telegram выполнен, но не удалось записать его в API.\n"
+            f"{e.detail}"
+        )
+        return
+
+    if result.get("status") == "not_found":
         await message.answer(
             "⚠️ Refund в Telegram выполнен, но заявка по charge_id не найдена. "
             "В xtr_ledger запись не добавлена."
