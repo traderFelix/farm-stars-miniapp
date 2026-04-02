@@ -324,7 +324,12 @@ async def task_view_post(callback: CallbackQuery, bot: Bot, state: FSMContext):
 
     task_id = int(task["id"])
     chat_id = task.get("chat_id")
-    channel_post_id = task.get("channel_post_id")
+    raw_channel_post_id = task.get("channel_post_id")
+    normalized_channel_post_id = (
+        int(raw_channel_post_id)
+        if raw_channel_post_id is not None
+        else None
+    )
 
     try:
         open_result = await open_task(user_id, task_id)
@@ -351,7 +356,7 @@ async def task_view_post(callback: CallbackQuery, bot: Bot, state: FSMContext):
     except Exception:
         pass
 
-    if not chat_id or not channel_post_id:
+    if not chat_id or normalized_channel_post_id is None:
         await bot.send_message(
             chat_id=user_id,
             text="❌ У задания нет данных поста.",
@@ -361,11 +366,10 @@ async def task_view_post(callback: CallbackQuery, bot: Bot, state: FSMContext):
 
     try:
         resolved_chat_id = str(chat_id)
-        resolved_channel_post_id = int(channel_post_id)
         sent = await bot.forward_message(
             chat_id=user_id,
             from_chat_id=resolved_chat_id,
-            message_id=resolved_channel_post_id,
+            message_id=normalized_channel_post_id,
         )
     except TelegramBadRequest:
         await bot.send_message(

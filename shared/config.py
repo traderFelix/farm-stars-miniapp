@@ -1,29 +1,51 @@
 import os
+from pathlib import Path
+from typing import Optional
+
 from dotenv import load_dotenv, find_dotenv
 
 load_dotenv(find_dotenv(), override=False)
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-OWNER_ID = os.getenv("OWNER_ID")
-ADMIN_IDS = {int(x) for x in os.getenv("ADMIN_IDS").split(",") if x.strip()}
-API_HOST = os.getenv("API_HOST")
-API_PORT = int(os.getenv("API_PORT"))
-WEB_ORIGIN_DEV = os.getenv("WEB_ORIGIN_DEV")
-WEB_ORIGIN_NGROK = os.getenv("WEB_ORIGIN_NGROK")
-DB_PATH = os.getenv("DB_PATH")
-JWT_SECRET = os.getenv("JWT_SECRET")
-JWT_ALG = os.getenv("JWT_ALG")
-JWT_EXPIRE_DAYS = int(os.getenv("JWT_EXPIRE_DAYS"))
-BOT_INTERNAL_TOKEN = os.getenv("BOT_INTERNAL_TOKEN") or JWT_SECRET
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+def _get_env(name: str) -> Optional[str]:
+    return os.getenv(name)
+
+
+def _require_env(name: str) -> str:
+    value = _get_env(name)
+    if value is None:
+        raise RuntimeError(f"Environment variable {name} is required")
+    return value
+
+
+def _get_int_env(name: str) -> int:
+    return int(_require_env(name))
+
+
+def _get_float_env(name: str) -> float:
+    return float(_require_env(name))
+
+
+BASE_DIR = Path(__file__).resolve().parent.parent
+OWNER_ID = _get_env("OWNER_ID")
+ADMIN_IDS = {int(x) for x in _require_env("ADMIN_IDS").split(",") if x.strip()}
+API_HOST = _get_env("API_HOST")
+API_PORT = _get_int_env("API_PORT")
+WEB_ORIGIN_DEV = _get_env("WEB_ORIGIN_DEV")
+WEB_ORIGIN_NGROK = _get_env("WEB_ORIGIN_NGROK")
+DB_PATH = _get_env("DB_PATH")
+JWT_SECRET = _get_env("JWT_SECRET")
+JWT_ALG = _get_env("JWT_ALG")
+JWT_EXPIRE_DAYS = _get_int_env("JWT_EXPIRE_DAYS")
+BOT_INTERNAL_TOKEN = _get_env("BOT_INTERNAL_TOKEN") or JWT_SECRET
+TELEGRAM_BOT_TOKEN = _get_env("TELEGRAM_BOT_TOKEN")
 ALLOW_DEV_AUTH = os.getenv("ALLOW_DEV_AUTH", "false").lower() == "true"
-CHANNEL_LINK = os.getenv("CHANNEL_LINK")
-CHANNEL_ID = os.getenv("CHANNEL_ID")
-API_BASE_URL = os.getenv("API_BASE_URL")
-API_TIMEOUT = float(os.getenv("API_TIMEOUT"))
+CHANNEL_LINK = _get_env("CHANNEL_LINK")
+CHANNEL_ID = _get_env("CHANNEL_ID")
+API_BASE_URL = _get_env("API_BASE_URL")
+API_TIMEOUT = _get_float_env("API_TIMEOUT")
 BOT_TASK_CHANNEL_POST_QUEUE_PATH = (
-    os.getenv("BOT_TASK_CHANNEL_POST_QUEUE_PATH")
-    or os.path.join(BASE_DIR, "bot", ".runtime", "pending_task_channel_posts.jsonl")
+    _get_env("BOT_TASK_CHANNEL_POST_QUEUE_PATH")
+    or str(BASE_DIR / "bot" / ".runtime" / "pending_task_channel_posts.jsonl")
 )
 
 ROLE_USER = 0
