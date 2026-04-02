@@ -3,7 +3,7 @@ from dotenv import load_dotenv, find_dotenv
 
 load_dotenv(find_dotenv(), override=False)
 
-
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OWNER_ID = os.getenv("OWNER_ID")
 ADMIN_IDS = {int(x) for x in os.getenv("ADMIN_IDS").split(",") if x.strip()}
 API_HOST = os.getenv("API_HOST")
@@ -21,6 +21,10 @@ CHANNEL_LINK = os.getenv("CHANNEL_LINK")
 CHANNEL_ID = os.getenv("CHANNEL_ID")
 API_BASE_URL = os.getenv("API_BASE_URL")
 API_TIMEOUT = float(os.getenv("API_TIMEOUT"))
+BOT_TASK_CHANNEL_POST_QUEUE_PATH = (
+    os.getenv("BOT_TASK_CHANNEL_POST_QUEUE_PATH")
+    or os.path.join(BASE_DIR, "bot", ".runtime", "pending_task_channel_posts.jsonl")
+)
 
 ROLE_USER = 0
 ROLE_CLIENT = 3

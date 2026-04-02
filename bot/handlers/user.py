@@ -29,6 +29,13 @@ from bot.keyboards import (
     withdraw_method_kb, withdraw_menu_kb, withdraw_back_kb, referrals_kb, daily_checkin_kb
 )
 
+from bot.pending_channel_posts import (
+    TaskChannelPostPayload,
+    build_task_channel_post_payload,
+    enqueue_task_channel_post_for_retry,
+    flush_pending_task_channel_posts,
+)
+
 from bot.states import WithdrawCreate
 
 from bot.api_client import (
@@ -115,6 +122,16 @@ def _require_bot(bot: Optional[Bot]) -> Bot:
         raise ValueError("Bot instance is missing")
     return bot
 
+
+async def _ingest_task_channel_post_payload_via_api(payload: TaskChannelPostPayload) -> None:
+    await ingest_task_channel_post_via_api(
+        chat_id=payload["chat_id"],
+        channel_post_id=payload["channel_post_id"],
+        title=payload["title"],
+        reward=payload["reward"],
+    )
+
+
 @router.channel_post()
 async def ingest_task_channel_post(message: Message):
     has_content = bool(
@@ -128,19 +145,34 @@ async def ingest_task_channel_post(message: Message):
     if not has_content:
         return
 
-    try:
-        await ingest_task_channel_post_via_api(
-            chat_id=str(message.chat.id),
-            channel_post_id=int(message.message_id),
-            title=message.chat.title,
-            reward=0.01,
+    flush_result = await flush_pending_task_channel_posts(
+        _ingest_task_channel_post_payload_via_api,
+        limit=100,
+    )
+    if flush_result["flushed"] > 0:
+        logger.info(
+            "Flushed pending task channel posts before ingest count=%s remaining=%s",
+            flush_result["flushed"],
+            flush_result["remaining"],
         )
+
+    payload = build_task_channel_post_payload(
+        chat_id=str(message.chat.id),
+        channel_post_id=int(message.message_id),
+        title=message.chat.title,
+        reward=0.01,
+    )
+
+    try:
+        await _ingest_task_channel_post_payload_via_api(payload)
     except ApiClientError as e:
+        queue_size = enqueue_task_channel_post_for_retry(payload)
         logger.warning(
-            "Failed to ingest channel post via API chat_id=%s post_id=%s detail=%s",
+            "Failed to ingest channel post via API chat_id=%s post_id=%s detail=%s queue_size=%s",
             message.chat.id,
             message.message_id,
             e.detail,
+            queue_size,
         )
 
 @router.message(StateFilter("*"), F.text == "🏠 Главное меню")
