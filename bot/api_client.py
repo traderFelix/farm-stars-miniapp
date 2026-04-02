@@ -131,10 +131,26 @@ class ProfileApi(ApiSection):
 
 
 class CampaignsApi(ApiSection):
-    """
-    Reserved for user campaign endpoints.
-    This will be filled when claim flow is moved from bot DB access to API.
-    """
+    async def list_active(self) -> JsonDict:
+        return await self._get("/campaigns/bot/active")
+
+    async def claim(
+            self,
+            user_id: int,
+            campaign_key: str,
+            *,
+            username: Optional[str],
+            first_name: Optional[str],
+            last_name: Optional[str],
+    ) -> JsonDict:
+        return await self._post(
+            f"/campaigns/bot/{campaign_key}/claim/{int(user_id)}",
+            json={
+                "username": username,
+                "first_name": first_name,
+                "last_name": last_name,
+            },
+        )
 
 
 class TasksApi(ApiSection):
@@ -324,6 +340,27 @@ async def get_admin_user_profile(user_id: int) -> JsonDict:
     return await api_client.admin_users.get_profile(user_id)
 
 
+async def get_active_campaigns_via_api() -> JsonDict:
+    return await api_client.campaigns.list_active()
+
+
+async def claim_campaign_reward_via_api(
+        *,
+        user_id: int,
+        campaign_key: str,
+        username: Optional[str],
+        first_name: Optional[str],
+        last_name: Optional[str],
+) -> JsonDict:
+    return await api_client.campaigns.claim(
+        user_id=user_id,
+        campaign_key=campaign_key,
+        username=username,
+        first_name=first_name,
+        last_name=last_name,
+    )
+
+
 async def bootstrap_bot_user_via_api(
         *,
         user_id: int,
@@ -409,6 +446,8 @@ __all__ = [
     "BotApiClient",
     "api_client",
     "get_admin_user_profile",
+    "get_active_campaigns_via_api",
+    "claim_campaign_reward_via_api",
     "bootstrap_bot_user_via_api",
     "get_bot_main_menu_for_user_context_via_api",
     "get_bot_main_menu_via_api",

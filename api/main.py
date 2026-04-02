@@ -5,6 +5,7 @@ from shared.config import WEB_ORIGIN_DEV, WEB_ORIGIN_NGROK
 
 from api.routes.admin_users import router as admin_users_router
 from api.routes.auth import router as auth_router
+from api.routes.campaigns import router as campaigns_router
 from api.routes.health import router as health_router
 from api.routes.internal_users import router as internal_users_router
 from api.routes.miniapp_compat import router as miniapp_compat_router
@@ -30,6 +31,7 @@ app.add_middleware(
 
 app.include_router(health_router)
 app.include_router(auth_router)
+app.include_router(campaigns_router)
 app.include_router(internal_users_router)
 app.include_router(profile_router)
 app.include_router(tasks_router)

@@ -16,7 +16,7 @@ from shared.config import (
 )
 
 from bot.db import (
-    claim_reward, list_active_campaigns, tx,
+    tx,
 )
 
 from shared.db.users import (
@@ -24,7 +24,6 @@ from shared.db.users import (
     get_referrals_count,
 )
 from shared.db.tasks import allocate_task_post_from_channel_post
-from shared.db.abuse import count_recent_abuse_events, log_abuse_event
 
 from bot.keyboards import (
     subscribe_keyboard, main_menu, tasks_menu, bottom_menu_kb, withdraw_stars_amount_kb, task_after_view_kb,
@@ -36,9 +35,11 @@ from bot.states import WithdrawCreate
 from bot.api_client import (
     ApiClientError,
     bootstrap_bot_user_via_api,
+    claim_campaign_reward_via_api,
     get_next_task,
     open_task,
     check_task,
+    get_active_campaigns_via_api,
     get_bot_main_menu_for_user_context_via_api,
     get_bot_main_menu_via_api,
     get_daily_checkin_status,
@@ -385,8 +386,9 @@ async def back_to_main(callback: CallbackQuery, bot: Bot, state: FSMContext):
 
 
 @router.callback_query(F.data == "claim")
-async def claim_menu(callback: CallbackQuery, db):
-    campaigns = await list_active_campaigns(db)
+async def claim_menu(callback: CallbackQuery):
+    data = await get_active_campaigns_via_api()
+    campaigns = data.get("items", [])
 
     if not campaigns:
         await callback.answer("❌ Сейчас нет активных конкурсов", show_alert=True)
@@ -395,8 +397,10 @@ async def claim_menu(callback: CallbackQuery, db):
     await callback.answer()
 
     keyboard = []
-    for row in campaigns:
-        key, title, amount = row[0], row[1], row[2]
+    for item in campaigns:
+        key = item["campaign_key"]
+        title = item["title"]
+        amount = float(item["reward_amount"])
         keyboard.append([
             InlineKeyboardButton(
                 text=f"🎁 {title} • {amount}⭐",
@@ -421,34 +425,23 @@ async def claim_menu(callback: CallbackQuery, db):
 
 
 @router.callback_query(F.data.startswith("claim:"))
-async def claim_for_campaign(callback: CallbackQuery, db):
+async def claim_for_campaign(callback: CallbackQuery):
     user_id = callback.from_user.id
-    username = callback.from_user.username
     campaign_key = callback.data.split(":", 1)[1]
 
-    recent_claim_clicks = await count_recent_abuse_events(db, user_id, "claim_click", 1)
-    if recent_claim_clicks >= 3:
-        await callback.answer("⏳ Слишком часто. Попробуй через минуту.", show_alert=True)
-        return
-
-    recent_claim_fails = await count_recent_abuse_events(db, user_id, "claim_fail", 10)
-    if recent_claim_fails >= 10:
-        await callback.answer("🚫 Слишком много неудачных попыток. Попробуй позже.", show_alert=True)
-        return
-
-    await log_abuse_event(db, user_id, "claim_click")
-
-    ok, msg, new_balance = await claim_reward(
-        db=db,
+    result = await claim_campaign_reward_via_api(
         user_id=user_id,
-        username=username,
         campaign_key=campaign_key,
+        username=callback.from_user.username,
         first_name=callback.from_user.first_name,
         last_name=callback.from_user.last_name,
     )
 
+    ok = bool(result.get("ok"))
+    msg = result.get("message") or "Готово"
+    new_balance = float(result.get("new_balance") or 0)
+
     if not ok:
-        await log_abuse_event(db, user_id, "claim_fail")
         await callback.answer(msg, show_alert=True)
         return
 
