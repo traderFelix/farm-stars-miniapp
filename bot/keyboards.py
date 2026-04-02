@@ -104,7 +104,15 @@ def admin_menu_kb() -> InlineKeyboardMarkup:
 
 def admin_withdraw_list_kb(rows):
     kb = []
-    for wid, user_id, username, amount, method, wallet, status, created_at in rows:
+    for row in rows:
+        if isinstance(row, dict):
+            wid = int(row["id"])
+            user_id = int(row["user_id"])
+            username = row.get("username")
+            amount = float(row.get("amount") or 0)
+            method = row.get("method")
+        else:
+            wid, user_id, username, amount, method, wallet, status, created_at = row
         name = f"@{username}" if username else f"id:{user_id}"
         kb.append([InlineKeyboardButton(
             text=f"#{wid} {name} — {float(amount):g}⭐ ({method})",

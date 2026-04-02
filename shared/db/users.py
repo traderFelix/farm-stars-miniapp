@@ -57,6 +57,26 @@ async def get_user_by_id(db: aiosqlite.Connection, user_id: int):
         return await cur.fetchone()
 
 
+async def get_user_id_by_username(
+        db: aiosqlite.Connection,
+        username: Optional[str],
+) -> Optional[int]:
+    normalized_username = (username or "").strip().lstrip("@")
+    if not normalized_username:
+        return None
+
+    async with db.execute(
+            "SELECT user_id FROM users WHERE username = ? LIMIT 1",
+            (normalized_username,),
+    ) as cur:
+        row = await cur.fetchone()
+
+    if not row:
+        return None
+
+    return int(row["user_id"])
+
+
 async def register_user(
         db: aiosqlite.Connection,
         user_id: int,
@@ -648,4 +668,3 @@ async def ensure_users_role_schema(db: aiosqlite.Connection) -> None:
             """,
             (ROLE_ADMIN, ROLE_ADMIN, int(admin_id)),
         )
-

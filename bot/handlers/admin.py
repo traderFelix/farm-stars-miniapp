@@ -7,7 +7,9 @@ from bot.api_client import (
     ApiClientError,
     adjust_user_balance,
     clear_user_suspicious,
+    get_withdrawal_details,
     get_user_profile,
+    list_withdrawals_queue,
     lookup_user,
     mark_user_suspicious,
     set_user_role,
@@ -59,7 +61,7 @@ from shared.db.tasks import (
     list_task_posts_by_channel, update_task_channel_params, create_task_channel
 )
 from shared.db.withdrawals import (
-    list_withdrawals, get_withdrawal, set_withdrawal_status, mark_withdraw_fee_refunded, total_withdrawn_amount,
+    get_withdrawal, set_withdrawal_status, mark_withdraw_fee_refunded, total_withdrawn_amount,
     pending_withdrawn_amount, list_recent_fee_payments, find_withdraw_by_fee_charge_id
 )
 from shared.db.xtr_ledger import xtr_ledger_add
@@ -722,10 +724,20 @@ async def adm_user_adjust_finish(message: Message, state: FSMContext):
 
 
 @router.callback_query(F.data == "adm:wd:list")
-async def adm_withdraw_list(callback: CallbackQuery, db):
+async def adm_withdraw_list(callback: CallbackQuery):
     await callback.answer()
 
-    rows = await list_withdrawals(db, status="pending", limit=20)
+    try:
+        result = await list_withdrawals_queue(status="pending", limit=20)
+    except ApiClientError as e:
+        await safe_edit_text(
+            callback.message,
+            f"❌ Не удалось загрузить заявки из API.\n\n{e.detail}",
+            reply_markup=admin_back_kb(),
+        )
+        return
+
+    rows = result.get("items") or []
 
     if not rows:
         await safe_edit_text(
@@ -742,15 +754,29 @@ async def adm_withdraw_list(callback: CallbackQuery, db):
     )
 
 
-async def _render_withdraw_card(callback: CallbackQuery, wid: int, db):
-    row = await get_withdrawal(db, wid)
-    if not row:
-        await callback.answer("❌ Заявка не найдена", show_alert=True)
+async def _render_withdraw_card(callback: CallbackQuery, wid: int):
+    try:
+        withdrawal = await get_withdrawal_details(wid)
+    except ApiClientError as e:
+        if e.status_code == 404:
+            await callback.answer("❌ Заявка не найдена", show_alert=True)
+            return
+
+        await safe_edit_text(
+            callback.message,
+            f"❌ Не удалось загрузить заявку из API.\n\n{e.detail}",
+            reply_markup=admin_back_kb(),
+        )
         return
 
-    _id, user_id, username, amount, method, wallet, status, created_at = (
-        row[0], row[1], row[2], row[3], row[4], row[5], row[6], row[7]
-    )
+    _id = int(withdrawal["id"])
+    user_id = int(withdrawal["user_id"])
+    username = withdrawal.get("username")
+    amount = float(withdrawal.get("amount") or 0)
+    method = withdrawal.get("method")
+    wallet = withdrawal.get("wallet")
+    status = withdrawal.get("status")
+    created_at = withdrawal.get("created_at")
 
     name = f"@{username}" if username else f"id:{user_id}"
     det = wallet or "—"
@@ -769,10 +795,10 @@ async def _render_withdraw_card(callback: CallbackQuery, wid: int, db):
 
 
 @router.callback_query(F.data.startswith("adm:wd:open:"))
-async def adm_withdraw_open(callback: CallbackQuery, db):
+async def adm_withdraw_open(callback: CallbackQuery):
     await callback.answer()
     wid = int(callback.data.split(":")[3])
-    await _render_withdraw_card(callback, wid, db)
+    await _render_withdraw_card(callback, wid)
 
 
 @router.callback_query(F.data.startswith("adm:wd:paid:"))
@@ -871,7 +897,7 @@ async def adm_withdraw_paid(callback: CallbackQuery, db):
         return
 
     await callback.answer("✅ Отмечено как выплачено", show_alert=True)
-    await _render_withdraw_card(callback, wid, db)
+    await _render_withdraw_card(callback, wid)
 
 
 async def refund_withdraw_fee_if_needed(bot: Bot, db, withdrawal_id: int) -> tuple[bool, str]:
@@ -1001,7 +1027,7 @@ async def adm_withdraw_reject(callback: CallbackQuery, db):
         await callback.answer(f"❌ Ошибка: {type(e).__name__}: {e}", show_alert=True)
         return
 
-    await _render_withdraw_card(callback, wid, db)
+    await _render_withdraw_card(callback, wid)
     await callback.answer("✅ Отклонено и возвращено на баланс", show_alert=True)
 
 

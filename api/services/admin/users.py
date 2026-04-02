@@ -11,6 +11,7 @@ from shared.db.users import (
     clear_user_suspicious,
     get_balance,
     get_user_by_id,
+    get_user_id_by_username,
     get_user_role_level,
     mark_user_suspicious,
     role_title_from_level,
@@ -39,17 +40,11 @@ async def lookup_profile(
     if value.isdigit():
         return await get_profile(db, int(value))
 
-    username = value.lstrip("@")
-    async with db.execute(
-            "SELECT user_id FROM users WHERE username = ? LIMIT 1",
-            (username,),
-    ) as cur:
-        row = await cur.fetchone()
-
-    if not row:
+    user_id = await get_user_id_by_username(db, value)
+    if user_id is None:
         raise HTTPException(status_code=404, detail="Пользователь не найден")
 
-    return await get_profile(db, int(row["user_id"]))
+    return await get_profile(db, user_id)
 
 
 async def update_role(

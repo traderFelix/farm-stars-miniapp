@@ -304,6 +304,20 @@ class UsersApi(ApiSection):
         )
 
 
+class ReviewWithdrawalsApi(ApiSection):
+    async def list(self, *, status: str = "pending", limit: int = 20) -> JsonDict:
+        return await self._get(
+            "/admin/withdrawals",
+            params={
+                "status": status,
+                "limit": int(limit),
+            },
+        )
+
+    async def get(self, withdrawal_id: int) -> JsonDict:
+        return await self._get(f"/admin/withdrawals/{int(withdrawal_id)}")
+
+
 class AdminCampaignsApi(ApiSection):
     """
     Reserved for admin campaign endpoints.
@@ -337,6 +351,7 @@ class BotApiClient:
         self.ledger = LedgerApi(self)
         self.withdrawals = WithdrawalsApi(self)
         self.users = UsersApi(self)
+        self.withdrawals_review = ReviewWithdrawalsApi(self)
         self.admin_campaigns = AdminCampaignsApi(self)
         self.admin_task_channels = AdminTaskChannelsApi(self)
 
@@ -446,6 +461,14 @@ async def mark_user_suspicious(user_id: int, reason: Optional[str] = None) -> Js
 
 async def clear_user_suspicious(user_id: int) -> JsonDict:
     return await api_client.users.clear_suspicious(user_id)
+
+
+async def list_withdrawals_queue(*, status: str = "pending", limit: int = 20) -> JsonDict:
+    return await api_client.withdrawals_review.list(status=status, limit=limit)
+
+
+async def get_withdrawal_details(withdrawal_id: int) -> JsonDict:
+    return await api_client.withdrawals_review.get(withdrawal_id)
 
 
 async def get_active_campaigns_via_api() -> JsonDict:
@@ -581,6 +604,8 @@ __all__ = [
     "adjust_user_balance",
     "mark_user_suspicious",
     "clear_user_suspicious",
+    "list_withdrawals_queue",
+    "get_withdrawal_details",
     "get_active_campaigns_via_api",
     "claim_campaign_reward_via_api",
     "bootstrap_bot_user_via_api",
