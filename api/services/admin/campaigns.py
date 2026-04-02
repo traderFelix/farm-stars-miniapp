@@ -132,6 +132,8 @@ async def delete_campaign_entry(
         db: aiosqlite.Connection,
         campaign_key: str,
 ) -> dict[str, Any]:
+    await _get_campaign_or_404(db, campaign_key)
+
     async with tx(db):
         await delete_campaign(db, campaign_key)
 
@@ -185,6 +187,8 @@ async def get_campaign_stats_detail(
         db: aiosqlite.Connection,
         campaign_key: str,
 ) -> dict[str, Any]:
+    await _get_campaign_or_404(db, campaign_key)
+
     claims_count, winners_count, total_paid = await campaign_stats(db, campaign_key)
     claimed = await claimed_usernames(db, campaign_key)
 
@@ -201,6 +205,8 @@ async def get_campaign_winners_detail(
         db: aiosqlite.Connection,
         campaign_key: str,
 ) -> dict[str, Any]:
+    await _get_campaign_or_404(db, campaign_key)
+
     winners = await list_winners(db, campaign_key)
     claimed = await claimed_usernames(db, campaign_key)
 
@@ -217,6 +223,8 @@ async def delete_campaign_winner(
         *,
         username: str,
 ) -> dict[str, Any]:
+    await _get_campaign_or_404(db, campaign_key)
+
     async with tx(db):
         ok, message = await delete_winner_if_not_claimed(db, campaign_key, username)
 
