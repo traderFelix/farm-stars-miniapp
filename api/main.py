@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from shared.config import WEB_ORIGIN_DEV, WEB_ORIGIN_NGROK
 
+from api.routes.admin.analytics import router as analytics_admin_router
 from api.routes.admin.campaigns import router as campaigns_admin_router
 from api.routes.admin.users import router as users_router
 from api.routes.admin.task_channels import router as task_channels_router
@@ -40,6 +41,7 @@ app.include_router(profile_router)
 app.include_router(tasks_router)
 app.include_router(miniapp_compat_router)
 app.include_router(users_router)
+app.include_router(analytics_admin_router)
 app.include_router(campaigns_admin_router)
 app.include_router(task_channels_router)
 app.include_router(withdrawals_admin_router)

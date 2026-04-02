@@ -10,11 +10,15 @@ from api.schemas.admin.users import (
     RoleUpdateRequest,
     RoleUpdateResponse,
     SuspiciousRequest,
+    UserLedgerResponse,
+    UserStatsResponse,
 )
 from api.services.admin.users import (
     adjust_balance,
     clear_suspicious,
     get_profile,
+    get_stats,
+    get_user_ledger,
     lookup_profile,
     mark_suspicious,
     update_role,
@@ -41,6 +45,24 @@ async def get_user_profile(user_id: int):
     db = await get_db()
     try:
         return await get_profile(db, user_id)
+    finally:
+        await db.close()
+
+
+@router.get("/{user_id}/stats", response_model=UserStatsResponse)
+async def get_user_stats(user_id: int):
+    db = await get_db()
+    try:
+        return await get_stats(db, user_id)
+    finally:
+        await db.close()
+
+
+@router.get("/{user_id}/ledger", response_model=UserLedgerResponse)
+async def get_user_ledger_route(user_id: int, page: int = 0, page_size: int = 20):
+    db = await get_db()
+    try:
+        return await get_user_ledger(db, user_id, page=page, page_size=page_size)
     finally:
         await db.close()
 

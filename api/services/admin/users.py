@@ -5,8 +5,10 @@ from fastapi import HTTPException
 
 from shared.config import ROLE_OWNER
 from shared.db.common import tx
+from shared.db.ledger import list_user_ledger_page
 from shared.db.ledger import apply_balance_delta
 from shared.db.users import (
+    build_user_stats_text,
     build_user_profile,
     clear_user_suspicious,
     get_balance,
@@ -119,6 +121,53 @@ async def mark_suspicious(
         (reason or "").strip() or "Помечен администратором",
     )
     return await get_profile(db, int(user_id))
+
+
+async def get_stats(
+        db: aiosqlite.Connection,
+        user_id: int,
+) -> dict[str, Any]:
+    return {
+        "text": await build_user_stats_text(db, int(user_id)),
+    }
+
+
+async def get_user_ledger(
+        db: aiosqlite.Connection,
+        user_id: int,
+        *,
+        page: int,
+        page_size: int,
+) -> dict[str, Any]:
+    safe_page = max(int(page), 0)
+    safe_page_size = max(int(page_size), 1)
+    offset = safe_page * safe_page_size
+
+    history = await list_user_ledger_page(
+        db,
+        int(user_id),
+        limit=safe_page_size + 1,
+        offset=offset,
+    )
+
+    has_next = len(history) > safe_page_size
+    history = history[:safe_page_size]
+
+    return {
+        "user_id": int(user_id),
+        "page": safe_page,
+        "page_size": safe_page_size,
+        "has_next": has_next,
+        "items": [
+            {
+                "created_at": row["created_at"],
+                "delta": float(row["delta"] or 0),
+                "reason": row["reason"],
+                "campaign_key": row["campaign_key"],
+            }
+            for row in history
+        ],
+    }
 
 
 async def clear_suspicious(

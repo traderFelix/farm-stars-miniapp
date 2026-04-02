@@ -96,6 +96,45 @@ async def ledger_last(db: aiosqlite.Connection, user_id: int, limit: int = 20):
         return await cur.fetchall()
 
 
+async def list_global_ledger_page(
+        db: aiosqlite.Connection,
+        *,
+        limit: int,
+        offset: int,
+):
+    async with db.execute(
+            """
+        SELECT l.created_at, u.username, l.delta, l.reason, l.campaign_key
+        FROM ledger l
+        LEFT JOIN users u ON u.user_id = l.user_id
+        ORDER BY l.created_at DESC, l.id DESC
+        LIMIT ? OFFSET ?
+        """,
+            (int(limit), int(offset)),
+    ) as cur:
+        return await cur.fetchall()
+
+
+async def list_user_ledger_page(
+        db: aiosqlite.Connection,
+        user_id: int,
+        *,
+        limit: int,
+        offset: int,
+):
+    async with db.execute(
+            """
+        SELECT created_at, delta, reason, campaign_key
+        FROM ledger
+        WHERE user_id = ?
+        ORDER BY created_at DESC, id DESC
+        LIMIT ? OFFSET ?
+        """,
+            (int(user_id), int(limit), int(offset)),
+    ) as cur:
+        return await cur.fetchall()
+
+
 async def ledger_sum(db: aiosqlite.Connection, user_id: int) -> float:
     async with db.execute(
             "SELECT COALESCE(SUM(delta), 0) AS s FROM ledger WHERE user_id = ?",

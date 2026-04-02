@@ -12,14 +12,20 @@ from bot.api_client import (
     create_task_channel_via_api,
     delete_campaign_via_api,
     delete_campaign_winner_via_api,
+    get_admin_ledger_page_via_api,
+    get_audit_via_api,
     get_campaign_stats_via_api,
     get_campaign_via_api,
     get_campaign_winners_via_api,
     get_campaigns_summary_via_api,
+    get_growth_via_api,
+    get_top_balances_via_api,
     get_withdrawal_details,
     get_task_channel_posts_via_api,
     get_task_channel_via_api,
+    get_user_ledger_page,
     get_user_profile,
+    get_user_stats,
     list_campaigns_via_api,
     list_withdrawals_queue,
     list_recent_fee_payments_via_api,
@@ -54,15 +60,7 @@ from shared.config import LEDGER_PAGE_SIZE, ROLE_ADMIN
 
 from bot.handlers.user import safe_edit_text
 
-from bot.db import tx
-
-from shared.db.campaigns import global_claims_stats
-from shared.db.users import (
-    fmt_stars, build_user_stats_text, user_has_role, users_total_count, users_new_since_hours,
-    users_new_since_days, users_active_since_days, users_growth_by_day, total_balances, top_users_by_balance
-)
-from shared.db.ledger import ledger_sum_by_reason, get_balance_adjusts_by_admin, balances_audit
-from shared.db.withdrawals import total_withdrawn_amount, pending_withdrawn_amount
+from shared.db.users import fmt_stars, user_has_role
 
 from bot.keyboards import (
     admin_menu_kb, admin_back_kb, campaigns_list_kb, campaign_manage_kb, stats_list_kb, admin_fee_refund_kb,
@@ -630,45 +628,64 @@ async def winner_del_finish(message: Message, state: FSMContext):
 
 
 @router.callback_query(F.data == "adm:top")
-async def adm_top_balances(callback: CallbackQuery, db):
+async def adm_top_balances(callback: CallbackQuery):
     await callback.answer()
 
-    rows = await top_users_by_balance(db, 10)
+    try:
+        result = await get_top_balances_via_api(limit=10)
+    except ApiClientError as e:
+        await safe_edit_text(
+            callback.message,
+            f"❌ Не удалось загрузить топ из API.\n\n{e.detail}",
+            reply_markup=admin_back_kb(),
+        )
+        return
+
+    rows = result.get("items") or []
 
     if not rows:
         text = "🏆 Топ-10 по балансу:\n\nПока нет пользователей с балансом ⭐️"
     else:
         lines = []
-        for i, r in enumerate(rows, start=1):
-            username, balance = r[0], r[1]
+        for i, row in enumerate(rows, start=1):
+            username = row.get("username")
+            balance = float(row.get("balance") or 0)
             name = f"@{username}" if username else "(без username)"
-            lines.append(f"{i}. {name} — {float(balance):.2f}⭐️")
+            lines.append(f"{i}. {name} — {balance:.2f}⭐️")
         text = "🏆 Топ-10 по балансу:\n\n" + "\n".join(lines)
 
     await safe_edit_text(callback.message, text, reply_markup=admin_back_kb())
 
 
 @router.callback_query(F.data == "adm:growth_png")
-async def adm_growth_png(callback: CallbackQuery, db):
+async def adm_growth_png(callback: CallbackQuery):
     await callback.answer()
 
     days = 30
-    total = await users_total_count(db)
-    new_1d = await users_new_since_hours(db, 24)
-    new_7d = await users_new_since_days(db, 7)
-    new_30d = await users_new_since_days(db, 30)
+    try:
+        growth = await get_growth_via_api(days=days)
+    except ApiClientError as e:
+        await safe_edit_text(
+            callback.message,
+            f"❌ Не удалось загрузить рост пользователей из API.\n\n{e.detail}",
+            reply_markup=admin_back_kb(),
+        )
+        return
 
-    active_1d = await users_active_since_days(db, 1)
-    active_7d = await users_active_since_days(db, 7)
-    active_30d = await users_active_since_days(db, 30)
-
-    points = await users_growth_by_day(db, days)
+    total = int(growth.get("total_users") or 0)
+    new_1d = int(growth.get("new_1d") or 0)
+    new_7d = int(growth.get("new_7d") or 0)
+    new_30d = int(growth.get("new_30d") or 0)
+    active_1d = int(growth.get("active_1d") or 0)
+    active_7d = int(growth.get("active_7d") or 0)
+    active_30d = int(growth.get("active_30d") or 0)
+    points = growth.get("points") or []
 
     fig = plt.figure()
     ax = fig.add_subplot(111)
 
     if points:
-        data = {d: int(cnt) for d, cnt in points}
+        data = {str(point["date"]): int(point["count"] or 0) for point in points}
 
         xs = [(date.today() - timedelta(days=days - 1 - i)).isoformat() for i in range(days)]
         ys = [data.get(d, 0) for d in xs]
@@ -718,7 +735,7 @@ async def adm_growth_png(callback: CallbackQuery, db):
 
 
 @router.callback_query(F.data.startswith("adm:ledger_last"))
-async def adm_ledger_last(callback: CallbackQuery, db):
+async def adm_ledger_last(callback: CallbackQuery):
     await callback.answer()
 
     parts = (callback.data or "").split(":")
@@ -729,19 +746,20 @@ async def adm_ledger_last(callback: CallbackQuery, db):
         except ValueError:
             page = 0
 
-    offset = page * LEDGER_PAGE_SIZE
+    try:
+        result = await get_admin_ledger_page_via_api(
+            page=page,
+            page_size=LEDGER_PAGE_SIZE,
+        )
+    except ApiClientError as e:
+        await safe_edit_text(
+            callback.message,
+            f"❌ Не удалось загрузить леджер из API.\n\n{e.detail}",
+            reply_markup=admin_back_kb(),
+        )
+        return
 
-    async with db.execute(
-            """
-        SELECT l.created_at, u.username, l.delta, l.reason, l.campaign_key
-        FROM ledger l
-        LEFT JOIN users u ON u.user_id = l.user_id
-        ORDER BY l.created_at DESC, l.id DESC
-        LIMIT ? OFFSET ?
-        """,
-            (LEDGER_PAGE_SIZE + 1, offset),
-    ) as cur:
-        rows = await cur.fetchall()
+    rows = result.get("items") or []
 
     if not rows and page == 0:
         await safe_edit_text(
@@ -754,18 +772,21 @@ async def adm_ledger_last(callback: CallbackQuery, db):
     if not rows and page > 0:
         return
 
-    has_next = len(rows) > LEDGER_PAGE_SIZE
-    rows = rows[:LEDGER_PAGE_SIZE]
+    has_next = bool(result.get("has_next") or False)
 
     lines = []
-    start_n = offset + 1
+    start_n = page * LEDGER_PAGE_SIZE + 1
 
-    for i, r in enumerate(rows, start=start_n):
-        created_at, username, delta, reason, campaign_key = r
+    for i, row in enumerate(rows, start=start_n):
+        created_at = row["created_at"]
+        username = row.get("username")
+        delta = float(row.get("delta") or 0)
+        reason = row["reason"]
+        campaign_key = row.get("campaign_key")
         name = f"@{username}" if username else "(no-username)"
         ck = f" [{campaign_key}]" if campaign_key else ""
         lines.append(
-            f"{i}. {created_at} — {name}: {float(delta):g}⭐ — {reason}{ck}"
+            f"{i}. {created_at} — {name}: {delta:g}⭐ — {reason}{ck}"
         )
 
     await safe_edit_text(
@@ -1096,19 +1117,29 @@ async def adm_withdraw_reject(callback: CallbackQuery):
 
 
 @router.callback_query(F.data == "adm:audit")
-async def adm_audit_balances(callback: CallbackQuery, db):
+async def adm_audit_balances(callback: CallbackQuery):
     await callback.answer()
 
-    mismatches = await balances_audit(db)
-    total_balances_sum = await total_balances(db)
-    claims_count_all, total_claimed_all = await global_claims_stats(db)
-    admin_added, admin_removed = await get_balance_adjusts_by_admin(db)
-    total_withdrawn_sum = await total_withdrawn_amount(db)
-    pending_withdrawn_sum = await pending_withdrawn_amount(db)
-    claimed_from_ledger = await ledger_sum_by_reason(db, "contest_bonus")
-    referral_bonus = await ledger_sum_by_reason(db, "referral_bonus")
-    view_post_bonus = await ledger_sum_by_reason(db, "view_post_bonus")
-    daily_bonus = await ledger_sum_by_reason(db, "daily_bonus")
+    try:
+        audit = await get_audit_via_api(limit=10)
+    except ApiClientError as e:
+        await safe_edit_text(
+            callback.message,
+            f"❌ Не удалось загрузить сверку из API.\n\n{e.detail}",
+            reply_markup=admin_back_kb(),
+        )
+        return
+
+    mismatches = audit.get("mismatches") or []
+    total_balances_sum = float(audit.get("total_balances") or 0)
+    total_claimed_all = float(audit.get("campaign_claimed_total") or 0)
+    admin_adjust_net = float(audit.get("admin_adjust_net") or 0)
+    total_withdrawn_sum = float(audit.get("total_withdrawn") or 0)
+    pending_withdrawn_sum = float(audit.get("pending_withdrawn") or 0)
+    claimed_from_ledger = float(audit.get("campaign_claimed_from_ledger") or 0)
+    referral_bonus = float(audit.get("referral_bonus") or 0)
+    view_post_bonus = float(audit.get("view_post_bonus") or 0)
+    daily_bonus = float(audit.get("daily_bonus") or 0)
 
     lines = [
         "🧮 Сверка балансов\n",
@@ -1118,7 +1149,7 @@ async def adm_audit_balances(callback: CallbackQuery, db):
         f"Получено за рефералов: {fmt_stars(referral_bonus)}⭐\n"
         f"Получено за просмотры постов: {fmt_stars(view_post_bonus)}⭐\n"
         f"Получено за ежедневный бонус: {fmt_stars(daily_bonus)}⭐\n"
-        f"Получено от админа: {fmt_stars(admin_added - admin_removed)}⭐\n",
+        f"Получено от админа: {fmt_stars(admin_adjust_net)}⭐\n",
         f"Выведено: {fmt_stars(total_withdrawn_sum)}⭐",
         f"В обработке: {fmt_stars(pending_withdrawn_sum)}⭐\n",
     ]
@@ -1130,11 +1161,11 @@ async def adm_audit_balances(callback: CallbackQuery, db):
         lines.append("")
         lines.append("Первые 10:")
         for row in mismatches[:10]:
-            user_id = row["user_id"]
-            username = row["username"]
-            balance = row["users_balance"]
-            ledger_sum = row["ledger_sum"]
-            diff = row["diff"]
+            user_id = int(row["user_id"])
+            username = row.get("username")
+            balance = float(row.get("users_balance") or 0)
+            ledger_sum = float(row.get("ledger_sum") or 0)
+            diff = float(row.get("diff") or 0)
 
             uname = f"@{username}" if username else "без username"
 
@@ -1224,7 +1255,7 @@ async def adm_user_clear_susp(callback: CallbackQuery):
     await callback.answer(alert_text)
 
 @router.callback_query(F.data.startswith("adm:user:ledger:"))
-async def adm_user_ledger(callback: CallbackQuery, db):
+async def adm_user_ledger(callback: CallbackQuery):
     parts = (callback.data or "").split(":")
 
     try:
@@ -1240,34 +1271,34 @@ async def adm_user_ledger(callback: CallbackQuery, db):
         except ValueError:
             page = 0
 
-    offset = page * LEDGER_PAGE_SIZE
+    try:
+        result = await get_user_ledger_page(
+            user_id,
+            page=page,
+            page_size=LEDGER_PAGE_SIZE,
+        )
+    except ApiClientError as e:
+        await callback.answer(f"❌ {e.detail}", show_alert=True)
+        return
 
-    async with db.execute(
-            """
-        SELECT created_at, delta, reason, campaign_key
-        FROM ledger
-        WHERE user_id = ?
-        ORDER BY created_at DESC, id DESC
-        LIMIT ? OFFSET ?
-        """,
-            (user_id, LEDGER_PAGE_SIZE + 1, offset),
-    ) as cur:
-        history = await cur.fetchall()
+    history = result.get("items") or []
 
     if not history and page > 0:
         await callback.answer("Дальше записей нет")
         return
 
-    has_next = len(history) > LEDGER_PAGE_SIZE
-    history = history[:LEDGER_PAGE_SIZE]
+    has_next = bool(result.get("has_next") or False)
 
     lines = []
-    start_n = offset + 1
+    start_n = page * LEDGER_PAGE_SIZE + 1
 
-    for i, r in enumerate(history, start=start_n):
-        created_at, delta, reason, campaign_key = r
+    for i, row in enumerate(history, start=start_n):
+        created_at = row["created_at"]
+        delta = float(row.get("delta") or 0)
+        reason = row["reason"]
+        campaign_key = row.get("campaign_key")
         ck = f" ({campaign_key})" if campaign_key else ""
-        lines.append(f"{i}. {created_at}: {float(delta):g}⭐ {reason}{ck}")
+        lines.append(f"{i}. {created_at}: {delta:g}⭐ {reason}{ck}")
 
     if not lines:
         lines = ["нет операций"]
@@ -1285,14 +1316,18 @@ async def adm_user_ledger(callback: CallbackQuery, db):
     await callback.answer()
 
 @router.callback_query(F.data.startswith("adm:user:stats:"))
-async def adm_user_stats(callback: CallbackQuery, db):
+async def adm_user_stats(callback: CallbackQuery):
     try:
         user_id = int(callback.data.split(":")[-1])
     except (ValueError, IndexError):
         await callback.answer("Некорректный user_id", show_alert=True)
         return
 
-    text = await build_user_stats_text(db, user_id)
+    try:
+        result = await get_user_stats(user_id)
+        text = result.get("text") or "Нет данных"
+    except ApiClientError as e:
+        text = f"❌ Не удалось загрузить статистику из API.\n\n{e.detail}"
 
     try:
         await safe_edit_text(

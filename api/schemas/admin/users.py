@@ -45,3 +45,22 @@ class BalanceAdjustResponse(BaseModel):
 
 class SuspiciousRequest(BaseModel):
     reason: Optional[str] = None
+
+
+class UserStatsResponse(BaseModel):
+    text: str
+
+
+class UserLedgerEntry(BaseModel):
+    created_at: str
+    delta: float
+    reason: str
+    campaign_key: Optional[str] = None
+
+
+class UserLedgerResponse(BaseModel):
+    user_id: int
+    page: int
+    page_size: int
+    has_next: bool
+    items: list[UserLedgerEntry]

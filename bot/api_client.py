@@ -270,6 +270,24 @@ class UsersApi(ApiSection):
     async def get_profile(self, user_id: int) -> JsonDict:
         return await self._get(f"/admin/users/{int(user_id)}")
 
+    async def get_stats(self, user_id: int) -> JsonDict:
+        return await self._get(f"/admin/users/{int(user_id)}/stats")
+
+    async def get_ledger(
+            self,
+            user_id: int,
+            *,
+            page: int = 0,
+            page_size: int = 20,
+    ) -> JsonDict:
+        return await self._get(
+            f"/admin/users/{int(user_id)}/ledger",
+            params={
+                "page": int(page),
+                "page_size": int(page_size),
+            },
+        )
+
     async def set_role(self, user_id: int, role_level: int) -> JsonDict:
         return await self._post(
             f"/admin/users/{int(user_id)}/role",
@@ -472,6 +490,40 @@ class TaskChannelsApi(ApiSection):
         )
 
 
+class AnalyticsApi(ApiSection):
+    async def get_top_balances(self, *, limit: int = 10) -> JsonDict:
+        return await self._get(
+            "/admin/analytics/top-balances",
+            params={"limit": int(limit)},
+        )
+
+    async def get_growth(self, *, days: int = 30) -> JsonDict:
+        return await self._get(
+            "/admin/analytics/growth",
+            params={"days": int(days)},
+        )
+
+    async def get_ledger_page(
+            self,
+            *,
+            page: int = 0,
+            page_size: int = 20,
+    ) -> JsonDict:
+        return await self._get(
+            "/admin/analytics/ledger",
+            params={
+                "page": int(page),
+                "page_size": int(page_size),
+            },
+        )
+
+    async def get_audit(self, *, limit: int = 10) -> JsonDict:
+        return await self._get(
+            "/admin/analytics/audit",
+            params={"limit": int(limit)},
+        )
+
+
 class BotApiClient:
     def __init__(
             self,
@@ -494,6 +546,7 @@ class BotApiClient:
         self.withdrawals_review = ReviewWithdrawalsApi(self)
         self.admin_campaigns = CampaignsAdminApi(self)
         self.task_channels = TaskChannelsApi(self)
+        self.analytics = AnalyticsApi(self)
 
     def _build_headers(self) -> dict[str, str]:
         if not self.internal_token:
@@ -574,6 +627,23 @@ async def get_user_profile(user_id: int) -> JsonDict:
     return await api_client.users.get_profile(user_id)
 
 
+async def get_user_stats(user_id: int) -> JsonDict:
+    return await api_client.users.get_stats(user_id)
+
+
+async def get_user_ledger_page(
+        user_id: int,
+        *,
+        page: int = 0,
+        page_size: int = 20,
+) -> JsonDict:
+    return await api_client.users.get_ledger(
+        user_id,
+        page=page,
+        page_size=page_size,
+    )
+
+
 async def lookup_user(query: str) -> JsonDict:
     return await api_client.users.lookup(query)
 
@@ -650,6 +720,26 @@ async def get_campaign_winners_via_api(campaign_key: str) -> JsonDict:
 
 async def delete_campaign_winner_via_api(campaign_key: str, *, username: str) -> JsonDict:
     return await api_client.admin_campaigns.delete_winner(campaign_key, username=username)
+
+
+async def get_top_balances_via_api(*, limit: int = 10) -> JsonDict:
+    return await api_client.analytics.get_top_balances(limit=limit)
+
+
+async def get_growth_via_api(*, days: int = 30) -> JsonDict:
+    return await api_client.analytics.get_growth(days=days)
+
+
+async def get_admin_ledger_page_via_api(
+        *,
+        page: int = 0,
+        page_size: int = 20,
+) -> JsonDict:
+    return await api_client.analytics.get_ledger_page(page=page, page_size=page_size)
+
+
+async def get_audit_via_api(*, limit: int = 10) -> JsonDict:
+    return await api_client.analytics.get_audit(limit=limit)
 
 
 async def list_withdrawals_queue(*, status: str = "pending", limit: int = 20) -> JsonDict:
@@ -870,6 +960,8 @@ __all__ = [
     "BotApiClient",
     "api_client",
     "get_user_profile",
+    "get_user_stats",
+    "get_user_ledger_page",
     "lookup_user",
     "set_user_role",
     "adjust_user_balance",
@@ -885,6 +977,10 @@ __all__ = [
     "get_campaign_stats_via_api",
     "get_campaign_winners_via_api",
     "delete_campaign_winner_via_api",
+    "get_top_balances_via_api",
+    "get_growth_via_api",
+    "get_admin_ledger_page_via_api",
+    "get_audit_via_api",
     "list_withdrawals_queue",
     "get_withdrawal_details",
     "mark_withdrawal_paid",
