@@ -260,9 +260,48 @@ class WithdrawalsApi(ApiSection):
         )
 
 
-class AdminUsersApi(ApiSection):
+class UsersApi(ApiSection):
+    async def lookup(self, query: str) -> JsonDict:
+        return await self._post(
+            "/admin/users/lookup",
+            json={"query": query},
+        )
+
     async def get_profile(self, user_id: int) -> JsonDict:
         return await self._get(f"/admin/users/{int(user_id)}")
+
+    async def set_role(self, user_id: int, role_level: int) -> JsonDict:
+        return await self._post(
+            f"/admin/users/{int(user_id)}/role",
+            json={"role_level": int(role_level)},
+        )
+
+    async def adjust_balance(
+            self,
+            user_id: int,
+            *,
+            amount: float,
+            mode: str,
+    ) -> JsonDict:
+        return await self._post(
+            f"/admin/users/{int(user_id)}/balance-adjust",
+            json={
+                "amount": float(amount),
+                "mode": mode,
+            },
+        )
+
+    async def mark_suspicious(self, user_id: int, reason: Optional[str] = None) -> JsonDict:
+        return await self._post(
+            f"/admin/users/{int(user_id)}/mark-suspicious",
+            json={"reason": reason},
+        )
+
+    async def clear_suspicious(self, user_id: int) -> JsonDict:
+        return await self._post(
+            f"/admin/users/{int(user_id)}/clear-suspicious",
+            json={},
+        )
 
 
 class AdminCampaignsApi(ApiSection):
@@ -297,7 +336,7 @@ class BotApiClient:
         self.checkin = CheckinApi(self)
         self.ledger = LedgerApi(self)
         self.withdrawals = WithdrawalsApi(self)
-        self.admin_users = AdminUsersApi(self)
+        self.users = UsersApi(self)
         self.admin_campaigns = AdminCampaignsApi(self)
         self.admin_task_channels = AdminTaskChannelsApi(self)
 
@@ -376,8 +415,37 @@ api_client = BotApiClient(
 )
 
 
-async def get_admin_user_profile(user_id: int) -> JsonDict:
-    return await api_client.admin_users.get_profile(user_id)
+async def get_user_profile(user_id: int) -> JsonDict:
+    return await api_client.users.get_profile(user_id)
+
+
+async def lookup_user(query: str) -> JsonDict:
+    return await api_client.users.lookup(query)
+
+
+async def set_user_role(user_id: int, role_level: int) -> JsonDict:
+    return await api_client.users.set_role(user_id, role_level)
+
+
+async def adjust_user_balance(
+        user_id: int,
+        *,
+        amount: float,
+        mode: str,
+) -> JsonDict:
+    return await api_client.users.adjust_balance(
+        user_id,
+        amount=amount,
+        mode=mode,
+    )
+
+
+async def mark_user_suspicious(user_id: int, reason: Optional[str] = None) -> JsonDict:
+    return await api_client.users.mark_suspicious(user_id, reason=reason)
+
+
+async def clear_user_suspicious(user_id: int) -> JsonDict:
+    return await api_client.users.clear_suspicious(user_id)
 
 
 async def get_active_campaigns_via_api() -> JsonDict:
@@ -507,7 +575,12 @@ __all__ = [
     "ApiClientError",
     "BotApiClient",
     "api_client",
-    "get_admin_user_profile",
+    "get_user_profile",
+    "lookup_user",
+    "set_user_role",
+    "adjust_user_balance",
+    "mark_user_suspicious",
+    "clear_user_suspicious",
     "get_active_campaigns_via_api",
     "claim_campaign_reward_via_api",
     "bootstrap_bot_user_via_api",

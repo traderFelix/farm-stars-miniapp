@@ -123,7 +123,7 @@ def admin_withdraw_actions_kb(withdrawal_id: int):
 
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-def admin_user_kb(user_id: int) -> InlineKeyboardMarkup:
+def user_actions_kb(user_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="📊 Статистика ⭐", callback_data=f"adm:user:stats:{user_id}",)],
@@ -220,7 +220,7 @@ def campaign_created_kb(key: str) -> InlineKeyboardMarkup:
         ]
     )
 
-def admin_user_details_kb(user_id: int) -> InlineKeyboardMarkup:
+def user_details_kb(user_id: int) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.button(text="👤 Детали пользователя", callback_data=f"adm:user:details:{user_id}")
     builder.button(text="⬅️ Назад", callback_data="adm:users")

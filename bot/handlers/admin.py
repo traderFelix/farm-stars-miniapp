@@ -3,8 +3,16 @@ from datetime import date, timedelta
 
 import matplotlib
 
-from bot.api_client import get_admin_user_profile, ApiClientError
-from bot.profile_texts import format_admin_user_profile_card
+from bot.api_client import (
+    ApiClientError,
+    adjust_user_balance,
+    clear_user_suspicious,
+    get_user_profile,
+    lookup_user,
+    mark_user_suspicious,
+    set_user_role,
+)
+from bot.profile_texts import format_user_profile_card
 
 matplotlib.use("Agg")  # важно для серверов без GUI
 
@@ -19,7 +27,7 @@ from aiogram.filters import Filter
 from aiogram.methods import RefundStarPayment
 from aiogram.exceptions import TelegramBadRequest
 
-from shared.config import LEDGER_PAGE_SIZE, ROLE_ADMIN, ROLE_OWNER
+from shared.config import LEDGER_PAGE_SIZE, ROLE_ADMIN
 
 from bot.handlers.user import safe_edit_text
 
@@ -35,13 +43,12 @@ from bot.db import (
     unclaimed_total_amount, total_assigned_amount,
 
     # ledger
-    apply_balance_delta, get_balance,
+    apply_balance_delta,
 )
 
 from shared.db.users import (
-    fmt_stars, build_user_stats_text, user_has_role, get_user_role_name, get_user_role_level, set_user_role_level,
-    role_title_from_level, users_total_count, users_new_since_hours, users_new_since_days, users_active_since_days,
-    users_growth_by_day, total_balances, mark_user_suspicious, clear_user_suspicious, top_users_by_balance
+    fmt_stars, build_user_stats_text, user_has_role, users_total_count, users_new_since_hours,
+    users_new_since_days, users_active_since_days, users_growth_by_day, total_balances, top_users_by_balance
 )
 from shared.db.ledger import (
     add_referral_bonus_for_paid_withdrawal, ledger_add, ledger_sum_by_reason, get_balance_adjusts_by_admin,
@@ -59,7 +66,7 @@ from shared.db.xtr_ledger import xtr_ledger_add
 
 from bot.keyboards import (
     admin_menu_kb, admin_back_kb, campaigns_list_kb, campaign_manage_kb, stats_list_kb, admin_fee_refund_kb,
-    campaign_created_kb, admin_user_kb, admin_withdraw_list_kb, admin_withdraw_actions_kb, campaign_delete_confirm_kb,
+    campaign_created_kb, user_actions_kb, admin_withdraw_list_kb, admin_withdraw_actions_kb, campaign_delete_confirm_kb,
     admin_task_channels_kb, admin_task_channel_card_kb, admin_growth_photo_kb,
 )
 
@@ -139,6 +146,11 @@ def _user_ledger_nav_kb(user_id: int, page: int, has_next: bool) -> InlineKeyboa
         )
     ])
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+
+async def _get_user_card_text(user_id: int) -> str:
+    profile = await get_user_profile(user_id)
+    return format_user_profile_card(profile)
 
 
 async def _render_campaign_card(callback: CallbackQuery, key: str, db):
@@ -613,35 +625,25 @@ async def adm_user_balance(callback: CallbackQuery, state: FSMContext):
 
 
 @router.message(UserLookup.user)
-async def adm_user_balance_show(message: Message, state: FSMContext, db):
+async def adm_user_balance_show(message: Message, state: FSMContext):
     value = (message.text or "").strip()
 
-    if value.isdigit():
-        user_id = int(value)
-    else:
-        username = value.lstrip("@")
-        async with db.execute(
-                "SELECT user_id FROM users WHERE username = ? LIMIT 1",
-                (username,),
-        ) as cur:
-            row = await cur.fetchone()
-
-        if not row:
+    try:
+        profile = await lookup_user(value)
+        user_id = int(profile["user_id"])
+        text = format_user_profile_card(profile)
+    except ApiClientError as e:
+        if e.status_code == 404:
             await message.answer("❌ Пользователь не найден")
             return
 
-        user_id = int(row[0])
-
-    try:
-        profile = await get_admin_user_profile(user_id)
-        text = format_admin_user_profile_card(profile)
-    except ApiClientError as e:
-        text = f"❌ Не удалось загрузить профиль из API.\n\n{e}"
+        await message.answer(f"❌ Не удалось загрузить профиль из API.\n\n{e.detail}")
+        return
 
 
     await message.answer(
         text,
-        reply_markup=admin_user_kb(user_id),
+        reply_markup=user_actions_kb(user_id),
     )
     await state.clear()
 
@@ -669,7 +671,7 @@ async def adm_user_sub_start(callback: CallbackQuery, state: FSMContext):
 
 
 @router.message(AdminAdjust.amount)
-async def adm_user_adjust_finish(message: Message, state: FSMContext, db):
+async def adm_user_adjust_finish(message: Message, state: FSMContext):
     data = await state.get_data()
     user_id = int(data["adj_user_id"])
     mode = data["adj_mode"]
@@ -685,27 +687,37 @@ async def adm_user_adjust_finish(message: Message, state: FSMContext, db):
     delta = amount if mode == "add" else -amount
 
     try:
-        async with tx(db):
-            await apply_balance_delta(
-                db,
-                user_id=user_id,
-                delta=delta,
-                reason="admin_adjust",
-                meta=f"mode={mode}",
-            )
-    except Exception:
+        result = await adjust_user_balance(
+            user_id,
+            amount=amount,
+            mode=mode,
+        )
+    except ApiClientError as e:
+        if e.status_code == 404:
+            await message.answer("❌ Пользователь не найден")
+            return
+        if e.status_code == 400:
+            await message.answer(f"❌ {e.detail}")
+            return
+
         await message.answer("❌ Ошибка операции, попробуй еще раз")
-        logger.exception(Exception)
+        logger.exception(
+            "Failed to adjust user balance via API user_id=%s mode=%s amount=%s detail=%s",
+            user_id,
+            mode,
+            amount,
+            e.detail,
+        )
         return
 
-    balance = await get_balance(db, user_id)
+    balance = float(result.get("balance") or 0)
     await state.clear()
 
     await message.answer(
         f"✅ Готово\n"
         f"Изменение: {delta:+.2f}⭐\n"
         f"Новый баланс: {fmt_stars(balance)}⭐",
-        reply_markup=admin_user_kb(user_id)
+        reply_markup=user_actions_kb(user_id)
     )
 
 
@@ -1050,7 +1062,7 @@ async def adm_audit_balances(callback: CallbackQuery, db):
     )
 
 @router.callback_query(F.data.startswith("adm:user:details:"))
-async def adm_user_details(callback: CallbackQuery, db):
+async def adm_user_details(callback: CallbackQuery):
     try:
         user_id = int(callback.data.split(":")[-1])
     except (ValueError, IndexError):
@@ -1058,16 +1070,15 @@ async def adm_user_details(callback: CallbackQuery, db):
         return
 
     try:
-        profile = await get_admin_user_profile(user_id)
-        text = format_admin_user_profile_card(profile)
+        text = await _get_user_card_text(user_id)
     except ApiClientError as e:
-        text = f"❌ Не удалось загрузить профиль из API.\n\n{e}"
+        text = f"❌ Не удалось загрузить профиль из API.\n\n{e.detail}"
 
     try:
         await safe_edit_text(
             callback.message,
             text,
-            reply_markup=admin_user_kb(user_id),
+            reply_markup=user_actions_kb(user_id),
         )
     except TelegramBadRequest as e:
         if "message is not modified" not in str(e):
@@ -1076,51 +1087,51 @@ async def adm_user_details(callback: CallbackQuery, db):
     await callback.answer()
 
 @router.callback_query(F.data.startswith("adm:user:mark_susp:"))
-async def adm_user_mark_susp(callback: CallbackQuery, db):
+async def adm_user_mark_susp(callback: CallbackQuery):
     try:
         user_id = int(callback.data.split(":")[-1])
     except (ValueError, IndexError):
         await callback.answer("Некорректный user_id", show_alert=True)
         return
 
-    await mark_user_suspicious(db, user_id, "Помечен администратором")
-
     try:
-        profile = await get_admin_user_profile(user_id)
-        text = format_admin_user_profile_card(profile)
+        profile = await mark_user_suspicious(user_id, reason="Помечен администратором")
+        text = format_user_profile_card(profile)
+        alert_text = "Пользователь помечен"
     except ApiClientError as e:
-        text = f"❌ Не удалось загрузить профиль из API.\n\n{e}"
+        text = f"❌ Не удалось обновить пользователя через API.\n\n{e.detail}"
+        alert_text = "Не удалось обновить пользователя"
 
     await safe_edit_text(
         callback.message,
         text,
-        reply_markup=admin_user_kb(user_id),
+        reply_markup=user_actions_kb(user_id),
     )
-    await callback.answer("Пользователь помечен")
+    await callback.answer(alert_text)
 
 
 @router.callback_query(F.data.startswith("adm:user:clear_susp:"))
-async def adm_user_clear_susp(callback: CallbackQuery, db):
+async def adm_user_clear_susp(callback: CallbackQuery):
     try:
         user_id = int(callback.data.split(":")[-1])
     except (ValueError, IndexError):
         await callback.answer("Некорректный user_id", show_alert=True)
         return
 
-    await clear_user_suspicious(db, user_id)
-
     try:
-        profile = await get_admin_user_profile(user_id)
-        text = format_admin_user_profile_card(profile)
+        profile = await clear_user_suspicious(user_id)
+        text = format_user_profile_card(profile)
+        alert_text = "Подозрение снято"
     except ApiClientError as e:
-        text = f"❌ Не удалось загрузить профиль из API.\n\n{e}"
+        text = f"❌ Не удалось обновить пользователя через API.\n\n{e.detail}"
+        alert_text = "Не удалось обновить пользователя"
 
     await safe_edit_text(
         callback.message,
         text,
-        reply_markup=admin_user_kb(user_id),
+        reply_markup=user_actions_kb(user_id),
     )
-    await callback.answer("Подозрение снято")
+    await callback.answer(alert_text)
 
 @router.callback_query(F.data.startswith("adm:user:ledger:"))
 async def adm_user_ledger(callback: CallbackQuery, db):
@@ -1747,10 +1758,15 @@ async def adm_growth_back(callback: CallbackQuery):
             raise
 
 @router.message(F.text.startswith("/myrole"))
-async def adm_my_role(message: Message, db):
-    user_id = message.from_user.id
-    role_level = await get_user_role_level(db, user_id)
-    role_name = await get_user_role_name(db, user_id)
+async def adm_my_role(message: Message):
+    try:
+        profile = await get_user_profile(message.from_user.id)
+    except ApiClientError as e:
+        await message.answer(f"❌ Не удалось загрузить роль из API.\n\n{e.detail}")
+        return
+
+    role_level = int(profile.get("role_level") or 0)
+    role_name = profile.get("role") or "пользователь"
 
     await message.answer(
         f"Твоя роль: <b>{role_name}</b>\n"
@@ -1759,7 +1775,7 @@ async def adm_my_role(message: Message, db):
     )
 
 @router.callback_query(F.data.startswith("adm:user:role:"))
-async def adm_choose_role(callback: CallbackQuery, db):
+async def adm_choose_role(callback: CallbackQuery):
     user_id = int(callback.data.split(":")[-1])
 
     await callback.answer()
@@ -1770,7 +1786,7 @@ async def adm_choose_role(callback: CallbackQuery, db):
             [InlineKeyboardButton(text="💼 Клиент", callback_data=f"adm:setrole:{user_id}:3")],
             [InlineKeyboardButton(text="🤝 Партнер", callback_data=f"adm:setrole:{user_id}:6")],
             [InlineKeyboardButton(text="🛠 Админ", callback_data=f"adm:setrole:{user_id}:9")],
-            [InlineKeyboardButton(text="⬅ Назад", callback_data=f"adm:user:{user_id}")]
+            [InlineKeyboardButton(text="⬅ Назад", callback_data=f"adm:user:details:{user_id}")]
         ]
     )
 
@@ -1781,20 +1797,19 @@ async def adm_choose_role(callback: CallbackQuery, db):
     )
 
 @router.callback_query(F.data.startswith("adm:setrole:"))
-async def adm_set_role(callback: CallbackQuery, db):
+async def adm_set_role(callback: CallbackQuery):
     _, _, user_id, level = callback.data.split(":")
 
     user_id = int(user_id)
     level = int(level)
 
-    if level >= ROLE_OWNER:
-        await callback.answer("❌ Роль владельца назначить нельзя.", show_alert=True)
+    try:
+        result = await set_user_role(user_id, level)
+    except ApiClientError as e:
+        await callback.answer(f"❌ {e.detail}", show_alert=True)
         return
 
-    await set_user_role_level(db, user_id, level)
-
-    final_level = await get_user_role_level(db, user_id)
-    final_role_name = role_title_from_level(final_level)
+    final_role_name = result.get("role") or "пользователь"
 
     await callback.answer("✅ Роль изменена")
 
