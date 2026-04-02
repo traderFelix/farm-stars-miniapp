@@ -1,6 +1,6 @@
 import asyncio, logging
 
-from typing import Optional
+from typing import Optional, TypedDict, Union
 
 from aiogram.filters import CommandStart, StateFilter
 from aiogram.fsm.context import FSMContext
@@ -8,7 +8,14 @@ from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from aiogram import Router, F, Bot
 from aiogram.types import (
-    Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, PreCheckoutQuery, LabeledPrice
+    CallbackQuery,
+    InaccessibleMessage,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    LabeledPrice,
+    Message,
+    PreCheckoutQuery,
+    User,
 )
 
 from shared.config import (
@@ -72,13 +79,41 @@ WITHDRAW_TEXT = f"""
 """
 
 
-def _build_tg_user_payload(user) -> dict[str, Optional[str]]:
+class TelegramUserContext(TypedDict):
+    user_id: int
+    username: Optional[str]
+    first_name: Optional[str]
+    last_name: Optional[str]
+
+
+def _build_tg_user_payload(user: Optional[User]) -> TelegramUserContext:
+    if user is None:
+        raise ValueError("Telegram user is missing")
+
     return {
         "user_id": int(user.id),
         "username": user.username,
         "first_name": user.first_name,
         "last_name": user.last_name,
     }
+
+
+def _require_user(user: Optional[User]) -> User:
+    if user is None:
+        raise ValueError("Telegram user is missing")
+    return user
+
+
+def _require_message(message: Union[Message, InaccessibleMessage, None]) -> Message:
+    if not isinstance(message, Message):
+        raise ValueError("Editable message is missing")
+    return message
+
+
+def _require_bot(bot: Optional[Bot]) -> Bot:
+    if bot is None:
+        raise ValueError("Bot instance is missing")
+    return bot
 
 @router.channel_post()
 async def ingest_task_channel_post(message: Message):
@@ -125,10 +160,11 @@ async def open_main_menu_from_bottom_button(message: Message, state: FSMContext)
 
 @router.message(CommandStart())
 async def start(message: Message, bot: Bot):
-    user_id = message.from_user.id
-    username = message.from_user.username
-    first_name = message.from_user.first_name
-    last_name = message.from_user.last_name
+    from_user = _require_user(message.from_user)
+    user_id = from_user.id
+    username = from_user.username
+    first_name = from_user.first_name
+    last_name = from_user.last_name
 
     start_arg = None
     parts = (message.text or "").split(maxsplit=1)
@@ -201,14 +237,15 @@ async def check_subscription(callback: CallbackQuery, bot: Bot):
 
     if member.status in ("member", "administrator", "creator"):
         role_level = int(menu_payload.get("role_level") or 0)
+        callback_message = _require_message(callback.message)
 
-        await callback.message.answer(
+        await callback_message.answer(
             "Нажми кнопку снизу, чтобы открыть меню 👇",
             reply_markup=bottom_menu_kb()
         )
 
         await safe_edit_text(
-            callback.message,
+            callback_message,
             menu_payload["text"],
             reply_markup=main_menu(role_level)
         )
@@ -277,7 +314,8 @@ async def task_view_post(callback: CallbackQuery, bot: Bot, state: FSMContext):
     await _delete_last_task_post(bot, user_id, state)
 
     try:
-        await callback.message.delete()
+        callback_message = _require_message(callback.message)
+        await callback_message.delete()
     except Exception:
         pass
 
@@ -290,10 +328,12 @@ async def task_view_post(callback: CallbackQuery, bot: Bot, state: FSMContext):
         return
 
     try:
+        resolved_chat_id = str(chat_id)
+        resolved_channel_post_id = int(channel_post_id)
         sent = await bot.forward_message(
             chat_id=user_id,
-            from_chat_id=chat_id,
-            message_id=int(channel_post_id),
+            from_chat_id=resolved_chat_id,
+            message_id=resolved_channel_post_id,
         )
     except TelegramBadRequest:
         await bot.send_message(
@@ -412,13 +452,14 @@ async def claim_menu(callback: CallbackQuery):
 
     text = "Выбери конкурс для получения награды:"
     markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
+    callback_message = _require_message(callback.message)
 
-    if callback.message.text == text:
-        await safe_edit_reply_markup(callback.message, reply_markup=markup)
+    if callback_message.text == text:
+        await safe_edit_reply_markup(callback_message, reply_markup=markup)
         return
 
     await safe_edit_text(
-        callback.message,
+        callback_message,
         text,
         reply_markup=markup,
     )
@@ -471,7 +512,9 @@ async def withdraw_new(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     await state.clear()
 
-    await callback.message.edit_text(
+    callback_message = _require_message(callback.message)
+
+    await callback_message.edit_text(
         WITHDRAW_TEXT,
         parse_mode=ParseMode.HTML,
         reply_markup=withdraw_method_kb()
@@ -504,7 +547,7 @@ async def finalize_withdraw_request(
     wid = int(result["withdrawal_id"])
     new_balance = float(result.get("balance") or 0)
 
-    username = message.from_user.username
+    username = _require_user(message.from_user).username
     name = f"@{username}" if username else f"id:{user_id}"
 
     admin_text = (
@@ -522,7 +565,7 @@ async def finalize_withdraw_request(
 
     admin_text += f"\nID заявки: #{wid}"
 
-    bot: Bot = message.bot
+    bot = _require_bot(message.bot)
     for admin_id in ADMIN_IDS:
         try:
             await bot.send_message(admin_id, admin_text)
@@ -645,7 +688,8 @@ async def withdraw_choose_method(callback: CallbackQuery, state: FSMContext):
         return
 
     await state.set_state(WithdrawCreate.amount)
-    await callback.message.answer(
+    callback_message = _require_message(callback.message)
+    await callback_message.answer(
         f"Введи сумму обмена ⭐ в TON:\n"
         f"Доступно: {fmt_stars(balance)}⭐\n"
         f"Минимум: {MIN_WITHDRAW:g}⭐"
@@ -655,6 +699,7 @@ async def withdraw_choose_method(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data.startswith("withdraw:stars_amount:"))
 async def withdraw_stars_fixed_amount(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
+    callback_message = _require_message(callback.message)
 
     user_id = callback.from_user.id
     amount = float(callback.data.split(":")[2])
@@ -672,7 +717,7 @@ async def withdraw_stars_fixed_amount(callback: CallbackQuery, state: FSMContext
         )
     except ApiClientError as e:
         await safe_edit_text(
-            callback.message,
+            callback_message,
             e.detail,
             reply_markup=withdraw_back_kb(),
         )
@@ -683,7 +728,7 @@ async def withdraw_stars_fixed_amount(callback: CallbackQuery, state: FSMContext
     if fee <= 0:
         try:
             await finalize_withdraw_request(
-                message=callback.message,
+                message=_require_message(callback.message),
                 state=state,
                 user_id=user_id,
                 amount=amount,
@@ -695,9 +740,9 @@ async def withdraw_stars_fixed_amount(callback: CallbackQuery, state: FSMContext
             )
         except ApiClientError as e:
             if e.detail == "insufficient_balance":
-                await callback.message.answer("❌ Недостаточно звезд на балансе")
+                await callback_message.answer("❌ Недостаточно звезд на балансе")
                 return
-            await callback.message.answer(f"❌ Ошибка создания заявки: {e.detail}")
+            await callback_message.answer(f"❌ Ошибка создания заявки: {e.detail}")
         return
 
     await state.update_data(
@@ -708,7 +753,7 @@ async def withdraw_stars_fixed_amount(callback: CallbackQuery, state: FSMContext
     )
     await state.set_state(WithdrawCreate.fee_payment)
 
-    await callback.message.answer_invoice(
+    await callback_message.answer_invoice(
         title="Комиссия за вывод",
         description=f"Оплата комиссии {fee} Telegram Stars за вывод {amount:g}⭐",
         payload=f"withdraw_fee:{user_id}",
@@ -718,7 +763,7 @@ async def withdraw_stars_fixed_amount(callback: CallbackQuery, state: FSMContext
         start_parameter=f"withdraw-fee-{user_id}",
     )
 
-    await callback.message.answer(
+    await callback_message.answer(
         f"Для продолжения оплати комиссию: {fee} Telegram Stars.\n"
         "После успешной оплаты заявка создастся автоматически."
     )
@@ -747,7 +792,7 @@ async def withdraw_enter_amount(message: Message, state: FSMContext):
 
 @router.message(WithdrawCreate.wallet)
 async def withdraw_enter_details(message: Message, state: FSMContext):
-    user_id = message.from_user.id
+    user_id = _require_user(message.from_user).id
     data = await state.get_data()
     amount = float(data["amount"])
     wallet = message.text.strip()
@@ -811,7 +856,7 @@ async def on_successful_payment(message: Message, state: FSMContext):
     if payment.currency != "XTR":
         return
 
-    user_id = message.from_user.id
+    user_id = _require_user(message.from_user).id
     data = await state.get_data()
 
     expected_payload = f"withdraw_fee:{user_id}"
@@ -936,7 +981,8 @@ async def show_referrals(callback: CallbackQuery):
     user_id = int(result["user_id"])
     invited_count = int(result.get("invited_count") or 0)
 
-    me = await callback.bot.get_me()
+    bot = _require_bot(callback.bot)
+    me = await bot.get_me()
     invite_link = f"https://t.me/{me.username}?start={user_id}"
 
     text = (
@@ -945,7 +991,9 @@ async def show_referrals(callback: CallbackQuery):
         f"👥 Всего приглашено: {invited_count}"
     )
 
-    await callback.message.edit_text(
+    callback_message = _require_message(callback.message)
+
+    await callback_message.edit_text(
         text,
         reply_markup=referrals_kb(),
         parse_mode=ParseMode.HTML,
@@ -965,17 +1013,26 @@ async def _delete_last_task_post(bot: Bot, user_id: int, state: FSMContext) -> N
 
     await state.update_data(**{LAST_TASK_POST_MSG_ID_KEY: None})
 
-async def safe_edit_text(message, text: str, reply_markup=None):
+async def safe_edit_text(
+        message: Union[Message, InaccessibleMessage, None],
+        text: str,
+        reply_markup=None,
+):
+    editable_message = _require_message(message)
     try:
-        await message.edit_text(text, reply_markup=reply_markup)
+        await editable_message.edit_text(text, reply_markup=reply_markup)
     except TelegramBadRequest as e:
         if "message is not modified" in str(e):
             return
         raise
 
-async def safe_edit_reply_markup(message, reply_markup=None):
+async def safe_edit_reply_markup(
+        message: Union[Message, InaccessibleMessage, None],
+        reply_markup=None,
+):
+    editable_message = _require_message(message)
     try:
-        await message.edit_reply_markup(reply_markup=reply_markup)
+        await editable_message.edit_reply_markup(reply_markup=reply_markup)
     except TelegramBadRequest as e:
         if "message is not modified" in str(e):
             return
@@ -998,7 +1055,9 @@ async def client_home(callback: CallbackQuery):
         return
 
     await callback.answer()
-    await callback.message.edit_text(
+    callback_message = _require_message(callback.message)
+
+    await callback_message.edit_text(
         "🤝 <b>Кабинет клиента</b>\n\n"
         "Тут потом будут:\n"
         "• мои заказы\n"
@@ -1031,7 +1090,9 @@ async def partner_home(callback: CallbackQuery):
         return
 
     await callback.answer()
-    await callback.message.edit_text(
+    callback_message = _require_message(callback.message)
+
+    await callback_message.edit_text(
         "💼 <b>Кабинет партнера</b>\n\n"
         "Тут потом будут:\n"
         "• приглашенные клиенты\n"

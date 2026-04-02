@@ -1,5 +1,6 @@
 import io, logging
 from datetime import date, timedelta
+from typing import Any, Optional
 
 import matplotlib
 
@@ -75,6 +76,12 @@ from bot.states import (
 router = Router()
 
 logger = logging.getLogger(__name__)
+
+
+def _require_bot(bot: Optional[Bot]) -> Bot:
+    if bot is None:
+        raise ValueError("Bot instance is missing")
+    return bot
 
 class AdminOnly(Filter):
     async def __call__(self, event: TelegramObject) -> bool:
@@ -989,6 +996,7 @@ async def adm_withdraw_paid(callback: CallbackQuery):
 
     wid = int(callback.data.split(":")[3])
     admin_id = callback.from_user.id
+    bot = _require_bot(callback.bot)
 
     try:
         result = await mark_withdrawal_paid(wid, admin_id=admin_id)
@@ -1002,18 +1010,19 @@ async def adm_withdraw_paid(callback: CallbackQuery):
         referrer_id = referral_bonus.get("referrer_id")
         bonus_amount = float(referral_bonus.get("amount") or 0)
 
-        if bonus_added and referrer_id and bonus_amount > 0:
+        if bonus_added and referrer_id is not None and bonus_amount > 0:
+            referrer_id_value = int(referrer_id)
             try:
-                await callback.bot.send_message(
-                    int(referrer_id),
+                await bot.send_message(
+                    referrer_id_value,
                     f"🎉 Ваш друг вывел {float(amount):g}⭐.\n"
                     f"Вы получили рефбек: {bonus_amount:g}⭐"
                 )
             except Exception:
-                logger.exception("Failed to notify referrer %s for withdrawal %s", referrer_id, wid)
+                logger.exception("Failed to notify referrer %s for withdrawal %s", referrer_id_value, wid)
 
         try:
-            await callback.bot.send_message(
+            await bot.send_message(
                 user_id,
                 f"✅ Твоя заявка на вывод #{wid} выплачена.\n"
                 f"Сумма: {float(amount):g}⭐\n"
@@ -1036,7 +1045,7 @@ async def adm_withdraw_paid(callback: CallbackQuery):
 async def refund_withdraw_fee_if_needed(
         bot: Bot,
         withdrawal_id: int,
-        fee_refund: dict,
+        fee_refund: dict[str, Any],
 ) -> tuple[bool, str]:
     refund_status = str(fee_refund.get("status") or "no_fee_paid")
 
@@ -1045,7 +1054,7 @@ async def refund_withdraw_fee_if_needed(
 
     user_id = int(fee_refund["user_id"])
     charge_id = fee_refund.get("charge_id")
-    if not charge_id:
+    if not isinstance(charge_id, str) or not charge_id:
         return False, "missing_charge_id"
 
     ok = await bot(
@@ -1074,7 +1083,7 @@ async def refund_withdraw_fee_if_needed(
 async def adm_withdraw_reject(callback: CallbackQuery):
     wid = int(callback.data.split(":")[3])
     admin_id = callback.from_user.id
-    bot = callback.bot
+    bot = _require_bot(callback.bot)
 
     try:
         result = await reject_withdrawal(wid, admin_id=admin_id)
@@ -1101,7 +1110,7 @@ async def adm_withdraw_reject(callback: CallbackQuery):
             fee_refund_text = "\n⚠️ У комиссии нет charge_id, вернуть автоматически не удалось."
 
         try:
-            await callback.bot.send_message(
+            await bot.send_message(
                 int(user_id),
                 f"❌ Твоя заявка на вывод #{wid} отклонена.\n"
                 f"Сумма: {float(amount):g}⭐ возвращена на баланс."
