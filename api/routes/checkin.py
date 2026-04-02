@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends
 
 from api.dependencies.auth import get_current_user_id
+from api.dependencies.internal import require_internal_token
 from api.schemas.checkin import CheckinStatusResponse, CheckinClaimResponse
 from api.services.checkin import (
     get_checkin_status_service,
@@ -25,10 +26,16 @@ async def claim_checkin(user_id: int = Depends(get_current_user_id)):
 # ===== Bot (через user_id) =====
 
 @router.get("/bot/status/{user_id}", response_model=CheckinStatusResponse)
-async def get_checkin_status_for_bot(user_id: int):
+async def get_checkin_status_for_bot(
+        user_id: int,
+        _: None = Depends(require_internal_token),
+):
     return await get_checkin_status_service(user_id)
 
 
 @router.post("/bot/claim/{user_id}", response_model=CheckinClaimResponse)
-async def claim_checkin_for_bot(user_id: int):
+async def claim_checkin_for_bot(
+        user_id: int,
+        _: None = Depends(require_internal_token),
+):
     return await claim_checkin_service(user_id)

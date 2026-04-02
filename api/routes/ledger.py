@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, Query
 
 from api.dependencies.auth import get_current_user_id
+from api.dependencies.internal import require_internal_token
 from api.schemas.ledger import LedgerListResponse, LedgerTotalResponse
 from api.services.ledger import get_ledger_for_user, get_ledger_total_for_user
 
@@ -34,10 +35,14 @@ async def get_ledger_sum(
 async def bot_get_ledger(
         user_id: int,
         limit: int = Query(20, ge=1, le=100),
+        _: None = Depends(require_internal_token),
 ):
     return await _get_ledger_for_user(user_id=user_id, limit=limit)
 
 
 @router.get("/bot/{user_id}/sum", response_model=LedgerTotalResponse)
-async def bot_get_ledger_sum(user_id: int):
+async def bot_get_ledger_sum(
+        user_id: int,
+        _: None = Depends(require_internal_token),
+):
     return await _get_ledger_total_for_user(user_id=user_id)

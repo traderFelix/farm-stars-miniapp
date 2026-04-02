@@ -1,10 +1,15 @@
-import os
 from typing import Any, Optional
 
 import httpx
 
-API_BASE_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:8000")
-API_TIMEOUT = float(os.getenv("API_TIMEOUT", "10"))
+from shared.config import (
+    API_BASE_URL as SHARED_API_BASE_URL,
+    API_TIMEOUT as SHARED_API_TIMEOUT,
+    BOT_INTERNAL_TOKEN,
+)
+
+API_BASE_URL = SHARED_API_BASE_URL or "http://127.0.0.1:8000"
+API_TIMEOUT = float(SHARED_API_TIMEOUT or 10)
 
 
 class ApiClientError(Exception):
@@ -20,6 +25,9 @@ async def _request(
         json: Optional[dict[str, Any]] = None,
         params: Optional[dict[str, Any]] = None,
 ) -> Any:
+    if not BOT_INTERNAL_TOKEN:
+        raise ApiClientError("BOT_INTERNAL_TOKEN is not configured")
+
     url = f"{API_BASE_URL.rstrip('/')}/{path.lstrip('/')}"
 
     try:
@@ -29,6 +37,7 @@ async def _request(
                 url,
                 json=json,
                 params=params,
+                headers={"X-Internal-Token": BOT_INTERNAL_TOKEN},
             )
     except httpx.HTTPError as e:
         raise ApiClientError(f"API request failed: {e}") from e

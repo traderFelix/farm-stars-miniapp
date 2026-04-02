@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from api.dependencies.auth import get_current_user_id
+from api.dependencies.internal import require_internal_token
 from api.schemas.withdrawals import (
     WithdrawalEligibilityResponse,
     WithdrawalCreateRequest,
@@ -67,6 +68,7 @@ async def get_my_withdrawals(
 @router.get("/bot/eligibility/{user_id}", response_model=WithdrawalEligibilityResponse)
 async def bot_get_withdrawal_eligibility(
         user_id: int,
+        _: None = Depends(require_internal_token),
 ) -> WithdrawalEligibilityResponse:
     return await get_withdrawal_eligibility_for_user(user_id)
 
@@ -75,6 +77,7 @@ async def bot_get_withdrawal_eligibility(
 async def bot_get_my_withdrawals(
         user_id: int,
         limit: int = Query(20, ge=1, le=100),
+        _: None = Depends(require_internal_token),
 ) -> WithdrawalListResponse:
     try:
         return await _get_my_withdrawals(user_id=user_id, limit=limit)
@@ -89,6 +92,7 @@ async def bot_get_my_withdrawals(
 async def bot_create_withdrawal(
         user_id: int,
         payload: WithdrawalCreateRequest,
+        _: None = Depends(require_internal_token),
 ) -> WithdrawalCreateResponse:
     try:
         return await _create_withdrawal(user_id, payload)

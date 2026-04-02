@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from api.dependencies.auth import get_current_user_id
+from api.dependencies.internal import require_internal_token
 from api.schemas.tasks import (
     TaskCheckRequest,
     TaskCheckResponse,
@@ -93,6 +94,7 @@ async def check_task(
     "/bot/next/{user_id}",
     response_model=TaskListItem,
     summary="Bot internal: get next task for user",
+    dependencies=[Depends(require_internal_token)],
 )
 async def bot_get_next_task(user_id: int):
     return await _get_next_task_or_404(user_id)
@@ -102,6 +104,7 @@ async def bot_get_next_task(user_id: int):
     "/bot/{task_id}/open/{user_id}",
     response_model=TaskOpenResponse,
     summary="Bot internal: open task for user",
+    dependencies=[Depends(require_internal_token)],
 )
 async def bot_open_task(
         user_id: int,
@@ -117,6 +120,7 @@ async def bot_open_task(
     "/bot/{task_id}/check/{user_id}",
     response_model=TaskCheckResponse,
     summary="Bot internal: check task for user",
+    dependencies=[Depends(require_internal_token)],
 )
 async def bot_check_task(
         user_id: int,

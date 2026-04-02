@@ -14,6 +14,7 @@ DB_PATH = os.getenv("DB_PATH")
 JWT_SECRET = os.getenv("JWT_SECRET")
 JWT_ALG = os.getenv("JWT_ALG")
 JWT_EXPIRE_DAYS = int(os.getenv("JWT_EXPIRE_DAYS"))
+BOT_INTERNAL_TOKEN = os.getenv("BOT_INTERNAL_TOKEN") or JWT_SECRET
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 ALLOW_DEV_AUTH = os.getenv("ALLOW_DEV_AUTH", "false").lower() == "true"
 CHANNEL_LINK = os.getenv("CHANNEL_LINK")
