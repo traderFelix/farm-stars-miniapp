@@ -84,10 +84,50 @@ class ApiSection:
 
 
 class ProfileApi(ApiSection):
-    """
-    Reserved for bot-accessible profile endpoints.
-    User-facing web profile flow stays in mini app.
-    """
+    async def bootstrap_user(
+            self,
+            *,
+            user_id: int,
+            username: Optional[str],
+            first_name: Optional[str],
+            last_name: Optional[str],
+            start_referrer_id: Optional[int] = None,
+    ) -> JsonDict:
+        return await self._post(
+            "/bot/users/bootstrap",
+            json={
+                "user": {
+                    "user_id": int(user_id),
+                    "username": username,
+                    "first_name": first_name,
+                    "last_name": last_name,
+                },
+                "start_referrer_id": start_referrer_id,
+            },
+        )
+
+    async def get_main_menu_for_user_context(
+            self,
+            *,
+            user_id: int,
+            username: Optional[str],
+            first_name: Optional[str],
+            last_name: Optional[str],
+    ) -> JsonDict:
+        return await self._post(
+            "/bot/users/main-menu",
+            json={
+                "user": {
+                    "user_id": int(user_id),
+                    "username": username,
+                    "first_name": first_name,
+                    "last_name": last_name,
+                },
+            },
+        )
+
+    async def get_main_menu(self, user_id: int) -> JsonDict:
+        return await self._get(f"/bot/users/{int(user_id)}/main-menu")
 
 
 class CampaignsApi(ApiSection):
@@ -278,6 +318,42 @@ async def get_admin_user_profile(user_id: int) -> JsonDict:
     return await api_client.admin_users.get_profile(user_id)
 
 
+async def bootstrap_bot_user_via_api(
+        *,
+        user_id: int,
+        username: Optional[str],
+        first_name: Optional[str],
+        last_name: Optional[str],
+        start_referrer_id: Optional[int] = None,
+) -> JsonDict:
+    return await api_client.profile.bootstrap_user(
+        user_id=user_id,
+        username=username,
+        first_name=first_name,
+        last_name=last_name,
+        start_referrer_id=start_referrer_id,
+    )
+
+
+async def get_bot_main_menu_for_user_context_via_api(
+        *,
+        user_id: int,
+        username: Optional[str],
+        first_name: Optional[str],
+        last_name: Optional[str],
+) -> JsonDict:
+    return await api_client.profile.get_main_menu_for_user_context(
+        user_id=user_id,
+        username=username,
+        first_name=first_name,
+        last_name=last_name,
+    )
+
+
+async def get_bot_main_menu_via_api(user_id: int) -> JsonDict:
+    return await api_client.profile.get_main_menu(user_id)
+
+
 async def get_next_task(user_id: int) -> Optional[JsonDict]:
     return await api_client.tasks.get_next(user_id)
 
@@ -323,6 +399,9 @@ __all__ = [
     "BotApiClient",
     "api_client",
     "get_admin_user_profile",
+    "bootstrap_bot_user_via_api",
+    "get_bot_main_menu_for_user_context_via_api",
+    "get_bot_main_menu_via_api",
     "get_next_task",
     "open_task",
     "check_task",

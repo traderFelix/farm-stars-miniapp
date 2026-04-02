@@ -12,15 +12,15 @@ from aiogram.types import (
 )
 
 from shared.config import (
-    CHANNEL_ID, ADMIN_IDS, MIN_WITHDRAW, MIN_WITHDRAW_PERCENT, ROLE_USER, ROLE_CLIENT, ROLE_PARTNER
+    CHANNEL_ID, ADMIN_IDS, MIN_WITHDRAW, MIN_WITHDRAW_PERCENT, ROLE_CLIENT, ROLE_PARTNER
 )
 
 from bot.db import (
-    register_user, get_balance, ensure_user_registered, claim_reward, list_active_campaigns, tx,
+    get_balance, ensure_user_registered, claim_reward, list_active_campaigns, tx,
 )
 
 from shared.db.users import (
-    fmt_stars, user_has_role, get_user_role_level, role_title_from_level, bind_referrer, user_created_hours_ago,
+    fmt_stars, user_has_role, user_created_hours_ago,
     get_referrals_count,
 )
 from shared.db.tasks import allocate_task_post_from_channel_post
@@ -36,9 +36,12 @@ from bot.keyboards import (
 from bot.states import WithdrawCreate
 
 from bot.api_client import (
+    bootstrap_bot_user_via_api,
     get_next_task,
     open_task,
     check_task,
+    get_bot_main_menu_for_user_context_via_api,
+    get_bot_main_menu_via_api,
     get_daily_checkin_status,
     claim_daily_checkin_via_api,
     get_my_withdrawals_via_api,
@@ -72,20 +75,14 @@ WITHDRAW_TEXT = f"""
 Выберите нужный вариант ниже! 👇
 """
 
-def menu_text(balance: float, role_level: int = ROLE_USER, activity_index: float = 0.0) -> str:
-    role_name = role_title_from_level(role_level)
 
-    return (
-        "🏠 Главное меню\n\n"
-        f"Баланс: {fmt_stars(balance)}⭐️\n\n"
-        f"Роль: {role_name}\n"
-        f"Индекс Активности: {activity_index:.1f}%"
-    )
-
-
-async def build_main_menu_text(db, user_id: int, balance: float, role_level: int) -> str:
-    activity_index = await get_activity_index(db, user_id)
-    return menu_text(balance, role_level, activity_index)
+def _build_tg_user_payload(user) -> dict[str, Optional[str]]:
+    return {
+        "user_id": int(user.id),
+        "username": user.username,
+        "first_name": user.first_name,
+        "last_name": user.last_name,
+    }
 
 @router.channel_post()
 async def ingest_task_channel_post(message: Message, db):
@@ -110,24 +107,22 @@ async def ingest_task_channel_post(message: Message, db):
         )
 
 @router.message(StateFilter("*"), F.text == "🏠 Главное меню")
-async def open_main_menu_from_bottom_button(message: Message, state: FSMContext, db):
+async def open_main_menu_from_bottom_button(message: Message, state: FSMContext):
     await state.clear()
 
-    async with tx(db, immediate=False):
-        await ensure_user_registered(message, db)
-
-    user_id = message.from_user.id
-    balance = await get_balance(db, user_id)
-    role_level = await get_user_role_level(db, user_id)
+    menu_payload = await get_bot_main_menu_for_user_context_via_api(
+        **_build_tg_user_payload(message.from_user),
+    )
+    role_level = int(menu_payload.get("role_level") or 0)
 
     await message.answer(
-        await build_main_menu_text(db, user_id, balance, role_level),
+        menu_payload["text"],
         reply_markup=main_menu(role_level)
     )
 
 
 @router.message(CommandStart())
-async def start(message: Message, bot: Bot, db):
+async def start(message: Message, bot: Bot):
     user_id = message.from_user.id
     username = message.from_user.username
     first_name = message.from_user.first_name
@@ -140,21 +135,22 @@ async def start(message: Message, bot: Bot, db):
 
     logger.info("START user_id=%s text=%r start_arg=%r", user_id, message.text, start_arg)
 
-    async with tx(db, immediate=False):
-        await register_user(db, user_id, username, first_name, last_name)
+    start_referrer_id = int(start_arg) if start_arg and start_arg.isdigit() else None
+    menu_payload = await bootstrap_bot_user_via_api(
+        user_id=user_id,
+        username=username,
+        first_name=first_name,
+        last_name=last_name,
+        start_referrer_id=start_referrer_id,
+    )
 
-        if start_arg and start_arg.isdigit():
-            try:
-                bound = await bind_referrer(db, user_id, int(start_arg))
-                logger.info(
-                    "bind_referrer user_id=%s referrer_id=%s bound=%s",
-                    user_id, int(start_arg), bound
-                )
-            except Exception:
-                logger.exception(
-                    "Failed to bind referrer user_id=%s referrer_id=%s",
-                    user_id, start_arg
-                )
+    if start_referrer_id is not None:
+        logger.info(
+            "bind_referrer user_id=%s referrer_id=%s bound=%s",
+            user_id,
+            start_referrer_id,
+            bool(menu_payload.get("referrer_bound")),
+        )
 
     try:
         member = await bot.get_chat_member(CHANNEL_ID, user_id)
@@ -167,8 +163,7 @@ async def start(message: Message, bot: Bot, db):
 
     try:
         if member.status in ("member", "administrator", "creator"):
-            balance = await get_balance(db, user_id)
-            role_level = await get_user_role_level(db, user_id)
+            role_level = int(menu_payload.get("role_level") or 0)
 
             await message.answer(
                 "Нажми кнопку снизу, чтобы открыть меню 👇",
@@ -176,7 +171,7 @@ async def start(message: Message, bot: Bot, db):
             )
 
             await message.answer(
-                await build_main_menu_text(db, user_id, balance, role_level),
+                menu_payload["text"],
                 reply_markup=main_menu(role_level)
             )
         else:
@@ -189,11 +184,12 @@ async def start(message: Message, bot: Bot, db):
 
 
 @router.callback_query(F.data == "check_sub")
-async def check_subscription(callback: CallbackQuery, bot: Bot, db):
+async def check_subscription(callback: CallbackQuery, bot: Bot):
     user_id = callback.from_user.id
 
-    async with tx(db, immediate=False):
-        await ensure_user_registered(callback, db)
+    menu_payload = await get_bot_main_menu_for_user_context_via_api(
+        **_build_tg_user_payload(callback.from_user),
+    )
 
     try:
         member = await bot.get_chat_member(CHANNEL_ID, user_id)
@@ -202,8 +198,7 @@ async def check_subscription(callback: CallbackQuery, bot: Bot, db):
         return
 
     if member.status in ("member", "administrator", "creator"):
-        balance = await get_balance(db, user_id)
-        role_level = await get_user_role_level(db, user_id)
+        role_level = int(menu_payload.get("role_level") or 0)
 
         await callback.message.answer(
             "Нажми кнопку снизу, чтобы открыть меню 👇",
@@ -212,7 +207,7 @@ async def check_subscription(callback: CallbackQuery, bot: Bot, db):
 
         await safe_edit_text(
             callback.message,
-            await build_main_menu_text(db, user_id, balance, role_level),
+            menu_payload["text"],
             reply_markup=main_menu(role_level)
         )
     else:
@@ -388,17 +383,17 @@ async def task_view_post(callback: CallbackQuery, bot: Bot, state: FSMContext, d
 
 
 @router.callback_query(F.data == "back")
-async def back_to_main(callback: CallbackQuery, bot: Bot, state: FSMContext, db):
+async def back_to_main(callback: CallbackQuery, bot: Bot, state: FSMContext):
     user_id = callback.from_user.id
-    balance = await get_balance(db, user_id)
-    role_level = await get_user_role_level(db, user_id)
+    menu_payload = await get_bot_main_menu_via_api(user_id)
+    role_level = int(menu_payload.get("role_level") or 0)
 
     await _delete_last_task_post(bot, user_id, state)
 
     await callback.answer()
     await safe_edit_text(
         callback.message,
-        await build_main_menu_text(db, user_id, balance, role_level),
+        menu_payload["text"],
         reply_markup=main_menu(role_level)
     )
 
@@ -1177,4 +1172,3 @@ async def daily_checkin_claim(callback: CallbackQuery):
             already_claimed_today=already_claimed_today,
         ),
     )
-
