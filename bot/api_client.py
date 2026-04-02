@@ -129,6 +129,26 @@ class ProfileApi(ApiSection):
     async def get_main_menu(self, user_id: int) -> JsonDict:
         return await self._get(f"/bot/users/{int(user_id)}/main-menu")
 
+    async def get_referrals_for_user_context(
+            self,
+            *,
+            user_id: int,
+            username: Optional[str],
+            first_name: Optional[str],
+            last_name: Optional[str],
+    ) -> JsonDict:
+        return await self._post(
+            "/bot/users/referrals",
+            json={
+                "user": {
+                    "user_id": int(user_id),
+                    "username": username,
+                    "first_name": first_name,
+                    "last_name": last_name,
+                },
+            },
+        )
+
 
 class CampaignsApi(ApiSection):
     async def list_active(self) -> JsonDict:
@@ -170,6 +190,24 @@ class TasksApi(ApiSection):
         return await self._post(
             f"/tasks/bot/{int(task_id)}/check/{int(user_id)}",
             json={},
+        )
+
+    async def ingest_channel_post(
+            self,
+            *,
+            chat_id: str,
+            channel_post_id: int,
+            title: Optional[str],
+            reward: float = 0.01,
+    ) -> JsonDict:
+        return await self._post(
+            "/tasks/bot/channel-posts/ingest",
+            json={
+                "chat_id": str(chat_id),
+                "channel_post_id": int(channel_post_id),
+                "title": title,
+                "reward": float(reward),
+            },
         )
 
 
@@ -889,8 +927,38 @@ async def get_bot_main_menu_via_api(user_id: int) -> JsonDict:
     return await api_client.profile.get_main_menu(user_id)
 
 
+async def get_bot_referrals_for_user_context_via_api(
+        *,
+        user_id: int,
+        username: Optional[str],
+        first_name: Optional[str],
+        last_name: Optional[str],
+) -> JsonDict:
+    return await api_client.profile.get_referrals_for_user_context(
+        user_id=user_id,
+        username=username,
+        first_name=first_name,
+        last_name=last_name,
+    )
+
+
 async def get_next_task(user_id: int) -> Optional[JsonDict]:
     return await api_client.tasks.get_next(user_id)
+
+
+async def ingest_task_channel_post_via_api(
+        *,
+        chat_id: str,
+        channel_post_id: int,
+        title: Optional[str],
+        reward: float = 0.01,
+) -> JsonDict:
+    return await api_client.tasks.ingest_channel_post(
+        chat_id=chat_id,
+        channel_post_id=channel_post_id,
+        title=title,
+        reward=reward,
+    )
 
 
 async def open_task(user_id: int, task_id: int) -> JsonDict:
@@ -999,7 +1067,9 @@ __all__ = [
     "bootstrap_bot_user_via_api",
     "get_bot_main_menu_for_user_context_via_api",
     "get_bot_main_menu_via_api",
+    "get_bot_referrals_for_user_context_via_api",
     "get_next_task",
+    "ingest_task_channel_post_via_api",
     "open_task",
     "check_task",
     "get_daily_checkin_status",

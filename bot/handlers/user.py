@@ -15,15 +15,9 @@ from shared.config import (
     CHANNEL_ID, ADMIN_IDS, MIN_WITHDRAW, MIN_WITHDRAW_PERCENT, ROLE_CLIENT, ROLE_PARTNER
 )
 
-from bot.db import (
-    tx,
-)
-
 from shared.db.users import (
-    fmt_stars, user_has_role,
-    get_referrals_count,
+    fmt_stars,
 )
-from shared.db.tasks import allocate_task_post_from_channel_post
 
 from bot.keyboards import (
     subscribe_keyboard, main_menu, tasks_menu, bottom_menu_kb, withdraw_stars_amount_kb, task_after_view_kb,
@@ -42,9 +36,11 @@ from bot.api_client import (
     get_active_campaigns_via_api,
     get_bot_main_menu_for_user_context_via_api,
     get_bot_main_menu_via_api,
+    get_bot_referrals_for_user_context_via_api,
     get_daily_checkin_status,
     claim_daily_checkin_via_api,
     get_withdrawal_eligibility_via_api,
+    ingest_task_channel_post_via_api,
     preview_withdrawal_via_api,
     get_my_withdrawals_via_api,
     create_withdrawal_via_api,
@@ -87,7 +83,7 @@ def _build_tg_user_payload(user) -> dict[str, Optional[str]]:
     }
 
 @router.channel_post()
-async def ingest_task_channel_post(message: Message, db):
+async def ingest_task_channel_post(message: Message):
     has_content = bool(
         message.text
         or message.caption
@@ -99,13 +95,19 @@ async def ingest_task_channel_post(message: Message, db):
     if not has_content:
         return
 
-    async with tx(db, immediate=True):
-        await allocate_task_post_from_channel_post(
-            db=db,
+    try:
+        await ingest_task_channel_post_via_api(
             chat_id=str(message.chat.id),
             channel_post_id=int(message.message_id),
             title=message.chat.title,
             reward=0.01,
+        )
+    except ApiClientError as e:
+        logger.warning(
+            "Failed to ingest channel post via API chat_id=%s post_id=%s detail=%s",
+            message.chat.id,
+            message.message_id,
+            e.detail,
         )
 
 @router.message(StateFilter("*"), F.text == "🏠 Главное меню")
@@ -922,11 +924,19 @@ async def withdraw_my(callback: CallbackQuery):
     )
 
 @router.callback_query(F.data == "referrals")
-async def show_referrals(callback: CallbackQuery, db):
+async def show_referrals(callback: CallbackQuery):
     await callback.answer()
 
-    user_id = callback.from_user.id
-    invited_count = await get_referrals_count(db, user_id)
+    try:
+        result = await get_bot_referrals_for_user_context_via_api(
+            **_build_tg_user_payload(callback.from_user),
+        )
+    except ApiClientError as e:
+        await callback.answer(f"❌ {e.detail}", show_alert=True)
+        return
+
+    user_id = int(result["user_id"])
+    invited_count = int(result.get("invited_count") or 0)
 
     me = await callback.bot.get_me()
     invite_link = f"https://t.me/{me.username}?start={user_id}"
@@ -974,10 +984,18 @@ async def safe_edit_reply_markup(message, reply_markup=None):
         raise
 
 @router.callback_query(F.data == "client:home")
-async def client_home(callback: CallbackQuery, db):
-    user_id = callback.from_user.id
+async def client_home(callback: CallbackQuery):
+    try:
+        menu_payload = await get_bot_main_menu_for_user_context_via_api(
+            **_build_tg_user_payload(callback.from_user),
+        )
+    except ApiClientError as e:
+        await callback.answer(f"❌ {e.detail}", show_alert=True)
+        return
 
-    if not await user_has_role(db, user_id, ROLE_CLIENT):
+    role_level = int(menu_payload.get("role_level") or 0)
+
+    if role_level < ROLE_CLIENT:
         await callback.answer("❌ Раздел клиента тебе пока недоступен.", show_alert=True)
         return
 
@@ -999,10 +1017,18 @@ async def client_home(callback: CallbackQuery, db):
 
 
 @router.callback_query(F.data == "partner:home")
-async def partner_home(callback: CallbackQuery, db):
-    user_id = callback.from_user.id
+async def partner_home(callback: CallbackQuery):
+    try:
+        menu_payload = await get_bot_main_menu_for_user_context_via_api(
+            **_build_tg_user_payload(callback.from_user),
+        )
+    except ApiClientError as e:
+        await callback.answer(f"❌ {e.detail}", show_alert=True)
+        return
 
-    if not await user_has_role(db, user_id, ROLE_PARTNER):
+    role_level = int(menu_payload.get("role_level") or 0)
+
+    if role_level < ROLE_PARTNER:
         await callback.answer("❌ Партнерский раздел тебе пока недоступен.", show_alert=True)
         return
 

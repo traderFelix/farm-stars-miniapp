@@ -3,6 +3,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from api.dependencies.auth import get_current_user_id
 from api.dependencies.internal import require_internal_token
 from api.schemas.tasks import (
+    TaskChannelPostIngestRequest,
+    TaskChannelPostIngestResponse,
     TaskCheckRequest,
     TaskCheckResponse,
     TaskListItem,
@@ -12,6 +14,7 @@ from api.schemas.tasks import (
 from api.services.tasks import (
     check_task_for_user,
     get_next_task_for_user,
+    ingest_task_channel_post_message,
     open_task_for_user,
 )
 
@@ -131,4 +134,21 @@ async def bot_check_task(
     return await _check_task(
         user_id=user_id,
         task_id=task_id,
+    )
+
+
+@router.post(
+    "/bot/channel-posts/ingest",
+    response_model=TaskChannelPostIngestResponse,
+    summary="Bot internal: ingest channel post into task pool",
+    dependencies=[Depends(require_internal_token)],
+)
+async def bot_ingest_channel_post(
+        payload: TaskChannelPostIngestRequest,
+):
+    return await ingest_task_channel_post_message(
+        chat_id=payload.chat_id,
+        channel_post_id=payload.channel_post_id,
+        title=payload.title,
+        reward=payload.reward,
     )

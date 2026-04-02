@@ -19,6 +19,10 @@ class UserMainMenuRequest(BaseModel):
     user: TelegramUserPayload
 
 
+class UserReferralsRequest(BaseModel):
+    user: TelegramUserPayload
+
+
 class UserMainMenuResponse(BaseModel):
     user_id: int
     balance: float
@@ -30,6 +34,11 @@ class UserMainMenuResponse(BaseModel):
 
 class UserBootstrapResponse(UserMainMenuResponse):
     referrer_bound: bool = False
+
+
+class UserReferralsResponse(BaseModel):
+    user_id: int
+    invited_count: int
 
 
 class UserProfileResponse(BaseModel):

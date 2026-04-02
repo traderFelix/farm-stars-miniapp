@@ -60,7 +60,7 @@ from shared.config import LEDGER_PAGE_SIZE, ROLE_ADMIN
 
 from bot.handlers.user import safe_edit_text
 
-from shared.db.users import fmt_stars, user_has_role
+from shared.db.users import fmt_stars
 
 from bot.keyboards import (
     admin_menu_kb, admin_back_kb, campaigns_list_kb, campaign_manage_kb, stats_list_kb, admin_fee_refund_kb,
@@ -77,12 +77,17 @@ router = Router()
 logger = logging.getLogger(__name__)
 
 class AdminOnly(Filter):
-    async def __call__(self, event: TelegramObject, db) -> bool:
+    async def __call__(self, event: TelegramObject) -> bool:
         user = getattr(event, "from_user", None)
         if not user:
             return False
 
-        return await user_has_role(db, user.id, ROLE_ADMIN)
+        try:
+            profile = await get_user_profile(user.id)
+        except ApiClientError:
+            return False
+
+        return int(profile.get("role_level") or 0) >= ROLE_ADMIN
 
 
 router.message.filter(AdminOnly())

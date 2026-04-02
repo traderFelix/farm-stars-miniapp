@@ -9,6 +9,7 @@ from shared.db.users import (
     bind_referrer,
     build_user_profile,
     fmt_stars,
+    get_referrals_count,
     get_user_by_id,
     register_user,
     update_user_telegram_fields,
@@ -34,6 +35,17 @@ def build_bot_main_menu_payload(profile: dict[str, Any]) -> dict[str, Any]:
         "role_level": int(profile.get("role_level") or 0),
         "activity_index": float(profile.get("activity_index") or 0),
         "text": build_main_menu_text(profile),
+    }
+
+
+def build_bot_referrals_payload(
+        *,
+        user_id: int,
+        invited_count: int,
+) -> dict[str, Any]:
+    return {
+        "user_id": int(user_id),
+        "invited_count": int(invited_count),
     }
 
 
@@ -139,3 +151,18 @@ async def get_bot_main_menu_by_user_id(
 ) -> dict[str, Any]:
     profile = await get_profile_by_user_id(db, int(user_id))
     return build_bot_main_menu_payload(profile)
+
+
+async def touch_bot_user_and_get_referrals(
+        db: aiosqlite.Connection,
+        tg_user: dict[str, Any],
+) -> dict[str, Any]:
+    async with tx(db, immediate=False):
+        await touch_telegram_user(db, tg_user)
+
+    user_id = int(tg_user["user_id"])
+    invited_count = await get_referrals_count(db, user_id)
+    return build_bot_referrals_payload(
+        user_id=user_id,
+        invited_count=invited_count,
+    )

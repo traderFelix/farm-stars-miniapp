@@ -4,9 +4,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
 
 from shared.config import TELEGRAM_BOT_TOKEN
-from .db import open_db, close_db, init_db
 from .handlers import user_router, admin_router, errors_router
-from .middlewares.db import DbMiddleware
 
 logging.basicConfig(
     level=logging.INFO,
@@ -27,21 +25,11 @@ async def main():
     bot = Bot(token=TELEGRAM_BOT_TOKEN)
     dp = Dispatcher(storage=MemoryStorage())
 
-    db = await open_db()
+    dp.include_router(user_router)
+    dp.include_router(admin_router)
+    dp.include_router(errors_router)
 
-    try:
-        await init_db(db)
-
-        dp.update.middleware(DbMiddleware(db))
-
-        dp.include_router(user_router)
-        dp.include_router(admin_router)
-        dp.include_router(errors_router)
-
-        await dp.start_polling(bot)
-
-    finally:
-        await close_db(db)
+    await dp.start_polling(bot)
 
 
 if __name__ == "__main__":

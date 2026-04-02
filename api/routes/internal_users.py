@@ -7,10 +7,13 @@ from api.schemas.users import (
     UserBootstrapResponse,
     UserMainMenuRequest,
     UserMainMenuResponse,
+    UserReferralsRequest,
+    UserReferralsResponse,
 )
 from api.services.users import (
     bootstrap_bot_user,
     get_bot_main_menu_by_user_id,
+    touch_bot_user_and_get_referrals,
     touch_bot_user_and_get_main_menu,
 )
 
@@ -39,6 +42,18 @@ async def internal_user_main_menu(payload: UserMainMenuRequest):
     db = await get_db()
     try:
         return await touch_bot_user_and_get_main_menu(
+            db=db,
+            tg_user=payload.user.dict(),
+        )
+    finally:
+        await db.close()
+
+
+@router.post("/referrals", response_model=UserReferralsResponse)
+async def internal_user_referrals(payload: UserReferralsRequest):
+    db = await get_db()
+    try:
+        return await touch_bot_user_and_get_referrals(
             db=db,
             tg_user=payload.user.dict(),
         )

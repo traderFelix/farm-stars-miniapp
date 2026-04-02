@@ -10,11 +10,13 @@ from api.schemas.tasks import (
 )
 from shared.db.tasks import (
     add_task_post_view,
+    allocate_task_post_from_channel_post,
     get_next_view_post_task_for_user,
     get_view_post_task_for_user,
     increment_task_post_views,
 )
 from shared.db.abuse import count_recent_abuse_events, log_abuse_event
+from shared.db.common import tx
 
 
 def build_task_post_url(
@@ -319,6 +321,31 @@ async def get_next_task_for_user(user_id: int) -> Optional[TaskListItem]:
         item.status = "completed" if item.already_completed else "available"
         item.can_claim = not item.already_completed
         return item
+    finally:
+        await db.close()
+
+
+async def ingest_task_channel_post_message(
+        *,
+        chat_id: str,
+        channel_post_id: int,
+        title: Optional[str],
+        reward: float = 0.01,
+) -> dict[str, bool]:
+    db = await get_db()
+    try:
+        async with tx(db, immediate=True):
+            allocated = await allocate_task_post_from_channel_post(
+                db=db,
+                chat_id=str(chat_id),
+                channel_post_id=int(channel_post_id),
+                title=title,
+                reward=float(reward),
+            )
+
+        return {
+            "allocated": bool(allocated),
+        }
     finally:
         await db.close()
 

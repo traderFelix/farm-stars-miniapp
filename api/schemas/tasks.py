@@ -58,3 +58,14 @@ class TaskCheckResponse(BaseModel):
     reward_granted: float = 0
     new_balance: float = 0
     task_completed: bool = False
+
+
+class TaskChannelPostIngestRequest(BaseModel):
+    chat_id: str
+    channel_post_id: int
+    title: Optional[str] = None
+    reward: float = 0.01
+
+
+class TaskChannelPostIngestResponse(BaseModel):
+    allocated: bool
