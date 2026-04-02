@@ -1,5 +1,12 @@
-from pydantic import BaseModel
 from typing import Optional
+
+from pydantic import BaseModel
+
+from api.schemas.users import TelegramUserPayload
+
+
+class CheckinContextRequest(BaseModel):
+    user: TelegramUserPayload
 
 
 class CheckinStatusResponse(BaseModel):

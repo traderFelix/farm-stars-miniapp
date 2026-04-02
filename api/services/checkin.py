@@ -1,17 +1,25 @@
+from typing import Optional
+
 from api.db.connection import get_db
 from api.schemas.checkin import CheckinStatusResponse, CheckinClaimResponse
 from shared.db.users import get_daily_checkin_status, claim_daily_checkin
 
 
-async def get_checkin_status_service(user_id: int) -> CheckinStatusResponse:
+async def get_checkin_status_service(
+        user_id: int,
+        *,
+        username: Optional[str] = None,
+        first_name: Optional[str] = None,
+        last_name: Optional[str] = None,
+) -> CheckinStatusResponse:
     db = await get_db()
     try:
         status = await get_daily_checkin_status(
             db=db,
             user_id=int(user_id),
-            username=None,
-            first_name=None,
-            last_name=None,
+            username=username,
+            first_name=first_name,
+            last_name=last_name,
         )
     finally:
         await db.close()
@@ -19,22 +27,28 @@ async def get_checkin_status_service(user_id: int) -> CheckinStatusResponse:
     return CheckinStatusResponse(**status)
 
 
-async def claim_checkin_service(user_id: int) -> CheckinClaimResponse:
+async def claim_checkin_service(
+        user_id: int,
+        *,
+        username: Optional[str] = None,
+        first_name: Optional[str] = None,
+        last_name: Optional[str] = None,
+) -> CheckinClaimResponse:
     db = await get_db()
     try:
         status = await get_daily_checkin_status(
             db=db,
             user_id=int(user_id),
-            username=None,
-            first_name=None,
-            last_name=None,
+            username=username,
+            first_name=first_name,
+            last_name=last_name,
         )
         ok, message, balance = await claim_daily_checkin(
             db=db,
             user_id=int(user_id),
-            username=None,
-            first_name=None,
-            last_name=None,
+            username=username,
+            first_name=first_name,
+            last_name=last_name,
         )
     finally:
         await db.close()

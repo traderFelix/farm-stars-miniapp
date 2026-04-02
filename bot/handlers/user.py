@@ -1043,7 +1043,12 @@ def daily_checkin_text(current_day: int, already_claimed_today: bool) -> str:
 async def daily_checkin_open(callback: CallbackQuery):
     await callback.answer()
 
-    status = await get_daily_checkin_status(callback.from_user.id)
+    status = await get_daily_checkin_status(
+        callback.from_user.id,
+        username=callback.from_user.username,
+        first_name=callback.from_user.first_name,
+        last_name=callback.from_user.last_name,
+    )
 
     current_day = int(status["current_cycle_day"])
     already_claimed_today = bool(status["already_claimed_today"])
@@ -1066,12 +1071,22 @@ async def daily_checkin_noop(callback: CallbackQuery):
 
 @router.callback_query(F.data == "daily_checkin:claim")
 async def daily_checkin_claim(callback: CallbackQuery):
-    result = await claim_daily_checkin_via_api(callback.from_user.id)
+    result = await claim_daily_checkin_via_api(
+        callback.from_user.id,
+        username=callback.from_user.username,
+        first_name=callback.from_user.first_name,
+        last_name=callback.from_user.last_name,
+    )
 
     alert_text = result.get("message") or "Готово"
     await callback.answer(alert_text, show_alert=True)
 
-    status = await get_daily_checkin_status(callback.from_user.id)
+    status = await get_daily_checkin_status(
+        callback.from_user.id,
+        username=callback.from_user.username,
+        first_name=callback.from_user.first_name,
+        last_name=callback.from_user.last_name,
+    )
 
     current_day = int(status["current_cycle_day"])
     already_claimed_today = bool(status["already_claimed_today"])

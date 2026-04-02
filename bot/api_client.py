@@ -174,13 +174,53 @@ class TasksApi(ApiSection):
 
 
 class CheckinApi(ApiSection):
-    async def get_status(self, user_id: int) -> JsonDict:
-        return await self._get(f"/checkin/bot/status/{int(user_id)}")
+    async def get_status(
+            self,
+            user_id: int,
+            *,
+            username: Optional[str] = None,
+            first_name: Optional[str] = None,
+            last_name: Optional[str] = None,
+    ) -> JsonDict:
+        if username is None and first_name is None and last_name is None:
+            return await self._get(f"/checkin/bot/status/{int(user_id)}")
 
-    async def claim(self, user_id: int) -> JsonDict:
         return await self._post(
-            f"/checkin/bot/claim/{int(user_id)}",
-            json={},
+            "/checkin/bot/status",
+            json={
+                "user": {
+                    "user_id": int(user_id),
+                    "username": username,
+                    "first_name": first_name,
+                    "last_name": last_name,
+                }
+            },
+        )
+
+    async def claim(
+            self,
+            user_id: int,
+            *,
+            username: Optional[str] = None,
+            first_name: Optional[str] = None,
+            last_name: Optional[str] = None,
+    ) -> JsonDict:
+        if username is None and first_name is None and last_name is None:
+            return await self._post(
+                f"/checkin/bot/claim/{int(user_id)}",
+                json={},
+            )
+
+        return await self._post(
+            "/checkin/bot/claim",
+            json={
+                "user": {
+                    "user_id": int(user_id),
+                    "username": username,
+                    "first_name": first_name,
+                    "last_name": last_name,
+                }
+            },
         )
 
 
@@ -409,12 +449,34 @@ async def check_task(user_id: int, task_id: int) -> JsonDict:
     return await api_client.tasks.check(user_id, task_id)
 
 
-async def get_daily_checkin_status(user_id: int) -> JsonDict:
-    return await api_client.checkin.get_status(user_id)
+async def get_daily_checkin_status(
+        user_id: int,
+        *,
+        username: Optional[str] = None,
+        first_name: Optional[str] = None,
+        last_name: Optional[str] = None,
+) -> JsonDict:
+    return await api_client.checkin.get_status(
+        user_id,
+        username=username,
+        first_name=first_name,
+        last_name=last_name,
+    )
 
 
-async def claim_daily_checkin_via_api(user_id: int) -> JsonDict:
-    return await api_client.checkin.claim(user_id)
+async def claim_daily_checkin_via_api(
+        user_id: int,
+        *,
+        username: Optional[str] = None,
+        first_name: Optional[str] = None,
+        last_name: Optional[str] = None,
+) -> JsonDict:
+    return await api_client.checkin.claim(
+        user_id,
+        username=username,
+        first_name=first_name,
+        last_name=last_name,
+    )
 
 
 async def get_ledger(user_id: int, limit: int = 20) -> JsonDict:
