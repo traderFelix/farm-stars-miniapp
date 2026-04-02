@@ -31,6 +31,14 @@ async def get_profile(
     return profile
 
 
+async def _ensure_user_exists(
+        db: aiosqlite.Connection,
+        user_id: int,
+) -> None:
+    if not await get_user_by_id(db, int(user_id)):
+        raise HTTPException(status_code=404, detail="Пользователь не найден")
+
+
 async def lookup_profile(
         db: aiosqlite.Connection,
         query: str,
@@ -127,6 +135,8 @@ async def get_stats(
         db: aiosqlite.Connection,
         user_id: int,
 ) -> dict[str, Any]:
+    await _ensure_user_exists(db, int(user_id))
+
     return {
         "text": await build_user_stats_text(db, int(user_id)),
     }
@@ -139,6 +149,8 @@ async def get_user_ledger(
         page: int,
         page_size: int,
 ) -> dict[str, Any]:
+    await _ensure_user_exists(db, int(user_id))
+
     safe_page = max(int(page), 0)
     safe_page_size = max(int(page_size), 1)
     offset = safe_page * safe_page_size
