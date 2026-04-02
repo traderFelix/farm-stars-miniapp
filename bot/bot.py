@@ -6,7 +6,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from .api_client import ingest_task_channel_post_via_api
 from .pending_channel_posts import TaskChannelPostPayload, flush_pending_task_channel_posts
 from shared.config import TELEGRAM_BOT_TOKEN
-from .handlers import user_router, admin_router, errors_router
+from .handlers import user_router, admin_router, admin_fallback_router, errors_router
 
 logging.basicConfig(
     level=logging.INFO,
@@ -39,6 +39,7 @@ async def main():
 
     dp.include_router(user_router)
     dp.include_router(admin_router)
+    dp.include_router(admin_fallback_router)
     dp.include_router(errors_router)
 
     flush_result = await flush_pending_task_channel_posts(

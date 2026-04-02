@@ -1,6 +1,6 @@
 import io, logging
 from datetime import date, timedelta
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 import matplotlib
 
@@ -53,11 +53,11 @@ from aiogram.enums import ParseMode
 from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery, TelegramObject, BufferedInputFile, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
-from aiogram.filters import Filter
+from aiogram.filters import Filter, StateFilter
 from aiogram.methods import RefundStarPayment
 from aiogram.exceptions import TelegramBadRequest
 
-from shared.config import LEDGER_PAGE_SIZE, ROLE_ADMIN
+from shared.config import ADMIN_IDS, LEDGER_PAGE_SIZE, OWNER_ID, ROLE_ADMIN
 
 from bot.handlers.user import safe_edit_text
 
@@ -74,8 +74,17 @@ from bot.states import (
 )
 
 router = Router()
+fallback_router = Router()
 
 logger = logging.getLogger(__name__)
+ADMIN_API_UNAVAILABLE_TEXT = (
+    "⚠️ Админка временно недоступна.\n"
+    "API не отвечает, поэтому бот не может проверить админский доступ.\n"
+    "Попробуй еще раз чуть позже."
+)
+STATIC_ADMIN_IDS = set(ADMIN_IDS)
+if OWNER_ID and str(OWNER_ID).isdigit():
+    STATIC_ADMIN_IDS.add(int(OWNER_ID))
 
 
 def _require_bot(bot: Optional[Bot]) -> Bot:
@@ -83,22 +92,92 @@ def _require_bot(bot: Optional[Bot]) -> Bot:
         raise ValueError("Bot instance is missing")
     return bot
 
+
+def _is_static_admin_user(user_id: int) -> bool:
+    return int(user_id) in STATIC_ADMIN_IDS
+
+
+async def _get_admin_guard_status(
+        user_id: int,
+        *,
+        log_failure: bool,
+) -> Literal["allowed", "denied", "api_unavailable"]:
+    try:
+        profile = await get_user_profile(user_id)
+    except ApiClientError as e:
+        if log_failure:
+            logger.warning(
+                "Admin access check failed user_id=%s status=%s path=%s detail=%s",
+                user_id,
+                e.status_code,
+                e.path,
+                e.detail,
+                exc_info=True,
+            )
+        return "api_unavailable"
+
+    if int(profile.get("role_level") or 0) >= ROLE_ADMIN:
+        return "allowed"
+
+    return "denied"
+
 class AdminOnly(Filter):
     async def __call__(self, event: TelegramObject) -> bool:
         user = getattr(event, "from_user", None)
         if not user:
             return False
 
-        try:
-            profile = await get_user_profile(user.id)
-        except ApiClientError:
+        status = await _get_admin_guard_status(int(user.id), log_failure=True)
+        return status == "allowed"
+
+
+class AdminApiUnavailable(Filter):
+    async def __call__(self, event: TelegramObject) -> bool:
+        user = getattr(event, "from_user", None)
+        if not user or not _is_static_admin_user(int(user.id)):
             return False
 
-        return int(profile.get("role_level") or 0) >= ROLE_ADMIN
+        status = await _get_admin_guard_status(int(user.id), log_failure=False)
+        return status == "api_unavailable"
 
 
 router.message.filter(AdminOnly())
 router.callback_query.filter(AdminOnly())
+fallback_router.message.filter(AdminApiUnavailable())
+fallback_router.callback_query.filter(AdminApiUnavailable())
+
+
+@fallback_router.callback_query(F.data.startswith("adm:"))
+async def admin_api_unavailable_callback(callback: CallbackQuery):
+    await callback.answer(ADMIN_API_UNAVAILABLE_TEXT, show_alert=True)
+
+
+@fallback_router.message(F.text.startswith("/myrole"))
+async def admin_api_unavailable_myrole(message: Message):
+    await message.answer(ADMIN_API_UNAVAILABLE_TEXT)
+
+
+@fallback_router.message(
+    StateFilter(
+        AddWinners.usernames,
+        CampaignCreate.key,
+        CampaignCreate.amount,
+        CampaignCreate.title,
+        DeleteWinner.username,
+        UserLookup.user,
+        AdminAdjust.amount,
+        AdminRefundFee.waiting_manual_data,
+        TaskChannelCreate.chat_id,
+        TaskChannelCreate.total_bought_views,
+        TaskChannelCreate.views_per_post,
+        TaskChannelCreate.view_seconds,
+        TaskChannelEdit.total_bought_views,
+        TaskChannelEdit.views_per_post,
+        TaskChannelEdit.view_seconds,
+    )
+)
+async def admin_api_unavailable_state_message(message: Message):
+    await message.answer(ADMIN_API_UNAVAILABLE_TEXT)
 
 
 def _admin_ledger_nav_kb(page: int, has_next: bool) -> InlineKeyboardMarkup:
