@@ -63,6 +63,7 @@ router = Router()
 logger = logging.getLogger(__name__)
 
 LAST_TASK_POST_MSG_ID_KEY = "last_task_post_message_id"
+USER_API_UNAVAILABLE_TEXT = "⚠️ Сервис временно недоступен. Попробуй еще раз чуть позже."
 
 WITHDRAW_TEXT = f"""
 💰 <b>Вывод и обмен звезд</b>
@@ -123,6 +124,81 @@ def _require_bot(bot: Optional[Bot]) -> Bot:
     return bot
 
 
+def _format_user_api_error(e: ApiClientError) -> str:
+    detail = (e.detail or "").strip()
+    if e.status_code is None or e.status_code >= 500:
+        return USER_API_UNAVAILABLE_TEXT
+    if detail:
+        return f"❌ {detail}"
+    return USER_API_UNAVAILABLE_TEXT
+
+
+def _log_user_api_error(context: str, e: ApiClientError) -> None:
+    logger.warning(
+        "User API request failed context=%s status=%s path=%s detail=%s",
+        context,
+        e.status_code,
+        e.path,
+        e.detail,
+    )
+
+
+async def _answer_user_api_error(
+        callback: CallbackQuery,
+        e: ApiClientError,
+        *,
+        context: str,
+) -> None:
+    _log_user_api_error(context, e)
+    await callback.answer(_format_user_api_error(e), show_alert=True)
+
+
+async def _reply_user_api_error(
+        message: Message,
+        e: ApiClientError,
+        *,
+        context: str,
+        reply_markup=None,
+) -> None:
+    _log_user_api_error(context, e)
+    await message.answer(_format_user_api_error(e), reply_markup=reply_markup)
+
+
+async def _reply_user_api_error_via_callback_message(
+        callback: CallbackQuery,
+        e: ApiClientError,
+        *,
+        context: str,
+        reply_markup=None,
+) -> None:
+    _log_user_api_error(context, e)
+
+    if isinstance(callback.message, Message):
+        await callback.message.answer(
+            _format_user_api_error(e),
+            reply_markup=reply_markup,
+        )
+        return
+
+    await callback.answer(_format_user_api_error(e), show_alert=True)
+
+
+async def _send_user_api_error(
+        bot: Bot,
+        user_id: int,
+        e: ApiClientError,
+        *,
+        context: str,
+        reply_markup=None,
+) -> None:
+    _log_user_api_error(context, e)
+    await bot.send_message(
+        chat_id=user_id,
+        text=_format_user_api_error(e),
+        reply_markup=reply_markup,
+    )
+
+
 async def _ingest_task_channel_post_payload_via_api(payload: TaskChannelPostPayload) -> None:
     await ingest_task_channel_post_via_api(
         chat_id=payload["chat_id"],
@@ -179,9 +255,18 @@ async def ingest_task_channel_post(message: Message):
 async def open_main_menu_from_bottom_button(message: Message, state: FSMContext):
     await state.clear()
 
-    menu_payload = await get_bot_main_menu_for_user_context_via_api(
-        **_build_tg_user_payload(message.from_user),
-    )
+    try:
+        menu_payload = await get_bot_main_menu_for_user_context_via_api(
+            **_build_tg_user_payload(message.from_user),
+        )
+    except ApiClientError as e:
+        await _reply_user_api_error(
+            message,
+            e,
+            context="open_main_menu_from_bottom_button",
+        )
+        return
+
     role_level = int(menu_payload.get("role_level") or 0)
 
     await message.answer(
@@ -206,13 +291,21 @@ async def start(message: Message, bot: Bot):
     logger.info("START user_id=%s text=%r start_arg=%r", user_id, message.text, start_arg)
 
     start_referrer_id = int(start_arg) if start_arg and start_arg.isdigit() else None
-    menu_payload = await bootstrap_bot_user_via_api(
-        user_id=user_id,
-        username=username,
-        first_name=first_name,
-        last_name=last_name,
-        start_referrer_id=start_referrer_id,
-    )
+    try:
+        menu_payload = await bootstrap_bot_user_via_api(
+            user_id=user_id,
+            username=username,
+            first_name=first_name,
+            last_name=last_name,
+            start_referrer_id=start_referrer_id,
+        )
+    except ApiClientError as e:
+        await _reply_user_api_error(
+            message,
+            e,
+            context="start.bootstrap",
+        )
+        return
 
     if start_referrer_id is not None:
         logger.info(
@@ -257,9 +350,17 @@ async def start(message: Message, bot: Bot):
 async def check_subscription(callback: CallbackQuery, bot: Bot):
     user_id = callback.from_user.id
 
-    menu_payload = await get_bot_main_menu_for_user_context_via_api(
-        **_build_tg_user_payload(callback.from_user),
-    )
+    try:
+        menu_payload = await get_bot_main_menu_for_user_context_via_api(
+            **_build_tg_user_payload(callback.from_user),
+        )
+    except ApiClientError as e:
+        await _answer_user_api_error(
+            callback,
+            e,
+            context="check_subscription.main_menu",
+        )
+        return
 
     try:
         member = await bot.get_chat_member(CHANNEL_ID, user_id)
@@ -290,17 +391,31 @@ async def show_tasks(callback: CallbackQuery):
     await callback.answer()
 
     user_id = callback.from_user.id
-    menu_payload = await get_bot_main_menu_via_api(user_id)
+    try:
+        menu_payload = await get_bot_main_menu_via_api(user_id)
+    except ApiClientError as e:
+        await _reply_user_api_error_via_callback_message(
+            callback,
+            e,
+            context="show_tasks.main_menu",
+        )
+        return
+
     balance = float(menu_payload.get("balance") or 0)
+    tasks_status_text: Optional[str] = None
 
     try:
         next_task = await get_next_task(user_id)
+    except ApiClientError as e:
+        _log_user_api_error("show_tasks.next_task", e)
+        next_task = None
+        tasks_status_text = "⚠️ Не удалось проверить доступные посты."
     except Exception:
         next_task = None
 
     if next_task:
         tasks_status_text = "Сейчас есть доступные посты для просмотра."
-    else:
+    elif tasks_status_text is None:
         tasks_status_text = "Сейчас доступных постов нет."
 
     await safe_edit_text(
@@ -317,7 +432,16 @@ async def show_tasks(callback: CallbackQuery):
 @router.callback_query(F.data == "task:view_post")
 async def task_view_post(callback: CallbackQuery, bot: Bot, state: FSMContext):
     user_id = callback.from_user.id
-    task = await get_next_task(user_id)
+    try:
+        task = await get_next_task(user_id)
+    except ApiClientError as e:
+        await _answer_user_api_error(
+            callback,
+            e,
+            context="task_view_post.next_task",
+        )
+        return
+
     if not task:
         await callback.answer("❌ Доступных постов пока нет.", show_alert=True)
         return
@@ -333,6 +457,13 @@ async def task_view_post(callback: CallbackQuery, bot: Bot, state: FSMContext):
 
     try:
         open_result = await open_task(user_id, task_id)
+    except ApiClientError as e:
+        await _answer_user_api_error(
+            callback,
+            e,
+            context="task_view_post.open_task",
+        )
+        return
     except Exception:
         await callback.answer("❌ Не удалось открыть задание.", show_alert=True)
         return
@@ -393,6 +524,15 @@ async def task_view_post(callback: CallbackQuery, bot: Bot, state: FSMContext):
 
     try:
         result = await check_task(user_id, task_id)
+    except ApiClientError as e:
+        await _send_user_api_error(
+            bot,
+            user_id,
+            e,
+            context="task_view_post.check_task",
+            reply_markup=task_after_view_kb(),
+        )
+        return
     except Exception:
         await bot.send_message(
             chat_id=user_id,
@@ -404,18 +544,24 @@ async def task_view_post(callback: CallbackQuery, bot: Bot, state: FSMContext):
     status_value = result.get("status")
     message_text = result.get("message") or "Готово"
     new_balance = float(result.get("new_balance") or 0)
+    remaining_text: Optional[str] = None
 
     try:
         next_task = await get_next_task(user_id)
+    except ApiClientError as e:
+        _log_user_api_error("task_view_post.next_task_after_check", e)
+        next_task = None
+        remaining_text = "⚠️ Не удалось проверить, есть ли еще доступные посты."
     except Exception:
         next_task = None
 
     has_more_tasks = next_task is not None
-    remaining_text = (
-        "Доступные посты еще есть."
-        if has_more_tasks
-        else "Сейчас доступных постов больше нет."
-    )
+    if remaining_text is None:
+        remaining_text = (
+            "Доступные посты еще есть."
+            if has_more_tasks
+            else "Сейчас доступных постов больше нет."
+        )
 
     if status_value == "completed":
         await bot.send_message(
@@ -448,7 +594,16 @@ async def task_view_post(callback: CallbackQuery, bot: Bot, state: FSMContext):
 @router.callback_query(F.data == "back")
 async def back_to_main(callback: CallbackQuery, bot: Bot, state: FSMContext):
     user_id = callback.from_user.id
-    menu_payload = await get_bot_main_menu_via_api(user_id)
+    try:
+        menu_payload = await get_bot_main_menu_via_api(user_id)
+    except ApiClientError as e:
+        await _answer_user_api_error(
+            callback,
+            e,
+            context="back_to_main.main_menu",
+        )
+        return
+
     role_level = int(menu_payload.get("role_level") or 0)
 
     await _delete_last_task_post(bot, user_id, state)
@@ -463,7 +618,16 @@ async def back_to_main(callback: CallbackQuery, bot: Bot, state: FSMContext):
 
 @router.callback_query(F.data == "claim")
 async def claim_menu(callback: CallbackQuery):
-    data = await get_active_campaigns_via_api()
+    try:
+        data = await get_active_campaigns_via_api()
+    except ApiClientError as e:
+        await _answer_user_api_error(
+            callback,
+            e,
+            context="claim_menu.active_campaigns",
+        )
+        return
+
     campaigns = data.get("items", [])
 
     if not campaigns:
@@ -506,13 +670,21 @@ async def claim_for_campaign(callback: CallbackQuery):
     user_id = callback.from_user.id
     campaign_key = callback.data.split(":", 1)[1]
 
-    result = await claim_campaign_reward_via_api(
-        user_id=user_id,
-        campaign_key=campaign_key,
-        username=callback.from_user.username,
-        first_name=callback.from_user.first_name,
-        last_name=callback.from_user.last_name,
-    )
+    try:
+        result = await claim_campaign_reward_via_api(
+            user_id=user_id,
+            campaign_key=campaign_key,
+            username=callback.from_user.username,
+            first_name=callback.from_user.first_name,
+            last_name=callback.from_user.last_name,
+        )
+    except ApiClientError as e:
+        await _answer_user_api_error(
+            callback,
+            e,
+            context="claim_for_campaign.claim",
+        )
+        return
 
     ok = bool(result.get("ok"))
     msg = result.get("message") or "Готово"
@@ -532,7 +704,16 @@ async def withdraw_menu(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     await state.clear()
 
-    eligibility = await get_withdrawal_eligibility_via_api(callback.from_user.id)
+    try:
+        eligibility = await get_withdrawal_eligibility_via_api(callback.from_user.id)
+    except ApiClientError as e:
+        await _reply_user_api_error_via_callback_message(
+            callback,
+            e,
+            context="withdraw_menu.eligibility",
+        )
+        return
+
     balance = float(eligibility.get("available_balance") or 0)
 
     await safe_edit_text(
@@ -707,7 +888,16 @@ async def withdraw_choose_method(callback: CallbackQuery, state: FSMContext):
     await state.update_data(method=method)
     await state.set_state(WithdrawCreate.amount)
 
-    eligibility = await get_withdrawal_eligibility_via_api(callback.from_user.id)
+    try:
+        eligibility = await get_withdrawal_eligibility_via_api(callback.from_user.id)
+    except ApiClientError as e:
+        await _reply_user_api_error_via_callback_message(
+            callback,
+            e,
+            context="withdraw_choose_method.eligibility",
+        )
+        return
+
     balance = float(eligibility.get("available_balance") or 0)
 
     await state.clear()
@@ -948,7 +1138,16 @@ async def withdraw_my(callback: CallbackQuery):
     await callback.answer()
     user_id = callback.from_user.id
 
-    data = await get_my_withdrawals_via_api(user_id=user_id, limit=20)
+    try:
+        data = await get_my_withdrawals_via_api(user_id=user_id, limit=20)
+    except ApiClientError as e:
+        await _reply_user_api_error_via_callback_message(
+            callback,
+            e,
+            context="withdraw_my.list",
+        )
+        return
+
     items = data.get("items", [])
 
     if not items:
@@ -1164,12 +1363,20 @@ def daily_checkin_text(current_day: int, already_claimed_today: bool) -> str:
 async def daily_checkin_open(callback: CallbackQuery):
     await callback.answer()
 
-    status = await get_daily_checkin_status(
-        callback.from_user.id,
-        username=callback.from_user.username,
-        first_name=callback.from_user.first_name,
-        last_name=callback.from_user.last_name,
-    )
+    try:
+        status = await get_daily_checkin_status(
+            callback.from_user.id,
+            username=callback.from_user.username,
+            first_name=callback.from_user.first_name,
+            last_name=callback.from_user.last_name,
+        )
+    except ApiClientError as e:
+        await _reply_user_api_error_via_callback_message(
+            callback,
+            e,
+            context="daily_checkin_open.status",
+        )
+        return
 
     current_day = int(status["current_cycle_day"])
     already_claimed_today = bool(status["already_claimed_today"])
@@ -1192,22 +1399,38 @@ async def daily_checkin_noop(callback: CallbackQuery):
 
 @router.callback_query(F.data == "daily_checkin:claim")
 async def daily_checkin_claim(callback: CallbackQuery):
-    result = await claim_daily_checkin_via_api(
-        callback.from_user.id,
-        username=callback.from_user.username,
-        first_name=callback.from_user.first_name,
-        last_name=callback.from_user.last_name,
-    )
+    try:
+        result = await claim_daily_checkin_via_api(
+            callback.from_user.id,
+            username=callback.from_user.username,
+            first_name=callback.from_user.first_name,
+            last_name=callback.from_user.last_name,
+        )
+    except ApiClientError as e:
+        await _answer_user_api_error(
+            callback,
+            e,
+            context="daily_checkin_claim.claim",
+        )
+        return
 
     alert_text = result.get("message") or "Готово"
     await callback.answer(alert_text, show_alert=True)
 
-    status = await get_daily_checkin_status(
-        callback.from_user.id,
-        username=callback.from_user.username,
-        first_name=callback.from_user.first_name,
-        last_name=callback.from_user.last_name,
-    )
+    try:
+        status = await get_daily_checkin_status(
+            callback.from_user.id,
+            username=callback.from_user.username,
+            first_name=callback.from_user.first_name,
+            last_name=callback.from_user.last_name,
+        )
+    except ApiClientError as e:
+        await _reply_user_api_error_via_callback_message(
+            callback,
+            e,
+            context="daily_checkin_claim.status",
+        )
+        return
 
     current_day = int(status["current_cycle_day"])
     already_claimed_today = bool(status["already_claimed_today"])
