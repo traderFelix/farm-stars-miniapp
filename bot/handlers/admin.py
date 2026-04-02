@@ -5,13 +5,22 @@ import matplotlib
 
 from bot.api_client import (
     ApiClientError,
+    add_campaign_winners_via_api,
     adjust_user_balance,
     clear_user_suspicious,
+    create_campaign_via_api,
     create_task_channel_via_api,
+    delete_campaign_via_api,
+    delete_campaign_winner_via_api,
+    get_campaign_stats_via_api,
+    get_campaign_via_api,
+    get_campaign_winners_via_api,
+    get_campaigns_summary_via_api,
     get_withdrawal_details,
     get_task_channel_posts_via_api,
     get_task_channel_via_api,
     get_user_profile,
+    list_campaigns_via_api,
     list_withdrawals_queue,
     list_recent_fee_payments_via_api,
     list_task_channels_via_api,
@@ -21,6 +30,7 @@ from bot.api_client import (
     record_fee_refund_by_charge_id,
     record_withdrawal_fee_refund,
     reject_withdrawal,
+    set_campaign_status_via_api,
     set_user_role,
     toggle_task_channel_via_api,
     update_task_channel_params_via_api,
@@ -44,18 +54,9 @@ from shared.config import LEDGER_PAGE_SIZE, ROLE_ADMIN
 
 from bot.handlers.user import safe_edit_text
 
-from bot.db import (
-    tx,
+from bot.db import tx
 
-    # campaigns
-    upsert_campaign, set_campaign_status, delete_campaign, list_campaigns, list_campaigns_latest, get_campaign,
-    add_winners, delete_winner_if_not_claimed,
-
-    # stats
-    campaign_stats, list_winners, claimed_usernames, global_claims_stats, campaigns_status_counts,
-    unclaimed_total_amount, total_assigned_amount,
-)
-
+from shared.db.campaigns import global_claims_stats
 from shared.db.users import (
     fmt_stars, build_user_stats_text, user_has_role, users_total_count, users_new_since_hours,
     users_new_since_days, users_active_since_days, users_growth_by_day, total_balances, top_users_by_balance
@@ -190,13 +191,11 @@ def _build_task_channel_card_text(detail: dict) -> tuple[str, bool, int]:
     return text, is_active, channel_id
 
 
-async def _render_campaign_card(callback: CallbackQuery, key: str, db):
-    row = await get_campaign(db, key)
-    if not row:
-        await safe_edit_text(callback.message, "❌ Конкурс не найден.", reply_markup=admin_back_kb())
-        return
-
-    _k, title, amount, status = row[0], row[1], row[2], row[3]
+def _build_campaign_card_text(detail: dict) -> tuple[str, str]:
+    key = detail["campaign_key"]
+    title = detail.get("title") or ""
+    amount = float(detail.get("reward_amount") or 0)
+    status = detail.get("status") or "draft"
 
     if status == "active":
         status_text = "🟢 Активен"
@@ -207,10 +206,31 @@ async def _render_campaign_card(callback: CallbackQuery, key: str, db):
     else:
         status_text = f"⚪ {status}"
 
-    text = f"🏷 {key}\n" \
-            f"📝 {title}\n" \
-            f"🎁 Награда: {amount}⭐\n" \
-            f"📌 Статус: {status_text}"
+    text = (
+        f"🏷 {key}\n"
+        f"📝 {title}\n"
+        f"🎁 Награда: {amount}⭐\n"
+        f"📌 Статус: {status_text}"
+    )
+    return text, status
+
+
+async def _render_campaign_card(callback: CallbackQuery, key: str):
+    try:
+        detail = await get_campaign_via_api(key)
+    except ApiClientError as e:
+        if e.status_code == 404:
+            await safe_edit_text(callback.message, "❌ Конкурс не найден.", reply_markup=admin_back_kb())
+            return
+
+        await safe_edit_text(
+            callback.message,
+            f"❌ Не удалось загрузить конкурс из API.\n\n{e.detail}",
+            reply_markup=admin_back_kb(),
+        )
+        return
+
+    text, status = _build_campaign_card_text(detail)
     await safe_edit_text(callback.message, text, reply_markup=campaign_manage_kb(key, status))
 
 
@@ -221,10 +241,20 @@ async def adm_back(callback: CallbackQuery):
 
 
 @router.callback_query(F.data == "adm:list")
-async def adm_list(callback: CallbackQuery, db):
+async def adm_list(callback: CallbackQuery):
     await callback.answer()
 
-    rows = await list_campaigns(db)
+    try:
+        result = await list_campaigns_via_api()
+    except ApiClientError as e:
+        await safe_edit_text(
+            callback.message,
+            f"❌ Не удалось загрузить конкурсы из API.\n\n{e.detail}",
+            reply_markup=admin_back_kb(),
+        )
+        return
+
+    rows = result.get("items") or []
     if not rows:
         await safe_edit_text(callback.message, "Пока нет конкурсов.", reply_markup=admin_back_kb())
         return
@@ -233,45 +263,79 @@ async def adm_list(callback: CallbackQuery, db):
 
 
 @router.callback_query(F.data.startswith("adm:open:"))
-async def adm_open(callback: CallbackQuery, db):
+async def adm_open(callback: CallbackQuery):
     await callback.answer()
     key = callback.data.split(":", 2)[2]
-    await _render_campaign_card(callback, key, db)
+    await _render_campaign_card(callback, key)
 
 
 @router.callback_query(F.data.startswith("adm:on:"))
-async def adm_on(callback: CallbackQuery, db):
+async def adm_on(callback: CallbackQuery):
     await callback.answer()
     key = callback.data.split(":", 2)[2]
-    async with tx(db, immediate=False):
-        await set_campaign_status(db, key, "active")
-    await _render_campaign_card(callback, key, db)
-
-
-@router.callback_query(F.data.startswith("adm:off:"))
-async def adm_off(callback: CallbackQuery, db):
-    await callback.answer()
-    key = callback.data.split(":", 2)[2]
-    async with tx(db, immediate=False):
-        await set_campaign_status(db, key, "ended")
-    await _render_campaign_card(callback, key, db)
-
-
-@router.callback_query(F.data.startswith("adm:del:ask:"))
-async def adm_delete_ask(callback: CallbackQuery, db):
-    await callback.answer()
-    key = callback.data.split(":", 3)[3]
-
-    row = await get_campaign(db, key)
-    if not row:
+    try:
+        detail = await set_campaign_status_via_api(key, status="active")
+    except ApiClientError as e:
+        if e.status_code == 404:
+            await safe_edit_text(callback.message, "❌ Конкурс не найден.", reply_markup=admin_back_kb())
+            return
         await safe_edit_text(
             callback.message,
-            "❌ Конкурс не найден.",
-            reply_markup=admin_back_kb()
+            f"❌ Не удалось обновить статус конкурса через API.\n\n{e.detail}",
+            reply_markup=admin_back_kb(),
         )
         return
 
-    _k, title, amount, status = row[0], row[1], row[2], row[3]
+    text, status = _build_campaign_card_text(detail)
+    await safe_edit_text(callback.message, text, reply_markup=campaign_manage_kb(key, status))
+
+
+@router.callback_query(F.data.startswith("adm:off:"))
+async def adm_off(callback: CallbackQuery):
+    await callback.answer()
+    key = callback.data.split(":", 2)[2]
+    try:
+        detail = await set_campaign_status_via_api(key, status="ended")
+    except ApiClientError as e:
+        if e.status_code == 404:
+            await safe_edit_text(callback.message, "❌ Конкурс не найден.", reply_markup=admin_back_kb())
+            return
+        await safe_edit_text(
+            callback.message,
+            f"❌ Не удалось обновить статус конкурса через API.\n\n{e.detail}",
+            reply_markup=admin_back_kb(),
+        )
+        return
+
+    text, status = _build_campaign_card_text(detail)
+    await safe_edit_text(callback.message, text, reply_markup=campaign_manage_kb(key, status))
+
+
+@router.callback_query(F.data.startswith("adm:del:ask:"))
+async def adm_delete_ask(callback: CallbackQuery):
+    await callback.answer()
+    key = callback.data.split(":", 3)[3]
+
+    try:
+        detail = await get_campaign_via_api(key)
+    except ApiClientError as e:
+        if e.status_code == 404:
+            await safe_edit_text(
+                callback.message,
+                "❌ Конкурс не найден.",
+                reply_markup=admin_back_kb()
+            )
+            return
+        await safe_edit_text(
+            callback.message,
+            f"❌ Не удалось загрузить конкурс из API.\n\n{e.detail}",
+            reply_markup=admin_back_kb(),
+        )
+        return
+
+    title = detail.get("title") or ""
+    amount = float(detail.get("reward_amount") or 0)
+    status = detail.get("status") or "draft"
 
     await safe_edit_text(
         callback.message,
@@ -285,14 +349,17 @@ async def adm_delete_ask(callback: CallbackQuery, db):
 
 
 @router.callback_query(F.data.startswith("adm:del:do:"))
-async def adm_delete_do(callback: CallbackQuery, db):
+async def adm_delete_do(callback: CallbackQuery):
     await callback.answer()
     key = callback.data.split(":", 3)[3]
 
-    async with tx(db):
-        await delete_campaign(db, key)
+    try:
+        await delete_campaign_via_api(key)
+    except ApiClientError as e:
+        await callback.answer(f"❌ {e.detail}", show_alert=True)
+        return
 
-    await adm_list(callback, db)
+    await adm_list(callback)
 
 
 @router.callback_query(F.data.startswith("adm:add_winners:"))
@@ -311,7 +378,7 @@ async def add_winners_start(callback: CallbackQuery, state: FSMContext):
 
 
 @router.message(AddWinners.usernames)
-async def save_winners_msg(message: Message, state: FSMContext, db):
+async def save_winners_msg(message: Message, state: FSMContext):
 
     data = await state.get_data()
     key = data.get("campaign_key")
@@ -321,10 +388,14 @@ async def save_winners_msg(message: Message, state: FSMContext, db):
         if line.strip()
     ]
 
-    async with tx(db):
-        count = await add_winners(db, key, usernames)
+    try:
+        result = await add_campaign_winners_via_api(key, usernames)
+    except ApiClientError as e:
+        await message.answer(f"❌ {e.detail}")
+        return
 
     await state.clear()
+    count = int(result.get("added_count") or 0)
     await message.answer(f"✅ Добавлено {count} победителей к конкурсу {key}")
 
 
@@ -365,40 +436,63 @@ async def adm_new_amount(message: Message, state: FSMContext):
 
 
 @router.message(CampaignCreate.title)
-async def adm_new_title(message: Message, state: FSMContext, db):
+async def adm_new_title(message: Message, state: FSMContext):
     title = (message.text or "").strip()
     data = await state.get_data()
     key = data["key"]
     amount = data["amount"]
 
-    async with tx(db):
-        await upsert_campaign(db, key, title, amount, "draft")
+    try:
+        detail = await create_campaign_via_api(
+            campaign_key=key,
+            title=title,
+            amount=amount,
+        )
+    except ApiClientError as e:
+        await message.answer(f"❌ {e.detail}")
+        return
 
     await state.clear()
+    final_key = detail["campaign_key"]
+    final_amount = float(detail.get("reward_amount") or 0)
+    final_title = detail.get("title") or ""
 
     await message.answer(
         f"✅ Конкурс создан:\n"
-        f"🏷 {key}\n"
-        f"🎁 {amount}⭐\n"
-        f"📝 {title}\n"
+        f"🏷 {final_key}\n"
+        f"🎁 {final_amount}⭐\n"
+        f"📝 {final_title}\n"
         f"Статус: 🟡 Черновик",
-        reply_markup=campaign_created_kb(key)
+        reply_markup=campaign_created_kb(final_key)
     )
 
 
 @router.callback_query(F.data == "adm:stats_menu")
-async def adm_stats_menu(callback: CallbackQuery, db):
+async def adm_stats_menu(callback: CallbackQuery):
     await callback.answer()
 
-    rows = await list_campaigns_latest(db, limit=5)
+    try:
+        summary = await get_campaigns_summary_via_api(latest_limit=5)
+    except ApiClientError as e:
+        await safe_edit_text(
+            callback.message,
+            f"❌ Не удалось загрузить статистику конкурсов из API.\n\n{e.detail}",
+            reply_markup=admin_back_kb(),
+        )
+        return
+
+    rows = summary.get("latest_items") or []
     if not rows:
         await safe_edit_text(callback.message, "Нет конкурсов", reply_markup=admin_back_kb())
         return
 
-    total_assigned_sum = await total_assigned_amount(db)
-    claims_count_all, total_claimed_all = await global_claims_stats(db)
-    active_cnt, ended_cnt, draft_cnt = await campaigns_status_counts(db)
-    unclaimed_sum = await unclaimed_total_amount(db)
+    total_assigned_sum = float(summary.get("total_assigned_amount") or 0)
+    claims_count_all = int(summary.get("claims_count") or 0)
+    total_claimed_all = float(summary.get("total_claimed_amount") or 0)
+    active_cnt = int(summary.get("active_count") or 0)
+    ended_cnt = int(summary.get("ended_count") or 0)
+    draft_cnt = int(summary.get("draft_count") or 0)
+    unclaimed_sum = float(summary.get("unclaimed_amount") or 0)
 
     await safe_edit_text(
         callback.message,
@@ -415,13 +509,25 @@ async def adm_stats_menu(callback: CallbackQuery, db):
 
 
 @router.callback_query(F.data.startswith("adm:stats:"))
-async def adm_stats(callback: CallbackQuery, db):
+async def adm_stats(callback: CallbackQuery):
     await callback.answer()
 
     key = callback.data.split(":")[2]
 
-    claims_count, winners_cnt, total_paid = await campaign_stats(db, key)
-    claimed = await claimed_usernames(db, key)
+    try:
+        stats = await get_campaign_stats_via_api(key)
+    except ApiClientError as e:
+        await safe_edit_text(
+            callback.message,
+            f"❌ Не удалось загрузить статистику конкурса из API.\n\n{e.detail}",
+            reply_markup=admin_back_kb(),
+        )
+        return
+
+    claims_count = int(stats.get("claims_count") or 0)
+    winners_cnt = int(stats.get("winners_count") or 0)
+    total_paid = float(stats.get("total_paid") or 0)
+    claimed = stats.get("claimed_usernames") or []
 
     if claimed:
         claimed_text = "\n".join([f"@{u}" for u in claimed[:50]])
@@ -441,13 +547,23 @@ async def adm_stats(callback: CallbackQuery, db):
 
 
 @router.callback_query(F.data.startswith("adm:show_winners:"))
-async def adm_show_winners(callback: CallbackQuery, db):
+async def adm_show_winners(callback: CallbackQuery):
     await callback.answer()
 
     key = callback.data.split(":")[2]
 
-    winners = await list_winners(db, key)
-    claimed = set(await claimed_usernames(db, key))
+    try:
+        result = await get_campaign_winners_via_api(key)
+    except ApiClientError as e:
+        await safe_edit_text(
+            callback.message,
+            f"❌ Не удалось загрузить победителей конкурса из API.\n\n{e.detail}",
+            reply_markup=admin_back_kb(),
+        )
+        return
+
+    winners = result.get("winners") or []
+    claimed = set(result.get("claimed_usernames") or [])
 
     back_kb = InlineKeyboardMarkup(
         inline_keyboard=[
@@ -492,15 +608,20 @@ async def winner_del_start(callback: CallbackQuery, state: FSMContext):
 
 
 @router.message(DeleteWinner.username)
-async def winner_del_finish(message: Message, state: FSMContext, db):
+async def winner_del_finish(message: Message, state: FSMContext):
     data = await state.get_data()
     key = data["campaign_key"]
     username = (message.text or "").strip()
 
-    async with tx(db):
-        ok, msg = await delete_winner_if_not_claimed(db, key, username)
+    try:
+        result = await delete_campaign_winner_via_api(key, username=username)
+    except ApiClientError as e:
+        await message.answer(f"❌ {e.detail}")
+        return
 
     await state.clear()
+    ok = bool(result.get("ok"))
+    msg = result.get("message") or "Неизвестная ошибка"
 
     if ok:
         await message.answer(f"✅ Удалил {username} из победителей конкурса {key}")

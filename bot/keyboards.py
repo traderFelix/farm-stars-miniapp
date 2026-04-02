@@ -162,7 +162,13 @@ def _status_icon(status: str) -> str:
 
 def campaigns_list_kb(rows) -> InlineKeyboardMarkup:
     keyboard = []
-    for key, amount, status, created_at in rows[:50]:
+    for row in rows[:50]:
+        if isinstance(row, dict):
+            key = row["campaign_key"]
+            amount = row.get("reward_amount") or 0
+            status = row.get("status") or "draft"
+        else:
+            key, amount, status, created_at = row
         icon = _status_icon(str(status))
         keyboard.append([
             InlineKeyboardButton(
@@ -176,7 +182,12 @@ def campaigns_list_kb(rows) -> InlineKeyboardMarkup:
 
 def stats_list_kb(rows) -> InlineKeyboardMarkup:
     keyboard = []
-    for key, amount, status, created_at in rows:
+    for row in rows:
+        if isinstance(row, dict):
+            key = row["campaign_key"]
+            status = row.get("status") or "draft"
+        else:
+            key, amount, status, created_at = row
         icon = _status_icon(str(status))
         keyboard.append([
             InlineKeyboardButton(

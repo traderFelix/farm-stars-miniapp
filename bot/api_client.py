@@ -361,11 +361,61 @@ class ReviewWithdrawalsApi(ApiSection):
         )
 
 
-class AdminCampaignsApi(ApiSection):
-    """
-    Reserved for admin campaign endpoints.
-    Admin UI stays in Telegram bot, while business logic will move to API gradually.
-    """
+class CampaignsAdminApi(ApiSection):
+    async def list(self) -> JsonDict:
+        return await self._get("/admin/campaigns")
+
+    async def get(self, campaign_key: str) -> JsonDict:
+        return await self._get(f"/admin/campaigns/{campaign_key}")
+
+    async def create(
+            self,
+            *,
+            campaign_key: str,
+            title: str,
+            amount: float,
+    ) -> JsonDict:
+        return await self._post(
+            "/admin/campaigns",
+            json={
+                "campaign_key": campaign_key,
+                "title": title,
+                "amount": float(amount),
+            },
+        )
+
+    async def set_status(self, campaign_key: str, *, status: str) -> JsonDict:
+        return await self._post(
+            f"/admin/campaigns/{campaign_key}/status",
+            json={"status": status},
+        )
+
+    async def delete(self, campaign_key: str) -> JsonDict:
+        return await self._post(f"/admin/campaigns/{campaign_key}/delete", json={})
+
+    async def add_winners(self, campaign_key: str, *, usernames: list[str]) -> JsonDict:
+        return await self._post(
+            f"/admin/campaigns/{campaign_key}/winners",
+            json={"usernames": usernames},
+        )
+
+    async def get_summary(self, *, latest_limit: int = 5) -> JsonDict:
+        return await self._get(
+            "/admin/campaigns/summary",
+            params={"latest_limit": int(latest_limit)},
+        )
+
+    async def get_stats(self, campaign_key: str) -> JsonDict:
+        return await self._get(f"/admin/campaigns/{campaign_key}/stats")
+
+    async def get_winners(self, campaign_key: str) -> JsonDict:
+        return await self._get(f"/admin/campaigns/{campaign_key}/winners")
+
+    async def delete_winner(self, campaign_key: str, *, username: str) -> JsonDict:
+        return await self._post(
+            f"/admin/campaigns/{campaign_key}/winners/delete",
+            json={"username": username},
+        )
 
 
 class TaskChannelsApi(ApiSection):
@@ -442,7 +492,7 @@ class BotApiClient:
         self.withdrawals = WithdrawalsApi(self)
         self.users = UsersApi(self)
         self.withdrawals_review = ReviewWithdrawalsApi(self)
-        self.admin_campaigns = AdminCampaignsApi(self)
+        self.admin_campaigns = CampaignsAdminApi(self)
         self.task_channels = TaskChannelsApi(self)
 
     def _build_headers(self) -> dict[str, str]:
@@ -551,6 +601,55 @@ async def mark_user_suspicious(user_id: int, reason: Optional[str] = None) -> Js
 
 async def clear_user_suspicious(user_id: int) -> JsonDict:
     return await api_client.users.clear_suspicious(user_id)
+
+
+async def list_campaigns_via_api() -> JsonDict:
+    return await api_client.admin_campaigns.list()
+
+
+async def get_campaign_via_api(campaign_key: str) -> JsonDict:
+    return await api_client.admin_campaigns.get(campaign_key)
+
+
+async def create_campaign_via_api(
+        *,
+        campaign_key: str,
+        title: str,
+        amount: float,
+) -> JsonDict:
+    return await api_client.admin_campaigns.create(
+        campaign_key=campaign_key,
+        title=title,
+        amount=amount,
+    )
+
+
+async def set_campaign_status_via_api(campaign_key: str, *, status: str) -> JsonDict:
+    return await api_client.admin_campaigns.set_status(campaign_key, status=status)
+
+
+async def delete_campaign_via_api(campaign_key: str) -> JsonDict:
+    return await api_client.admin_campaigns.delete(campaign_key)
+
+
+async def add_campaign_winners_via_api(campaign_key: str, usernames: list[str]) -> JsonDict:
+    return await api_client.admin_campaigns.add_winners(campaign_key, usernames=usernames)
+
+
+async def get_campaigns_summary_via_api(*, latest_limit: int = 5) -> JsonDict:
+    return await api_client.admin_campaigns.get_summary(latest_limit=latest_limit)
+
+
+async def get_campaign_stats_via_api(campaign_key: str) -> JsonDict:
+    return await api_client.admin_campaigns.get_stats(campaign_key)
+
+
+async def get_campaign_winners_via_api(campaign_key: str) -> JsonDict:
+    return await api_client.admin_campaigns.get_winners(campaign_key)
+
+
+async def delete_campaign_winner_via_api(campaign_key: str, *, username: str) -> JsonDict:
+    return await api_client.admin_campaigns.delete_winner(campaign_key, username=username)
 
 
 async def list_withdrawals_queue(*, status: str = "pending", limit: int = 20) -> JsonDict:
@@ -776,6 +875,16 @@ __all__ = [
     "adjust_user_balance",
     "mark_user_suspicious",
     "clear_user_suspicious",
+    "list_campaigns_via_api",
+    "get_campaign_via_api",
+    "create_campaign_via_api",
+    "set_campaign_status_via_api",
+    "delete_campaign_via_api",
+    "add_campaign_winners_via_api",
+    "get_campaigns_summary_via_api",
+    "get_campaign_stats_via_api",
+    "get_campaign_winners_via_api",
+    "delete_campaign_winner_via_api",
     "list_withdrawals_queue",
     "get_withdrawal_details",
     "mark_withdrawal_paid",
