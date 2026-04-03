@@ -19,26 +19,16 @@ class UserMainMenuRequest(BaseModel):
     user: TelegramUserPayload
 
 
-class UserReferralsRequest(BaseModel):
-    user: TelegramUserPayload
-
-
 class UserMainMenuResponse(BaseModel):
     user_id: int
     balance: float
     role: str
     role_level: int
     activity_index: float
-    text: str
 
 
 class UserBootstrapResponse(UserMainMenuResponse):
     referrer_bound: bool = False
-
-
-class UserReferralsResponse(BaseModel):
-    user_id: int
-    invited_count: int
 
 
 class UserProfileResponse(BaseModel):
