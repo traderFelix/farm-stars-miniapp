@@ -145,6 +145,11 @@ type RequestOptions = {
     auth?: boolean;
 };
 
+type ErrorPayload = {
+    detail?: unknown;
+    message?: unknown;
+};
+
 function isBrowser(): boolean {
     return typeof window !== "undefined";
 }
@@ -181,6 +186,22 @@ function buildHeaders(auth: boolean, hasBody: boolean): HeadersInit {
     return headers;
 }
 
+function extractErrorMessage(data: unknown, status: number): string {
+    if (data && typeof data === "object") {
+        const payload = data as ErrorPayload;
+
+        if (typeof payload.detail === "string" && payload.detail.trim()) {
+            return payload.detail;
+        }
+
+        if (typeof payload.message === "string" && payload.message.trim()) {
+            return payload.message;
+        }
+    }
+
+    return `Request failed with status ${status}`;
+}
+
 async function apiRequest<T>(
     path: string,
     { method = "GET", body, auth = false }: RequestOptions = {},
@@ -205,11 +226,7 @@ async function apiRequest<T>(
     }
 
     if (!response.ok) {
-        const message =
-            data?.detail ||
-            data?.message ||
-            `Request failed with status ${response.status}`;
-        throw new Error(message);
+        throw new Error(extractErrorMessage(data, response.status));
     }
 
     return data as T;
