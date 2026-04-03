@@ -47,6 +47,30 @@ export type CheckinClaimResponse = {
     message: string;
 };
 
+export type CampaignItem = {
+    campaign_key: string;
+    title: string;
+    reward_amount: number;
+};
+
+export type CampaignListResponse = {
+    items: CampaignItem[];
+};
+
+export type CampaignClaimResponse = {
+    ok: boolean;
+    message: string;
+    new_balance: number;
+};
+
+export type ReferralMeResponse = {
+    user_id: number;
+    invited_count: number;
+    reward_percent: number;
+    invite_link: string;
+    share_text: string;
+};
+
 export type WithdrawalMethod = "ton" | "stars";
 export type WithdrawalStatus =
     | "pending"
@@ -54,6 +78,21 @@ export type WithdrawalStatus =
     | "rejected"
     | "paid"
     | "cancelled";
+
+export type WithdrawalFeeTier = {
+    min_amount: number;
+    fee_xtr: number;
+};
+
+export type WithdrawalPolicy = {
+    first_withdraw_free: boolean;
+    is_first_withdraw: boolean;
+    rate_source_name: string;
+    rate_source_url: string;
+    fee_currency: string;
+    fee_balance_source: string;
+    fee_tiers: WithdrawalFeeTier[];
+};
 
 export type WithdrawalEligibilityResponse = {
     can_withdraw: boolean;
@@ -65,6 +104,7 @@ export type WithdrawalEligibilityResponse = {
     task_earnings_percent: number;
     available_balance: number;
     message: string;
+    policy: WithdrawalPolicy;
 };
 
 export type WithdrawalCreateRequest = {
@@ -78,6 +118,8 @@ export type WithdrawalCreateResponse = {
     withdrawal_id: number;
     status: WithdrawalStatus;
     message: string;
+    balance?: number;
+    fee_xtr?: number;
 };
 
 export type WithdrawalItem = {
@@ -152,7 +194,7 @@ async function apiRequest<T>(
         cache: "no-store",
     });
 
-    let data: any;
+    let data: unknown;
     const contentType = response.headers.get("content-type") || "";
 
     if (contentType.includes("application/json")) {
@@ -246,6 +288,29 @@ export async function getCheckinStatus(): Promise<CheckinStatus> {
 export async function claimCheckin(): Promise<CheckinClaimResponse> {
     return apiRequest<CheckinClaimResponse>("/checkin/claim", {
         method: "POST",
+        auth: true,
+    });
+}
+
+export async function getActiveCampaigns(): Promise<CampaignListResponse> {
+    return apiRequest<CampaignListResponse>("/campaigns/active", {
+        method: "GET",
+        auth: true,
+    });
+}
+
+export async function claimCampaign(
+    campaignKey: string,
+): Promise<CampaignClaimResponse> {
+    return apiRequest<CampaignClaimResponse>(`/campaigns/${campaignKey}/claim`, {
+        method: "POST",
+        auth: true,
+    });
+}
+
+export async function getMyReferrals(): Promise<ReferralMeResponse> {
+    return apiRequest<ReferralMeResponse>("/referrals/me", {
+        method: "GET",
         auth: true,
     });
 }

@@ -8,8 +8,10 @@ from api.schemas.withdrawals import (
     WithdrawalCreateRequest,
     WithdrawalCreateResponse,
     WithdrawalEligibilityResponse,
+    WithdrawalFeeTier,
     WithdrawalItem,
     WithdrawalListResponse,
+    WithdrawalPolicyResponse,
     WithdrawalPreviewRequest,
     WithdrawalPreviewResponse,
 )
@@ -35,6 +37,8 @@ from shared.db.withdrawals import (
 )
 from shared.db.xtr_ledger import xtr_ledger_add
 
+MIN_TASK_PERCENT_VALUE = round(MIN_WITHDRAW_PERCENT * 100, 2)
+
 
 @dataclass
 class EligibilityCheckResult:
@@ -47,6 +51,7 @@ class EligibilityCheckResult:
     required_account_age_hours: float
     task_earnings_percent: float
     available_balance: float
+    is_first_withdraw: bool
 
 
 def _safe_float(value) -> float:
@@ -81,6 +86,22 @@ def get_withdraw_fee(amount: float, is_first: bool) -> int:
     return 5
 
 
+def build_withdrawal_policy(*, is_first_withdraw: bool) -> WithdrawalPolicyResponse:
+    return WithdrawalPolicyResponse(
+        first_withdraw_free=True,
+        is_first_withdraw=is_first_withdraw,
+        rate_source_name="Fragment",
+        rate_source_url="https://fragment.com",
+        fee_currency="Telegram Stars",
+        fee_balance_source="telegram_stars_balance",
+        fee_tiers=[
+            WithdrawalFeeTier(min_amount=100, fee_xtr=5),
+            WithdrawalFeeTier(min_amount=200, fee_xtr=3),
+            WithdrawalFeeTier(min_amount=500, fee_xtr=0),
+        ],
+    )
+
+
 async def _build_eligibility(user_id: int) -> EligibilityCheckResult:
     db = await get_db()
     try:
@@ -90,12 +111,13 @@ async def _build_eligibility(user_id: int) -> EligibilityCheckResult:
                 can_withdraw=False,
                 message="Пользователь не найден.",
                 min_withdraw=MIN_WITHDRAW,
-                min_task_percent=MIN_WITHDRAW_PERCENT,
+                min_task_percent=MIN_TASK_PERCENT_VALUE,
                 has_pending_withdrawal=False,
                 account_age_hours=0.0,
                 required_account_age_hours=REQUIRED_ACCOUNT_AGE_HOURS,
                 task_earnings_percent=0.0,
                 available_balance=0.0,
+                is_first_withdraw=True,
             )
 
         balance = _safe_float(user["balance"])
@@ -103,18 +125,20 @@ async def _build_eligibility(user_id: int) -> EligibilityCheckResult:
         pending = await has_pending_withdrawal(db, user_id)
         breakdown = await get_user_earnings_breakdown(db, user_id)
         task_percent = _extract_task_percent(breakdown)
+        first_withdraw = await is_first_withdraw(db, user_id)
 
         if pending:
             return EligibilityCheckResult(
                 can_withdraw=False,
                 message="У тебя уже есть заявка на вывод в обработке.",
                 min_withdraw=MIN_WITHDRAW,
-                min_task_percent=MIN_WITHDRAW_PERCENT,
+                min_task_percent=MIN_TASK_PERCENT_VALUE,
                 has_pending_withdrawal=True,
                 account_age_hours=round(account_age_hours, 2),
                 required_account_age_hours=REQUIRED_ACCOUNT_AGE_HOURS,
                 task_earnings_percent=task_percent,
                 available_balance=balance,
+                is_first_withdraw=first_withdraw,
             )
 
         if account_age_hours < REQUIRED_ACCOUNT_AGE_HOURS:
@@ -122,12 +146,13 @@ async def _build_eligibility(user_id: int) -> EligibilityCheckResult:
                 can_withdraw=False,
                 message="Вывод будет доступен после 24 часов с момента регистрации.",
                 min_withdraw=MIN_WITHDRAW,
-                min_task_percent=MIN_WITHDRAW_PERCENT,
+                min_task_percent=MIN_TASK_PERCENT_VALUE,
                 has_pending_withdrawal=False,
                 account_age_hours=round(account_age_hours, 2),
                 required_account_age_hours=REQUIRED_ACCOUNT_AGE_HOURS,
                 task_earnings_percent=task_percent,
                 available_balance=balance,
+                is_first_withdraw=first_withdraw,
             )
 
         if balance < MIN_WITHDRAW:
@@ -135,40 +160,43 @@ async def _build_eligibility(user_id: int) -> EligibilityCheckResult:
                 can_withdraw=False,
                 message=f"Минимальная сумма вывода — {MIN_WITHDRAW:.0f}⭐️.",
                 min_withdraw=MIN_WITHDRAW,
-                min_task_percent=MIN_WITHDRAW_PERCENT,
+                min_task_percent=MIN_TASK_PERCENT_VALUE,
                 has_pending_withdrawal=False,
                 account_age_hours=round(account_age_hours, 2),
                 required_account_age_hours=REQUIRED_ACCOUNT_AGE_HOURS,
                 task_earnings_percent=task_percent,
                 available_balance=balance,
+                is_first_withdraw=first_withdraw,
             )
 
         if task_percent < MIN_WITHDRAW_PERCENT:
             return EligibilityCheckResult(
                 can_withdraw=False,
                 message=(
-                    f"Для вывода нужно минимум {MIN_WITHDRAW_PERCENT:.0f}% "
+                    f"Для вывода нужно минимум {MIN_TASK_PERCENT_VALUE:.0f}% "
                     f"звезд, добытых через задания."
                 ),
                 min_withdraw=MIN_WITHDRAW,
-                min_task_percent=MIN_WITHDRAW_PERCENT,
+                min_task_percent=MIN_TASK_PERCENT_VALUE,
                 has_pending_withdrawal=False,
                 account_age_hours=round(account_age_hours, 2),
                 required_account_age_hours=REQUIRED_ACCOUNT_AGE_HOURS,
                 task_earnings_percent=task_percent,
                 available_balance=balance,
+                is_first_withdraw=first_withdraw,
             )
 
         return EligibilityCheckResult(
             can_withdraw=True,
             message="Вывод доступен.",
             min_withdraw=MIN_WITHDRAW,
-            min_task_percent=MIN_WITHDRAW_PERCENT,
+            min_task_percent=MIN_TASK_PERCENT_VALUE,
             has_pending_withdrawal=False,
             account_age_hours=round(account_age_hours, 2),
             required_account_age_hours=REQUIRED_ACCOUNT_AGE_HOURS,
             task_earnings_percent=task_percent,
             available_balance=balance,
+            is_first_withdraw=first_withdraw,
         )
     finally:
         await db.close()
@@ -228,6 +256,7 @@ async def get_withdrawal_eligibility_for_user(
         task_earnings_percent=result.task_earnings_percent,
         available_balance=result.available_balance,
         message=result.message,
+        policy=build_withdrawal_policy(is_first_withdraw=result.is_first_withdraw),
     )
 
 

@@ -17,6 +17,8 @@ import {
 import { clearOpenedTask, getOpenedTask, saveOpenedTask } from "@/lib/opened-task";
 import type { TaskCheckResponse, TaskListItem } from "@/lib/tasks";
 import { getTelegramInitData, initTelegramMiniApp } from "@/lib/telegram";
+import CampaignsPanel from "@/components/campaigns/CampaignsPanel";
+import ReferralsPanel from "@/components/referrals/ReferralsPanel";
 import WithdrawalPanel from "@/components/withdrawal/WithdrawalPanel";
 
 type BootstrapState = "idle" | "loading" | "ready" | "error";
@@ -403,6 +405,25 @@ export default function HomePage() {
                         )}
                       </>
                   )}
+                </section>
+
+                <section className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                  <CampaignsPanel
+                      onBalanceChange={(nextBalance) =>
+                          setProfile((prev) =>
+                              prev
+                                  ? {
+                                    ...prev,
+                                    balance: Number(nextBalance),
+                                  }
+                                  : prev,
+                          )
+                      }
+                  />
+                </section>
+
+                <section className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                  <ReferralsPanel />
                 </section>
 
                 <section className="rounded-2xl border border-white/10 bg-white/5 p-4">

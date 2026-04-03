@@ -7,7 +7,7 @@ from api.schemas.campaigns import CampaignClaimResponse, CampaignItem, CampaignL
 from shared.db.abuse import count_recent_abuse_events, log_abuse_event
 from shared.db.common import tx
 from shared.db.ledger import apply_balance_delta
-from shared.db.users import get_balance, register_user
+from shared.db.users import get_balance, get_user_by_id, register_user
 
 
 async def _get_campaign(db, campaign_key: str):
@@ -141,8 +141,17 @@ async def claim_campaign_reward_for_user(
             )
 
         async with tx(db, immediate=True):
+            user_row = await get_user_by_id(db, user_id)
+            resolved_username = username if username is not None else (user_row["username"] if user_row else None)
+            resolved_first_name = first_name if first_name is not None else (
+                user_row["tg_first_name"] if user_row else None
+            )
+            resolved_last_name = last_name if last_name is not None else (
+                user_row["tg_last_name"] if user_row else None
+            )
+
             await log_abuse_event(db, user_id, "claim_click")
-            await register_user(db, user_id, username, first_name, last_name)
+            await register_user(db, user_id, resolved_username, resolved_first_name, resolved_last_name)
 
             row = await _get_campaign(db, normalized_campaign_key)
             if not row:
@@ -164,10 +173,10 @@ async def claim_campaign_reward_for_user(
                     new_balance=0,
                 )
 
-            if username:
-                await _attach_winner_user_id(db, normalized_campaign_key, username, user_id)
+            if resolved_username:
+                await _attach_winner_user_id(db, normalized_campaign_key, resolved_username, user_id)
 
-            if not await _is_winner(db, normalized_campaign_key, user_id, username):
+            if not await _is_winner(db, normalized_campaign_key, user_id, resolved_username):
                 await log_abuse_event(db, user_id, "claim_fail")
                 return CampaignClaimResponse(
                     ok=False,

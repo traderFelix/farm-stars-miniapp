@@ -17,11 +17,6 @@ class UserLookup(StatesGroup):
 class AdminAdjust(StatesGroup):
     amount = State()
 
-class WithdrawCreate(StatesGroup):
-    amount = State()
-    wallet = State()
-    fee_payment = State()
-
 class AdminRefundFee(StatesGroup):
     waiting_manual_data = State()
 

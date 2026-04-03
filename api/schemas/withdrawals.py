@@ -16,6 +16,22 @@ class WithdrawalEligibilityResponse(BaseModel):
     task_earnings_percent: float
     available_balance: float
     message: str
+    policy: "WithdrawalPolicyResponse"
+
+
+class WithdrawalFeeTier(BaseModel):
+    min_amount: float
+    fee_xtr: int
+
+
+class WithdrawalPolicyResponse(BaseModel):
+    first_withdraw_free: bool
+    is_first_withdraw: bool
+    rate_source_name: str
+    rate_source_url: str
+    fee_currency: str
+    fee_balance_source: str
+    fee_tiers: list[WithdrawalFeeTier]
 
 
 class WithdrawalCreateRequest(BaseModel):

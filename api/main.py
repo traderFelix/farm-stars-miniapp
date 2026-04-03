@@ -14,6 +14,7 @@ from api.routes.health import router as health_router
 from api.routes.internal_users import router as internal_users_router
 from api.routes.miniapp_compat import router as miniapp_compat_router
 from api.routes.profile import router as profile_router
+from api.routes.referrals import router as referrals_router
 from api.routes.tasks import router as tasks_router
 from api.routes.ledger import router as ledger_router
 from api.routes.checkin import router as checkin_router
@@ -38,6 +39,7 @@ app.include_router(auth_router)
 app.include_router(campaigns_router)
 app.include_router(internal_users_router)
 app.include_router(profile_router)
+app.include_router(referrals_router)
 app.include_router(tasks_router)
 app.include_router(miniapp_compat_router)
 app.include_router(users_router)

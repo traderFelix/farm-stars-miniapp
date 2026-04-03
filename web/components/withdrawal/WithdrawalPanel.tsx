@@ -148,6 +148,35 @@ export default function WithdrawalPanel() {
                         {formatBalance(eligibility.required_account_age_hours)} ч
                     </div>
                     <div>• Одновременно можно иметь только одну активную заявку</div>
+                    <div>
+                        • Курс обмена в TON определяется по рынку{" "}
+                        <a
+                            href={eligibility.policy.rate_source_url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-white underline decoration-white/30 underline-offset-2"
+                        >
+                            {eligibility.policy.rate_source_name}
+                        </a>
+                    </div>
+                    <div>
+                        •{" "}
+                        {eligibility.policy.is_first_withdraw
+                            ? "Твой первый вывод сейчас без комиссии"
+                            : "Первый вывод уже был бесплатным, дальше действует шкала комиссий ниже"}
+                    </div>
+                    {eligibility.policy.fee_tiers.map((tier) => (
+                        <div key={tier.min_amount}>
+                            • От {formatBalance(tier.min_amount)} ⭐:{" "}
+                            {tier.fee_xtr > 0
+                                ? `${tier.fee_xtr} ${eligibility.policy.fee_currency}`
+                                : "без комиссии"}
+                        </div>
+                    ))}
+                    <div>
+                        • Комиссия списывается только с баланса {eligibility.policy.fee_currency},
+                        а не с игрового баланса звезд
+                    </div>
                 </div>
             </div>
 

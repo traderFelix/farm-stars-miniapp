@@ -1,62 +1,41 @@
-import asyncio, logging
+import asyncio
+import logging
 
 from typing import Any, Optional, TypedDict, Union
 
-from aiogram.filters import CommandStart
-from aiogram.fsm.context import FSMContext
+from aiogram import Bot, F, Router
 from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramBadRequest
-from aiogram import Router, F, Bot
+from aiogram.filters import CommandStart
+from aiogram.fsm.context import FSMContext
 from aiogram.types import (
     CallbackQuery,
     InaccessibleMessage,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
-    LabeledPrice,
     Message,
-    PreCheckoutQuery,
     User,
 )
 
-from shared.config import (
-    ADMIN_IDS, MIN_WITHDRAW, MIN_WITHDRAW_PERCENT, ROLE_CLIENT, ROLE_PARTNER
+from bot.api_client import (
+    ApiClientError,
+    bootstrap_bot_user_via_api,
+    check_task,
+    get_bot_main_menu_for_user_context_via_api,
+    get_bot_main_menu_via_api,
+    get_next_task,
+    ingest_task_channel_post_via_api,
+    open_task,
 )
-
-from shared.formatting import fmt_stars
-
-from bot.keyboards import (
-    main_menu, tasks_menu, withdraw_stars_amount_kb, task_after_view_kb,
-    withdraw_method_kb, withdraw_menu_kb, withdraw_back_kb, referrals_kb, daily_checkin_kb
-)
-
+from bot.keyboards import main_menu, task_after_view_kb, tasks_menu
 from bot.pending_channel_posts import (
     TaskChannelPostPayload,
     build_task_channel_post_payload,
     enqueue_task_channel_post_for_retry,
     flush_pending_task_channel_posts,
 )
-
-from bot.states import WithdrawCreate
-
-from bot.api_client import (
-    ApiClientError,
-    bootstrap_bot_user_via_api,
-    claim_campaign_reward_via_api,
-    get_next_task,
-    open_task,
-    check_task,
-    get_active_campaigns_via_api,
-    get_bot_main_menu_for_user_context_via_api,
-    get_bot_main_menu_via_api,
-    get_bot_referrals_for_user_context_via_api,
-    get_daily_checkin_status,
-    claim_daily_checkin_via_api,
-    get_withdrawal_eligibility_via_api,
-    ingest_task_channel_post_via_api,
-    preview_withdrawal_via_api,
-    get_my_withdrawals_via_api,
-    create_withdrawal_via_api,
-)
+from shared.config import ROLE_CLIENT, ROLE_PARTNER
+from shared.formatting import fmt_stars
 
 router = Router()
 
@@ -66,30 +45,9 @@ LAST_TASK_POST_MSG_ID_KEY = "last_task_post_message_id"
 USER_API_UNAVAILABLE_TEXT = "⚠️ Сервис временно недоступен. Попробуй еще раз чуть позже."
 START_TEXT = (
     "🚀 Основной интерфейс теперь в Mini App.\n\n"
-    "Открой приложение для профиля, баланса, истории и вывода.\n"
+    "Открой приложение для профиля, daily bonus, конкурсов, рефералок и вывода.\n"
     "Просмотры постов можно запускать прямо из бота."
 )
-
-WITHDRAW_TEXT = f"""
-💰 <b>Вывод и обмен звезд</b>
-
-🔷 Минимальная сумма вывода и обмена <b>{MIN_WITHDRAW}⭐</b>
-🔷 Конвертация звезд в TON производится по курсу на сайте <b>Fragment</b>
-🔷 Для вывода необходимо, чтобы минимум <b>{MIN_WITHDRAW_PERCENT * 100:.0f}%</b> звезд на балансе были добыты путем выполнения заданий
-
-<blockquote>
-<b>Первый вывод бесплатный 🔥</b>
-
-Последующие выводы:
-▪️ 100⭐ — комиссия <b>5 Telegram Stars</b>
-▪️ 200⭐ — комиссия <b>3 Telegram Stars</b>
-▪️ 500⭐ — <b>без комиссии</b>
-
-💡 Комиссия списывается <b>только с баланса Telegram Stars</b>, а не с игрового баланса звезд
-</blockquote>
-
-Выберите нужный вариант ниже! 👇
-"""
 
 
 class TelegramUserContext(TypedDict):
@@ -121,12 +79,6 @@ def _require_message(message: Union[Message, InaccessibleMessage, None]) -> Mess
     if not isinstance(message, Message):
         raise ValueError("Editable message is missing")
     return message
-
-
-def _require_bot(bot: Optional[Bot]) -> Bot:
-    if bot is None:
-        raise ValueError("Bot instance is missing")
-    return bot
 
 
 def _to_optional_int(value: Any) -> Optional[int]:
@@ -272,6 +224,7 @@ async def ingest_task_channel_post(message: Message):
             queue_size,
         )
 
+
 @router.message(CommandStart())
 async def start(message: Message):
     from_user = _require_user(message.from_user)
@@ -353,8 +306,8 @@ async def show_tasks(callback: CallbackQuery):
 
     await safe_edit_text(
         callback.message,
-        "📋 Задания\n\n"
-        "👁 Просмотр постов из каналов\n"
+        "👁 Просмотр постов\n\n"
+        "Показываем реальные посты из каналов прямо в Telegram.\n"
         "За каждый просмотр начисляется награда.\n"
         f"{tasks_status_text}\n\n"
         f"Баланс: {fmt_stars(balance)}⭐️",
@@ -425,10 +378,9 @@ async def task_view_post(callback: CallbackQuery, bot: Bot, state: FSMContext):
         return
 
     try:
-        resolved_chat_id = str(chat_id)
         sent = await bot.forward_message(
             chat_id=user_id,
-            from_chat_id=resolved_chat_id,
+            from_chat_id=str(chat_id),
             message_id=normalized_channel_post_id,
         )
     except TelegramBadRequest:
@@ -540,629 +492,10 @@ async def back_to_main(callback: CallbackQuery, bot: Bot, state: FSMContext):
     await callback.answer()
     await safe_edit_text(
         callback.message,
-        menu_payload["text"],
-        reply_markup=main_menu(role_level)
+        START_TEXT,
+        reply_markup=main_menu(role_level),
     )
 
-
-@router.callback_query(F.data == "claim")
-async def claim_menu(callback: CallbackQuery):
-    try:
-        data = await get_active_campaigns_via_api()
-    except ApiClientError as e:
-        await _answer_user_api_error(
-            callback,
-            e,
-            context="claim_menu.active_campaigns",
-        )
-        return
-
-    campaigns = data.get("items", [])
-
-    if not campaigns:
-        await callback.answer("❌ Сейчас нет активных конкурсов", show_alert=True)
-        return
-
-    await callback.answer()
-
-    keyboard = []
-    for item in campaigns:
-        key = item["campaign_key"]
-        title = item["title"]
-        amount = float(item["reward_amount"])
-        keyboard.append([
-            InlineKeyboardButton(
-                text=f"🎁 {title} • {amount}⭐",
-                callback_data=f"claim:{key}"
-            )
-        ])
-
-    keyboard.append([InlineKeyboardButton(text="⬅ Назад", callback_data="back")])
-
-    text = "Выбери конкурс для получения награды:"
-    markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
-    callback_message = _require_message(callback.message)
-
-    if callback_message.text == text:
-        await safe_edit_reply_markup(callback_message, reply_markup=markup)
-        return
-
-    await safe_edit_text(
-        callback_message,
-        text,
-        reply_markup=markup,
-    )
-
-
-@router.callback_query(F.data.startswith("claim:"))
-async def claim_for_campaign(callback: CallbackQuery):
-    user_id = callback.from_user.id
-    campaign_key = callback.data.split(":", 1)[1]
-
-    try:
-        result = await claim_campaign_reward_via_api(
-            user_id=user_id,
-            campaign_key=campaign_key,
-            username=callback.from_user.username,
-            first_name=callback.from_user.first_name,
-            last_name=callback.from_user.last_name,
-        )
-    except ApiClientError as e:
-        await _answer_user_api_error(
-            callback,
-            e,
-            context="claim_for_campaign.claim",
-        )
-        return
-
-    ok = bool(result.get("ok"))
-    msg = result.get("message") or "Готово"
-    new_balance = float(result.get("new_balance") or 0)
-
-    if not ok:
-        await callback.answer(msg, show_alert=True)
-        return
-
-    await callback.answer(
-        f"{msg}\nБаланс: {fmt_stars(new_balance)}⭐️",
-        show_alert=True
-    )
-
-@router.callback_query(F.data == "withdraw")
-async def withdraw_menu(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()
-    await state.clear()
-
-    try:
-        eligibility = await get_withdrawal_eligibility_via_api(callback.from_user.id)
-    except ApiClientError as e:
-        await _reply_user_api_error_via_callback_message(
-            callback,
-            e,
-            context="withdraw_menu.eligibility",
-        )
-        return
-
-    balance = float(eligibility.get("available_balance") or 0)
-
-    await safe_edit_text(
-        callback.message,
-        "Меню заявок на вывод\n\n"
-        f"Доступно: {fmt_stars(balance)}⭐",
-        reply_markup=withdraw_menu_kb()
-    )
-
-
-@router.callback_query(F.data == "withdraw:new")
-async def withdraw_new(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()
-    await state.clear()
-
-    callback_message = _require_message(callback.message)
-
-    await callback_message.edit_text(
-        WITHDRAW_TEXT,
-        parse_mode=ParseMode.HTML,
-        reply_markup=withdraw_method_kb()
-    )
-
-
-async def finalize_withdraw_request(
-        message: Message,
-        state: FSMContext,
-        user_id: int,
-        amount: float,
-        method: str,
-        wallet: Optional[str] = None,
-        paid_fee: int = 0,
-        fee_payment_charge_id: Optional[str] = None,
-        fee_invoice_payload: Optional[str] = None,
-):
-    result = await create_withdrawal_via_api(
-        user_id=user_id,
-        payload={
-            "method": method,
-            "amount": amount,
-            "wallet": wallet,
-            "paid_fee": paid_fee,
-            "fee_payment_charge_id": fee_payment_charge_id,
-            "fee_invoice_payload": fee_invoice_payload,
-        },
-    )
-
-    wid = int(result["withdrawal_id"])
-    new_balance = float(result.get("balance") or 0)
-
-    username = _require_user(message.from_user).username
-    name = f"@{username}" if username else f"id:{user_id}"
-
-    admin_text = (
-        f"📤 Новая заявка на вывод\n\n"
-        f"👤 {name}\n"
-        f"⭐ {amount:g}\n"
-        f"💸 {method.upper()}\n"
-    )
-
-    if wallet:
-        admin_text += f"🏦 {wallet}\n"
-
-    if paid_fee > 0:
-        admin_text += f"💳 Комиссия оплачена: {paid_fee} XTR\n"
-
-    admin_text += f"\nID заявки: #{wid}"
-
-    bot = _require_bot(message.bot)
-    for admin_id in ADMIN_IDS:
-        try:
-            await bot.send_message(admin_id, admin_text)
-        except Exception:
-            pass
-
-    await state.clear()
-
-    success_text = (
-        f"✅ Заявка на вывод создана\n"
-        f"ID: #{wid}\n"
-        f"Сумма: {amount:g}⭐\n"
-        f"Способ: {'Telegram Stars' if method == 'stars' else 'TON'}\n"
-    )
-
-    if wallet:
-        success_text += f"Кошелек: {wallet}\n"
-
-    if paid_fee > 0:
-        success_text += f"Комиссия оплачена: {paid_fee} XTR\n"
-
-    success_text += f"\nБаланс: {fmt_stars(new_balance)}⭐"
-
-    await message.answer(success_text)
-
-
-async def start_fee_payment_or_create(
-        message: Message,
-        state: FSMContext,
-        user_id: int,
-        amount: float,
-        method: str,
-        wallet: Optional[str] = None,
-):
-    try:
-        preview = await preview_withdrawal_via_api(
-            user_id=user_id,
-            payload={
-                "method": method,
-                "amount": amount,
-                "wallet": wallet,
-            },
-        )
-    except ApiClientError as e:
-        await safe_edit_text(
-            message,
-            e.detail,
-            reply_markup=withdraw_back_kb(),
-        )
-        return
-
-    fee = int(preview.get("expected_fee") or 0)
-
-    if fee <= 0:
-        try:
-            await finalize_withdraw_request(
-                message=message,
-                state=state,
-                user_id=user_id,
-                amount=amount,
-                method=method,
-                wallet=wallet,
-                paid_fee=0,
-                fee_payment_charge_id=None,
-                fee_invoice_payload=None,
-            )
-        except ApiClientError as e:
-            if e.detail == "insufficient_balance":
-                await message.answer("❌ Недостаточно звезд на балансе")
-                return
-            await message.answer(f"❌ Ошибка создания заявки: {e.detail}")
-        return
-
-    await state.update_data(
-        amount=amount,
-        method=method,
-        wallet=wallet,
-        withdraw_fee=fee,
-    )
-    await state.set_state(WithdrawCreate.fee_payment)
-
-    await message.answer_invoice(
-        title="Комиссия за вывод",
-        description=f"Оплата комиссии {fee} Telegram Stars за вывод {amount:g}⭐",
-        payload=f"withdraw_fee:{user_id}",
-        currency="XTR",
-        prices=[LabeledPrice(label="Комиссия за вывод", amount=fee)],
-        provider_token="",
-        start_parameter=f"withdraw-fee-{user_id}",
-    )
-
-    await message.answer(
-        f"💳 Для продолжения оплати комиссию: {fee} Telegram Stars.\n"
-        "После успешной оплаты заявка создастся автоматически."
-    )
-
-
-@router.callback_query(F.data.startswith("withdraw:method:"))
-async def withdraw_choose_method(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()
-
-    method = callback.data.split(":")[2]  # ton | stars
-    await state.update_data(method=method)
-    await state.set_state(WithdrawCreate.amount)
-
-    try:
-        eligibility = await get_withdrawal_eligibility_via_api(callback.from_user.id)
-    except ApiClientError as e:
-        await _reply_user_api_error_via_callback_message(
-            callback,
-            e,
-            context="withdraw_choose_method.eligibility",
-        )
-        return
-
-    balance = float(eligibility.get("available_balance") or 0)
-
-    await state.clear()
-    await state.update_data(method=method)
-
-    if method == "stars":
-        await safe_edit_text(
-            callback.message,
-            "Выбери сумму вывода ⭐:\n\n"
-            f"Доступно: {fmt_stars(balance)}⭐\n"
-            f"Минимум: {MIN_WITHDRAW:g}⭐",
-            reply_markup=withdraw_stars_amount_kb(),
-        )
-        return
-
-    await state.set_state(WithdrawCreate.amount)
-    callback_message = _require_message(callback.message)
-    await callback_message.answer(
-        f"Введи сумму обмена ⭐ в TON:\n"
-        f"Доступно: {fmt_stars(balance)}⭐\n"
-        f"Минимум: {MIN_WITHDRAW:g}⭐"
-    )
-
-
-@router.callback_query(F.data.startswith("withdraw:stars_amount:"))
-async def withdraw_stars_fixed_amount(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()
-    callback_message = _require_message(callback.message)
-
-    user_id = callback.from_user.id
-    amount = float(callback.data.split(":")[2])
-
-    await state.update_data(method="stars", amount=amount)
-
-    try:
-        preview = await preview_withdrawal_via_api(
-            user_id=user_id,
-            payload={
-                "method": "stars",
-                "amount": amount,
-                "wallet": None,
-            },
-        )
-    except ApiClientError as e:
-        await safe_edit_text(
-            callback_message,
-            e.detail,
-            reply_markup=withdraw_back_kb(),
-        )
-        return
-
-    fee = int(preview.get("expected_fee") or 0)
-
-    if fee <= 0:
-        try:
-            await finalize_withdraw_request(
-                message=_require_message(callback.message),
-                state=state,
-                user_id=user_id,
-                amount=amount,
-                method="stars",
-                wallet=None,
-                paid_fee=0,
-                fee_payment_charge_id=None,
-                fee_invoice_payload=None,
-            )
-        except ApiClientError as e:
-            if e.detail == "insufficient_balance":
-                await callback_message.answer("❌ Недостаточно звезд на балансе")
-                return
-            await callback_message.answer(f"❌ Ошибка создания заявки: {e.detail}")
-        return
-
-    await state.update_data(
-        amount=amount,
-        method="stars",
-        wallet=None,
-        withdraw_fee=fee,
-    )
-    await state.set_state(WithdrawCreate.fee_payment)
-
-    await callback_message.answer_invoice(
-        title="Комиссия за вывод",
-        description=f"Оплата комиссии {fee} Telegram Stars за вывод {amount:g}⭐",
-        payload=f"withdraw_fee:{user_id}",
-        currency="XTR",
-        prices=[LabeledPrice(label="Комиссия за вывод", amount=fee)],
-        provider_token="",
-        start_parameter=f"withdraw-fee-{user_id}",
-    )
-
-    await callback_message.answer(
-        f"Для продолжения оплати комиссию: {fee} Telegram Stars.\n"
-        "После успешной оплаты заявка создастся автоматически."
-    )
-
-@router.message(WithdrawCreate.amount)
-async def withdraw_enter_amount(message: Message, state: FSMContext):
-    data = await state.get_data()
-    method = data.get("method")
-
-    if method != "ton":
-        await state.clear()
-        await message.answer("❌ Для вывода в звездах используй кнопки с фиксированной суммой.")
-        return
-
-    try:
-        amount = float(message.text.strip().replace(",", "."))
-        if amount <= 0:
-            raise ValueError
-    except ValueError:
-        await message.answer("❌ Введи число > 0, например 50")
-        return
-
-    await state.update_data(amount=amount)
-    await state.set_state(WithdrawCreate.wallet)
-    await message.answer("Введи TON-адрес кошелька для выплаты:")
-
-@router.message(WithdrawCreate.wallet)
-async def withdraw_enter_details(message: Message, state: FSMContext):
-    user_id = _require_user(message.from_user).id
-    data = await state.get_data()
-    amount = float(data["amount"])
-    wallet = message.text.strip()
-
-    if len(wallet) < 10:
-        await message.answer("❌ Похоже на неправильный TON-адрес. Введи еще раз.")
-        return
-
-    await state.update_data(wallet=wallet)
-
-    await start_fee_payment_or_create(
-        message=message,
-        state=state,
-        user_id=user_id,
-        amount=amount,
-        method="ton",
-        wallet=wallet,
-    )
-
-
-@router.pre_checkout_query()
-async def process_pre_checkout_query(pre_checkout_query: PreCheckoutQuery, state: FSMContext):
-    data = await state.get_data()
-    fee = int(data.get("withdraw_fee") or 0)
-    expected_payload = f"withdraw_fee:{pre_checkout_query.from_user.id}"
-
-    if pre_checkout_query.invoice_payload != expected_payload:
-        await pre_checkout_query.answer(
-            ok=False,
-            error_message="Некорректный payload оплаты."
-        )
-        return
-
-    if pre_checkout_query.currency != "XTR":
-        await pre_checkout_query.answer(
-            ok=False,
-            error_message="Некорректная валюта оплаты."
-        )
-        return
-
-    if fee <= 0 or pre_checkout_query.total_amount != fee:
-        await pre_checkout_query.answer(
-            ok=False,
-            error_message="Сумма комиссии изменилась. Открой вывод заново."
-        )
-        return
-
-    await pre_checkout_query.answer(ok=True)
-
-
-@router.message(F.successful_payment)
-async def on_successful_payment(message: Message, state: FSMContext):
-    payment = message.successful_payment
-
-    print("PAYMENT:", payment)
-    print("CHARGE_ID:", payment.telegram_payment_charge_id)
-
-    if not payment:
-        return
-
-    if payment.currency != "XTR":
-        return
-
-    user_id = _require_user(message.from_user).id
-    data = await state.get_data()
-
-    expected_payload = f"withdraw_fee:{user_id}"
-    if payment.invoice_payload != expected_payload:
-        return
-
-    amount = float(data.get("amount") or 0)
-    method = data.get("method")
-    wallet = data.get("wallet")
-    fee = int(data.get("withdraw_fee") or 0)
-
-    if amount <= 0 or method not in {"stars", "ton"}:
-        await message.answer(
-            "⚠️ Оплата прошла, но данные заявки не найдены. Напиши администратору."
-        )
-        return
-
-    if payment.total_amount != fee:
-        await message.answer(
-            "⚠️ Оплата прошла, но сумма комиссии не совпала. Напиши администратору."
-        )
-        return
-
-    try:
-        await finalize_withdraw_request(
-            message=message,
-            state=state,
-            user_id=user_id,
-            amount=amount,
-            method=method,
-            wallet=wallet,
-            paid_fee=fee,
-            fee_payment_charge_id=payment.telegram_payment_charge_id,
-            fee_invoice_payload=payment.invoice_payload,
-        )
-    except ApiClientError as e:
-        if e.detail == "insufficient_balance":
-            await message.answer(
-                "⚠️ Комиссия оплачена, но на момент создания заявки на балансе уже не хватило звезд.\n\n"
-                "Напишите администратору."
-            )
-            return
-
-        await message.answer(
-            "⚠️ Комиссия оплачена, но заявка не может быть создана автоматически.\n\n"
-            f"{e.detail}\n\n"
-            "Напиши администратору."
-        )
-
-
-@router.callback_query(F.data == "withdraw:my")
-async def withdraw_my(callback: CallbackQuery):
-    await callback.answer()
-    user_id = callback.from_user.id
-
-    try:
-        data = await get_my_withdrawals_via_api(user_id=user_id, limit=20)
-    except ApiClientError as e:
-        await _reply_user_api_error_via_callback_message(
-            callback,
-            e,
-            context="withdraw_my.list",
-        )
-        return
-
-    items = data.get("items", [])
-
-    if not items:
-        await safe_edit_text(
-            callback.message,
-            "📜 Мои заявки\n\n"
-            "📭 У тебя пока нет заявок на вывод.",
-            reply_markup=withdraw_back_kb()
-        )
-        return
-
-    status_map = {
-        "pending": "⏳ В обработке",
-        "paid": "✅ Выплачено",
-        "approved": "✅ Одобрено",
-        "rejected": "❌ Отклонено",
-        "cancelled": "🚫 Отменено",
-    }
-
-    lines = []
-    for item in items:
-        wid = item["id"]
-        amount = float(item["amount"])
-        method = item["method"]
-        status = item["status"]
-        created = item["created_at"]
-
-        line = (
-            f"#{wid} • {amount:g}⭐ • {str(method).upper()} • {status_map.get(status, status)}\n"
-            f"{created}"
-        )
-
-        fee_xtr = int(item.get("fee_xtr") or 0)
-        fee_paid = bool(item.get("fee_paid") or False)
-        fee_refunded = bool(item.get("fee_refunded") or False)
-
-        if fee_paid and fee_xtr > 0:
-            line += f"\nКомиссия: {fee_xtr} XTR"
-            if fee_refunded:
-                line += " (возвращена)"
-
-        wallet = item.get("wallet")
-        if wallet and method == "ton":
-            line += f"\nКошелек: {wallet}"
-
-        lines.append(line)
-
-    await safe_edit_text(
-        callback.message,
-        "📜 Мои заявки\n\n" + "\n\n".join(lines),
-        reply_markup=withdraw_back_kb()
-    )
-
-@router.callback_query(F.data == "referrals")
-async def show_referrals(callback: CallbackQuery):
-    await callback.answer()
-
-    try:
-        result = await get_bot_referrals_for_user_context_via_api(
-            **_build_tg_user_payload(callback.from_user),
-        )
-    except ApiClientError as e:
-        await callback.answer(f"❌ {e.detail}", show_alert=True)
-        return
-
-    user_id = int(result["user_id"])
-    invited_count = int(result.get("invited_count") or 0)
-
-    bot = _require_bot(callback.bot)
-    me = await bot.get_me()
-    invite_link = f"https://t.me/{me.username}?start={user_id}"
-
-    text = (
-        "🫂 <b>Приглашайте друзей и получайте до 10% рефбека ⭐ с каждого их вывода!</b>\n\n"
-        f"Ваша ссылка 👉🏻\n<code>{invite_link}</code>\n\n"
-        f"👥 Всего приглашено: {invited_count}"
-    )
-
-    callback_message = _require_message(callback.message)
-
-    await callback_message.edit_text(
-        text,
-        reply_markup=referrals_kb(),
-        parse_mode=ParseMode.HTML,
-        disable_web_page_preview=True,
-    )
 
 async def _delete_last_task_post(bot: Bot, user_id: int, state: FSMContext) -> None:
     data = await state.get_data()
@@ -1177,6 +510,7 @@ async def _delete_last_task_post(bot: Bot, user_id: int, state: FSMContext) -> N
 
     await state.update_data(**{LAST_TASK_POST_MSG_ID_KEY: None})
 
+
 async def safe_edit_text(
         message: Union[Message, InaccessibleMessage, None],
         text: str,
@@ -1190,17 +524,6 @@ async def safe_edit_text(
             return
         raise
 
-async def safe_edit_reply_markup(
-        message: Union[Message, InaccessibleMessage, None],
-        reply_markup=None,
-):
-    editable_message = _require_message(message)
-    try:
-        await editable_message.edit_reply_markup(reply_markup=reply_markup)
-    except TelegramBadRequest as e:
-        if "message is not modified" in str(e):
-            return
-        raise
 
 @router.callback_query(F.data == "client:home")
 async def client_home(callback: CallbackQuery):
@@ -1233,7 +556,7 @@ async def client_home(callback: CallbackQuery):
             inline_keyboard=[
                 [InlineKeyboardButton(text="⬅ Назад", callback_data="back")]
             ]
-        )
+        ),
     )
 
 
@@ -1268,110 +591,5 @@ async def partner_home(callback: CallbackQuery):
             inline_keyboard=[
                 [InlineKeyboardButton(text="⬅ Назад", callback_data="back")]
             ]
-        )
-    )
-
-def daily_checkin_text(current_day: int, already_claimed_today: bool) -> str:
-    current_day = max(1, min(current_day, 30))
-    next_day = 1 if current_day >= 30 else current_day + 1
-
-    current_reward = round(current_day * 0.05, 2)
-    next_reward = round(next_day * 0.05, 2)
-
-    status = "✅ Ежедневный бонус уже получен" if already_claimed_today else "🎁 Ежедневный бонус доступен"
-
-    return (
-        f"{status}\n\n"
-        f"🔥 День цикла: {current_day}/30\n"
-        f"💰 Сегодня: {fmt_stars(current_reward)}⭐\n"
-        f"📅 Завтра: {fmt_stars(next_reward)}⭐\n\n"
-        "Заходите каждый день, чтобы не сбросился прогресс"
-    )
-
-@router.callback_query(F.data == "daily_checkin")
-async def daily_checkin_open(callback: CallbackQuery):
-    await callback.answer()
-
-    try:
-        status = await get_daily_checkin_status(
-            callback.from_user.id,
-            username=callback.from_user.username,
-            first_name=callback.from_user.first_name,
-            last_name=callback.from_user.last_name,
-        )
-    except ApiClientError as e:
-        await _reply_user_api_error_via_callback_message(
-            callback,
-            e,
-            context="daily_checkin_open.status",
-        )
-        return
-
-    current_day = int(status["current_cycle_day"])
-    already_claimed_today = bool(status["already_claimed_today"])
-
-    await safe_edit_text(
-        callback.message,
-        daily_checkin_text(
-            current_day=current_day,
-            already_claimed_today=already_claimed_today,
-        ),
-        reply_markup=daily_checkin_kb(
-            current_day=current_day,
-            already_claimed_today=already_claimed_today,
-        ),
-    )
-
-@router.callback_query(F.data == "daily_checkin:noop")
-async def daily_checkin_noop(callback: CallbackQuery):
-    await callback.answer()
-
-@router.callback_query(F.data == "daily_checkin:claim")
-async def daily_checkin_claim(callback: CallbackQuery):
-    try:
-        result = await claim_daily_checkin_via_api(
-            callback.from_user.id,
-            username=callback.from_user.username,
-            first_name=callback.from_user.first_name,
-            last_name=callback.from_user.last_name,
-        )
-    except ApiClientError as e:
-        await _answer_user_api_error(
-            callback,
-            e,
-            context="daily_checkin_claim.claim",
-        )
-        return
-
-    alert_text = result.get("message") or "Готово"
-    await callback.answer(alert_text, show_alert=True)
-
-    try:
-        status = await get_daily_checkin_status(
-            callback.from_user.id,
-            username=callback.from_user.username,
-            first_name=callback.from_user.first_name,
-            last_name=callback.from_user.last_name,
-        )
-    except ApiClientError as e:
-        await _reply_user_api_error_via_callback_message(
-            callback,
-            e,
-            context="daily_checkin_claim.status",
-        )
-        return
-
-    current_day = int(status["current_cycle_day"])
-    already_claimed_today = bool(status["already_claimed_today"])
-
-    await safe_edit_text(
-        callback.message,
-        daily_checkin_text(
-            current_day=current_day,
-            already_claimed_today=already_claimed_today,
-        ),
-        reply_markup=daily_checkin_kb(
-            current_day=current_day,
-            already_claimed_today=already_claimed_today,
         ),
     )

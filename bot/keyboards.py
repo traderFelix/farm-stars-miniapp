@@ -33,32 +33,6 @@ def main_menu(role_level: int = 0) -> InlineKeyboardMarkup:
 
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
-def referrals_kb() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="⬅ Назад", callback_data="back")]
-        ]
-    )
-
-def withdraw_menu_kb():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="➕ Создать заявку", callback_data="withdraw:new")],
-        [InlineKeyboardButton(text="📜 Мои заявки", callback_data="withdraw:my")],
-        [InlineKeyboardButton(text="⬅ Назад", callback_data="back")],
-    ])
-
-def withdraw_back_kb():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="⬅ Назад", callback_data="withdraw")],
-    ])
-
-def withdraw_method_kb():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="⭐ Вывести звезды", callback_data="withdraw:method:stars")],
-        [InlineKeyboardButton(text="🔄 Обменять звезды на TON", callback_data="withdraw:method:ton")],
-        [InlineKeyboardButton(text="⬅ Назад", callback_data="withdraw")],
-    ])
-
 def tasks_menu() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -246,19 +220,6 @@ def admin_fee_refund_kb():
         ]
     )
 
-def withdraw_stars_amount_kb():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="100⭐", callback_data="withdraw:stars_amount:100"),
-            InlineKeyboardButton(text="200⭐", callback_data="withdraw:stars_amount:200"),
-            InlineKeyboardButton(text="500⭐", callback_data="withdraw:stars_amount:500"),
-            InlineKeyboardButton(text="1000⭐", callback_data="withdraw:stars_amount:1000"),
-        ],
-        [
-            InlineKeyboardButton(text="⬅ Назад", callback_data="withdraw:new"),
-        ],
-    ])
-
 def admin_task_channels_kb(rows) -> InlineKeyboardMarkup:
     kb = []
 
@@ -302,50 +263,3 @@ def admin_growth_photo_kb(origin_message_id: int) -> InlineKeyboardMarkup:
             )]
         ]
     )
-
-def daily_checkin_kb(
-        current_day: int,
-        already_claimed_today: bool,
-) -> InlineKeyboardMarkup:
-    rows = []
-    day = 1
-
-    for _ in range(5):
-        row = []
-        for _ in range(6):
-            if day < current_day or (day == current_day and already_claimed_today):
-                text = f"✅ {day}"
-            elif day == current_day:
-                text = f"🎁 {day}"
-            else:
-                text = str(day)
-
-            row.append(
-                InlineKeyboardButton(
-                    text=text,
-                    callback_data="daily_checkin:noop",
-                )
-            )
-            day += 1
-        rows.append(row)
-
-    if already_claimed_today:
-        rows.append([
-            InlineKeyboardButton(
-                text="✅ Бонус получен",
-                callback_data="daily_checkin:noop",
-            )
-        ])
-    else:
-        rows.append([
-            InlineKeyboardButton(
-                text="🎁 Забрать бонус",
-                callback_data="daily_checkin:claim",
-            )
-        ])
-
-    rows.append([
-        InlineKeyboardButton(text="⬅️ Назад", callback_data="back")
-    ])
-
-    return InlineKeyboardMarkup(inline_keyboard=rows)
