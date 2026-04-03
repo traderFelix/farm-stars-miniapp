@@ -4,18 +4,18 @@ from aiogram.types import (
     WebAppInfo,
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-from shared.config import MINIAPP_URL, ROLE_ADMIN, ROLE_CLIENT, ROLE_PARTNER
+from shared.config import WEB_ORIGIN_NGROK, ROLE_ADMIN, ROLE_CLIENT, ROLE_PARTNER
 
 # ---------- USER KEYBOARDS ----------
 
 
 def _miniapp_button() -> InlineKeyboardButton:
-    if not MINIAPP_URL:
-        raise RuntimeError("Environment variable MINIAPP_URL is required")
+    if not WEB_ORIGIN_NGROK:
+        raise RuntimeError("Environment variable WEB_ORIGIN_NGROK is required")
 
     return InlineKeyboardButton(
         text="🚀 Открыть приложение",
-        web_app=WebAppInfo(url=MINIAPP_URL),
+        web_app=WebAppInfo(url=WEB_ORIGIN_NGROK),
     )
 
 
