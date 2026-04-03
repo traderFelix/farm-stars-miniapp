@@ -1,6 +1,12 @@
-from aiogram.types import InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
+from aiogram.types import (
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    KeyboardButton,
+    ReplyKeyboardMarkup,
+    WebAppInfo,
+)
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-from shared.config import CHANNEL_LINK, ROLE_CLIENT, ROLE_PARTNER, ROLE_ADMIN
+from shared.config import CHANNEL_LINK, MINIAPP_URL, ROLE_ADMIN, ROLE_CLIENT, ROLE_PARTNER
 
 def bottom_menu_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
@@ -23,18 +29,26 @@ def subscribe_keyboard() -> InlineKeyboardMarkup:
         ]
     )
 
+
+def _miniapp_button() -> InlineKeyboardButton:
+    if not MINIAPP_URL:
+        raise RuntimeError("Environment variable MINIAPP_URL is required")
+
+    return InlineKeyboardButton(
+        text="🚀 Открыть приложение",
+        web_app=WebAppInfo(url=MINIAPP_URL),
+    )
+
+
 def main_menu(role_level: int = 0) -> InlineKeyboardMarkup:
     rows = [
-        [InlineKeyboardButton(text="🎁 Ежедневный бонус", callback_data="daily_checkin")],
-        [InlineKeyboardButton(text="🧸 Награда за конкурс", callback_data="claim")],
-        [InlineKeyboardButton(text="📋 Задания", callback_data="tasks")],
-        [InlineKeyboardButton(text="👛 Вывод", callback_data="withdraw")],
-        [InlineKeyboardButton(text="🫂 Пригласить друга", callback_data="referrals")],
+        [_miniapp_button()],
+        [InlineKeyboardButton(text="👁 Просмотр постов", callback_data="tasks")],
     ]
     if role_level >= ROLE_CLIENT:
         rows.append([InlineKeyboardButton(text="🤝 Кабинет клиента", callback_data="client:home")])
     if role_level >= ROLE_PARTNER:
-        rows.append([InlineKeyboardButton(text="💼 Кабинет парнера", callback_data="partner:home")])
+        rows.append([InlineKeyboardButton(text="💼 Кабинет партнера", callback_data="partner:home")])
     if role_level >= ROLE_ADMIN:
         rows.append([InlineKeyboardButton(text="🔐 Админка", callback_data="adm:home")])
 
@@ -128,8 +142,6 @@ def admin_withdraw_actions_kb(withdrawal_id: int):
         [InlineKeyboardButton(text="❌ Отклонить", callback_data=f"adm:wd:reject:{withdrawal_id}")],
         [InlineKeyboardButton(text="⬅ Назад", callback_data="adm:wd:list")],
     ])
-
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 def user_actions_kb(user_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
