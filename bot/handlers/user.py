@@ -1,11 +1,11 @@
 import asyncio, logging
 
-from typing import Optional, TypedDict, Union
+from typing import Any, Optional, TypedDict, Union
 
-from aiogram.filters import CommandStart, StateFilter
+from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.enums import ParseMode
-from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
+from aiogram.exceptions import TelegramBadRequest
 from aiogram import Router, F, Bot
 from aiogram.types import (
     CallbackQuery,
@@ -19,13 +19,13 @@ from aiogram.types import (
 )
 
 from shared.config import (
-    CHANNEL_ID, ADMIN_IDS, MIN_WITHDRAW, MIN_WITHDRAW_PERCENT, ROLE_CLIENT, ROLE_PARTNER
+    ADMIN_IDS, MIN_WITHDRAW, MIN_WITHDRAW_PERCENT, ROLE_CLIENT, ROLE_PARTNER
 )
 
 from shared.formatting import fmt_stars
 
 from bot.keyboards import (
-    subscribe_keyboard, main_menu, tasks_menu, bottom_menu_kb, withdraw_stars_amount_kb, task_after_view_kb,
+    main_menu, tasks_menu, withdraw_stars_amount_kb, task_after_view_kb,
     withdraw_method_kb, withdraw_menu_kb, withdraw_back_kb, referrals_kb, daily_checkin_kb
 )
 
@@ -64,6 +64,11 @@ logger = logging.getLogger(__name__)
 
 LAST_TASK_POST_MSG_ID_KEY = "last_task_post_message_id"
 USER_API_UNAVAILABLE_TEXT = "⚠️ Сервис временно недоступен. Попробуй еще раз чуть позже."
+START_TEXT = (
+    "🚀 Основной интерфейс теперь в Mini App.\n\n"
+    "Открой приложение для профиля, баланса, истории и вывода.\n"
+    "Просмотры постов можно запускать прямо из бота."
+)
 
 WITHDRAW_TEXT = f"""
 💰 <b>Вывод и обмен звезд</b>
@@ -122,6 +127,22 @@ def _require_bot(bot: Optional[Bot]) -> Bot:
     if bot is None:
         raise ValueError("Bot instance is missing")
     return bot
+
+
+def _to_optional_int(value: Any) -> Optional[int]:
+    if value is None or isinstance(value, bool):
+        return None
+
+    if isinstance(value, int):
+        return value
+
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return None
+        return int(stripped)
+
+    return int(value)
 
 
 def _format_user_api_error(e: ApiClientError) -> str:
@@ -251,32 +272,8 @@ async def ingest_task_channel_post(message: Message):
             queue_size,
         )
 
-@router.message(StateFilter("*"), F.text == "🏠 Главное меню")
-async def open_main_menu_from_bottom_button(message: Message, state: FSMContext):
-    await state.clear()
-
-    try:
-        menu_payload = await get_bot_main_menu_for_user_context_via_api(
-            **_build_tg_user_payload(message.from_user),
-        )
-    except ApiClientError as e:
-        await _reply_user_api_error(
-            message,
-            e,
-            context="open_main_menu_from_bottom_button",
-        )
-        return
-
-    role_level = int(menu_payload.get("role_level") or 0)
-
-    await message.answer(
-        menu_payload["text"],
-        reply_markup=main_menu(role_level)
-    )
-
-
 @router.message(CommandStart())
-async def start(message: Message, bot: Bot):
+async def start(message: Message):
     from_user = _require_user(message.from_user)
     user_id = from_user.id
     username = from_user.username
@@ -315,75 +312,11 @@ async def start(message: Message, bot: Bot):
             bool(menu_payload.get("referrer_bound")),
         )
 
-    try:
-        member = await bot.get_chat_member(CHANNEL_ID, user_id)
-    except Exception:
-        try:
-            await message.answer("Ошибка проверки канала.")
-        except TelegramForbiddenError:
-            logger.warning("User %s blocked bot during channel check error reply", user_id)
-        return
-
-    try:
-        if member.status in ("member", "administrator", "creator"):
-            role_level = int(menu_payload.get("role_level") or 0)
-
-            await message.answer(
-                "Нажми кнопку снизу, чтобы открыть меню 👇",
-                reply_markup=bottom_menu_kb()
-            )
-
-            await message.answer(
-                menu_payload["text"],
-                reply_markup=main_menu(role_level)
-            )
-        else:
-            await message.answer(
-                "Чтобы продолжить, подпишись на канал 👇",
-                reply_markup=subscribe_keyboard()
-            )
-    except TelegramForbiddenError:
-        logger.warning("User %s blocked bot", user_id)
-
-
-@router.callback_query(F.data == "check_sub")
-async def check_subscription(callback: CallbackQuery, bot: Bot):
-    user_id = callback.from_user.id
-
-    try:
-        menu_payload = await get_bot_main_menu_for_user_context_via_api(
-            **_build_tg_user_payload(callback.from_user),
-        )
-    except ApiClientError as e:
-        await _answer_user_api_error(
-            callback,
-            e,
-            context="check_subscription.main_menu",
-        )
-        return
-
-    try:
-        member = await bot.get_chat_member(CHANNEL_ID, user_id)
-    except Exception:
-        await callback.answer("Ошибка проверки канала", show_alert=True)
-        return
-
-    if member.status in ("member", "administrator", "creator"):
-        role_level = int(menu_payload.get("role_level") or 0)
-        callback_message = _require_message(callback.message)
-
-        await callback_message.answer(
-            "Нажми кнопку снизу, чтобы открыть меню 👇",
-            reply_markup=bottom_menu_kb()
-        )
-
-        await safe_edit_text(
-            callback_message,
-            menu_payload["text"],
-            reply_markup=main_menu(role_level)
-        )
-    else:
-        await callback.answer("❌ Ты еще не подписан!", show_alert=True)
+    role_level = int(menu_payload.get("role_level") or 0)
+    await message.answer(
+        START_TEXT,
+        reply_markup=main_menu(role_level),
+    )
 
 
 @router.callback_query(F.data == "tasks")
@@ -449,11 +382,7 @@ async def task_view_post(callback: CallbackQuery, bot: Bot, state: FSMContext):
     task_id = int(task["id"])
     chat_id = task.get("chat_id")
     raw_channel_post_id = task.get("channel_post_id")
-    normalized_channel_post_id = (
-        int(raw_channel_post_id)
-        if raw_channel_post_id is not None
-        else None
-    )
+    normalized_channel_post_id = _to_optional_int(raw_channel_post_id)
 
     try:
         open_result = await open_task(user_id, task_id)

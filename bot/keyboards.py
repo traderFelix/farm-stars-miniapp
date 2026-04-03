@@ -1,33 +1,12 @@
 from aiogram.types import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
-    KeyboardButton,
-    ReplyKeyboardMarkup,
     WebAppInfo,
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-from shared.config import CHANNEL_LINK, MINIAPP_URL, ROLE_ADMIN, ROLE_CLIENT, ROLE_PARTNER
-
-def bottom_menu_kb() -> ReplyKeyboardMarkup:
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="🏠 Главное меню")]
-        ],
-        resize_keyboard=True,
-        one_time_keyboard=False,
-        selective=False,
-        input_field_placeholder=""
-    )
+from shared.config import MINIAPP_URL, ROLE_ADMIN, ROLE_CLIENT, ROLE_PARTNER
 
 # ---------- USER KEYBOARDS ----------
-
-def subscribe_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="📢 Подписаться", url=CHANNEL_LINK)],
-            [InlineKeyboardButton(text="✅ Проверить подписку", callback_data="check_sub")],
-        ]
-    )
 
 
 def _miniapp_button() -> InlineKeyboardButton:
