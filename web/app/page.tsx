@@ -1,43 +1,35 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
 import CampaignsPanel from "@/components/campaigns/CampaignsPanel";
 import ReferralsPanel from "@/components/referrals/ReferralsPanel";
 import WithdrawalPanel from "@/components/withdrawal/WithdrawalPanel";
 import {
   authTelegram,
-  checkTask,
   claimCheckin,
   clearAccessToken,
   getCheckinStatus,
   getMyProfile,
-  getNextTask,
-  openTask,
+  openBotTasks,
   type CheckinStatus,
   type Profile,
 } from "@/lib/api";
-import { clearOpenedTask, getOpenedTask, saveOpenedTask } from "@/lib/opened-task";
-import type { TaskCheckResponse, TaskListItem } from "@/lib/tasks";
-import { getTelegramInitData, initTelegramMiniApp } from "@/lib/telegram";
+import {
+  closeTelegramMiniApp,
+  getTelegramInitData,
+  initTelegramMiniApp,
+  openTelegramLink,
+} from "@/lib/telegram";
 
 type BootstrapState = "idle" | "loading" | "ready" | "error";
 type AppTab = "profile" | "mining" | "referrals" | "campaigns" | "withdrawal";
 
-type TaskState =
-  | "idle"
-  | "loading"
-  | "ready"
-  | "opening"
-  | "opened"
-  | "checking"
-  | "done"
-  | "empty"
-  | "error";
-
 type CheckinState = "idle" | "loading" | "ready" | "claiming" | "error";
 
 const HERO_BANNER_URL = ["/hero", "mining-hero-banner.png"].join("/");
+const BOT_USERNAME = process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME || "felix_farm_stars_bot";
+const BOT_TASKS_URL = `https://t.me/${BOT_USERNAME}?start=tasks`;
 const HERO_BANNER_STYLE = {
   backgroundImage: `linear-gradient(180deg, rgba(7, 10, 18, 0.04), rgba(7, 10, 18, 0.1)), url("${HERO_BANNER_URL}")`,
 };
@@ -50,26 +42,11 @@ export default function HomePage() {
   const [checkin, setCheckin] = useState<CheckinStatus | null>(null);
   const [checkinState, setCheckinState] = useState<CheckinState>("idle");
   const [checkinMessage, setCheckinMessage] = useState("");
-
-  const [task, setTask] = useState<TaskListItem | null>(null);
-  const [taskState, setTaskState] = useState<TaskState>("idle");
-  const [openedAt, setOpenedAt] = useState<number | null>(null);
-  const [taskMessage, setTaskMessage] = useState("");
+  const [botTasksOpening, setBotTasksOpening] = useState(false);
 
   const [debugMessage, setDebugMessage] = useState<string>("Шаг 1: запуск");
   const [errorMessage, setErrorMessage] = useState<string>("");
-
-  const elapsedSeconds = useElapsedSeconds(openedAt);
-  const holdSeconds = task?.hold_seconds ?? 0;
-
-  const remainingSeconds = useMemo(() => {
-    return Math.max(0, holdSeconds - elapsedSeconds);
-  }, [elapsedSeconds, holdSeconds]);
-
-  const canCheck = Boolean(task && openedAt && remainingSeconds <= 0);
-  const isTaskCompleted = Boolean(task?.already_completed || task?.status === "completed");
   const operatorName = profile?.first_name || profile?.username || "Felix";
-  const taskReward = task ? formatBalance(task.reward) : "0";
 
   async function loadCheckinStatus(options?: { preserveMessage?: boolean }) {
     setCheckinState("loading");
@@ -117,49 +94,23 @@ export default function HomePage() {
     }
   }
 
-  async function loadNextTask() {
-    setTaskState("loading");
-    setTaskMessage("");
+  async function handleOpenBotTasks() {
+    if (botTasksOpening) return;
 
     try {
-      const nextTask = await getNextTask();
+      setBotTasksOpening(true);
+      await openBotTasks();
 
-      if (!nextTask) {
-        setTask(null);
-        clearOpenedTask();
-        setOpenedAt(null);
-        setTaskState("empty");
-        return;
+      const closed = closeTelegramMiniApp();
+      if (!closed) {
+        openTelegramLink(BOT_TASKS_URL);
       }
-
-      setTask(nextTask);
-
-      if (nextTask.already_completed || nextTask.status === "completed") {
-        clearOpenedTask();
-        setOpenedAt(null);
-        setTaskState("done");
-        setTaskMessage("Задание уже выполнено.");
-        return;
-      }
-
-      const stored = getOpenedTask();
-      if (stored && stored.task_id === nextTask.id) {
-        setOpenedAt(stored.opened_at);
-        setTaskState("opened");
-        return;
-      }
-
-      if (stored && stored.task_id !== nextTask.id) {
-        clearOpenedTask();
-      }
-
-      setOpenedAt(null);
-      setTaskState("ready");
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Ошибка загрузки задания";
-      setTask(null);
-      setTaskState("error");
-      setTaskMessage(message);
+      const message = error instanceof Error ? error.message : "Не удалось открыть поток постов";
+      openTelegramLink(BOT_TASKS_URL);
+      window.alert(message);
+    } finally {
+      setBotTasksOpening(false);
     }
   }
 
@@ -199,12 +150,8 @@ export default function HomePage() {
         await loadCheckinStatus({ preserveMessage: true });
         if (cancelled) return;
 
-        setDebugMessage("Шаг 6: загрузка заданий");
-        await loadNextTask();
-        if (cancelled) return;
-
         setBootstrapState("ready");
-        setDebugMessage("Шаг 7: готово");
+        setDebugMessage("Шаг 6: готово");
       } catch (error) {
         if (cancelled) return;
         clearAccessToken();
@@ -221,92 +168,6 @@ export default function HomePage() {
       cancelled = true;
     };
   }, []);
-
-  async function handleOpenTask() {
-    if (!task || isTaskCompleted) return;
-
-    try {
-      setTaskState("opening");
-      setTaskMessage("");
-
-      const result = await openTask(task.id, {
-        source: "miniapp",
-      });
-
-      if (!result.ok) {
-        setTaskState("done");
-        setTaskMessage("Задание уже недоступно или было выполнено ранее.");
-        await loadNextTask();
-        return;
-      }
-
-      const openedTask = {
-        task_id: result.task_id,
-        opened_at: result.opened_at,
-        hold_seconds: result.hold_seconds,
-        can_check_at: result.can_check_at,
-        session_id: result.session_id ?? null,
-      };
-
-      saveOpenedTask(openedTask);
-      setOpenedAt(result.opened_at);
-      setTaskState("opened");
-      setTaskMessage("Пост открыт. Подожди нужное время и нажми проверить.");
-      setActiveTab("mining");
-
-      if (result.post_url) {
-        window.open(result.post_url, "_blank", "noopener,noreferrer");
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Ошибка открытия задания";
-      setTaskState("error");
-      setTaskMessage(message);
-    }
-  }
-
-  async function handleCheckTask() {
-    if (!task || isTaskCompleted) return;
-
-    try {
-      setTaskState("checking");
-      setTaskMessage("");
-
-      const stored = getOpenedTask();
-      const result: TaskCheckResponse = await checkTask(task.id, {
-        session_id: stored?.session_id ?? null,
-      });
-
-      setTaskMessage(result.message);
-
-      if (result.status === "completed" || result.status === "already_completed") {
-        clearOpenedTask();
-        setOpenedAt(null);
-
-        setProfile((prev) =>
-          prev
-            ? {
-                ...prev,
-                balance: Number(result.new_balance || prev.balance),
-              }
-            : prev,
-        );
-
-        await loadNextTask();
-        return;
-      }
-
-      if (result.status === "too_early") {
-        setTaskState("opened");
-        return;
-      }
-
-      setTaskState("ready");
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Ошибка проверки задания";
-      setTaskState("error");
-      setTaskMessage(message);
-    }
-  }
 
   return (
     <main className="mining-app">
@@ -440,133 +301,31 @@ export default function HomePage() {
             {activeTab === "mining" && (
               <section className="mining-panel">
                 <SectionHeader
-                  eyebrow="Контроль смены"
+                  eyebrow="Добыча в боте"
                   title="Просмотр постов"
-                  description="Открывай пост, держи нужное время и подтверждай добычу."
-                  action={
-                    <button
-                      type="button"
-                      onClick={() => void loadNextTask()}
-                      className="mining-ghost-button"
-                      disabled={
-                        taskState === "loading" ||
-                        taskState === "opening" ||
-                        taskState === "checking"
-                      }
-                    >
-                      Обновить
-                    </button>
-                  }
+                  description="Этот сценарий перенесен в бота, чтобы просмотры и начисления работали корректно."
                 />
 
-                {taskState === "loading" && (
-                  <StatusNote>Подбираю следующую рабочую смену...</StatusNote>
-                )}
+                <div className="mining-note-card text-sm text-slate-300">
+                  Для фарма постов теперь открывается правильный поток прямо внутри бота.
+                  Там сразу доступен экран просмотра и последующее начисление награды.
+                </div>
 
-                {taskState === "empty" && (
-                  <StatusNote>Сейчас доступных заданий нет. Шахта пополняется.</StatusNote>
-                )}
+                <div className="mt-4 grid grid-cols-2 gap-3">
+                  <MiniStat label="Где идет просмотр" value="В боте" tone="cyan" />
+                  <MiniStat label="Запуск" value="Сразу" tone="gold" />
+                </div>
 
-                {taskState === "error" && taskMessage && (
-                  <StatusNote tone="error">{taskMessage}</StatusNote>
-                )}
+                <button
+                  type="button"
+                  onClick={() => void handleOpenBotTasks()}
+                  disabled={botTasksOpening}
+                  className="mining-primary-button mt-4 w-full"
+                >
+                  {botTasksOpening ? "Открываю поток..." : "Открыть поток постов"}
+                </button>
 
-                {task && taskState !== "loading" && taskState !== "empty" && (
-                  <>
-                    <div className="mining-task-card">
-                      <div className="flex items-start justify-between gap-4">
-                        <div className="min-w-0 flex-1">
-                          <span className="mining-chip mining-chip--cyan">ЗАДАНИЕ НА ПРОСМОТР</span>
-                          <div className="mt-3 text-2xl font-semibold text-white">{task.title}</div>
-                          <div className="mt-2 text-sm text-slate-300">
-                            {task.description || "Открой пост и подержи нужное время"}
-                          </div>
-                        </div>
-
-                        <div className="mining-task-reward">
-                          <span className="mining-task-reward__value">{taskReward}</span>
-                          <span className="mining-task-reward__label">⭐ награда</span>
-                        </div>
-                      </div>
-
-                      <div className="mt-5 grid grid-cols-2 gap-3">
-                        <MiniStat
-                          label="Удержание"
-                          value={`${holdSeconds} сек`}
-                          tone="slate"
-                        />
-                        <MiniStat
-                          label="Статус"
-                          value={taskStateLabel(taskState, isTaskCompleted)}
-                          tone={canCheck ? "cyan" : "slate"}
-                        />
-                      </div>
-
-                      {isTaskCompleted && (
-                        <StatusNote tone="success">Задание уже выполнено</StatusNote>
-                      )}
-
-                      {!isTaskCompleted && openedAt && (
-                        <div className="mt-4">
-                          <div className="mining-progress">
-                            <div
-                              className="mining-progress__fill"
-                              style={{
-                                width: `${Math.min(
-                                  100,
-                                  holdSeconds > 0
-                                    ? (elapsedSeconds / holdSeconds) * 100
-                                    : 100,
-                                )}%`,
-                              }}
-                            />
-                          </div>
-                          <div className="mt-2 text-sm text-slate-300">
-                            {remainingSeconds > 0
-                              ? `Подожди еще ${remainingSeconds} сек перед проверкой`
-                              : "Можно проверять выполнение"}
-                          </div>
-                        </div>
-                      )}
-
-                      {!isTaskCompleted && (
-                        <div className="mt-5 grid grid-cols-2 gap-3">
-                          <button
-                            type="button"
-                            onClick={() => void handleOpenTask()}
-                            disabled={taskState === "opening" || taskState === "checking"}
-                            className="mining-primary-button"
-                          >
-                            {taskState === "opening" ? "Открываю..." : "Открыть пост"}
-                          </button>
-
-                          <button
-                            type="button"
-                            onClick={() => void handleCheckTask()}
-                            disabled={
-                              !canCheck || taskState === "opening" || taskState === "checking"
-                            }
-                            className="mining-secondary-button"
-                          >
-                            {taskState === "checking" ? "Проверяю..." : "Проверить"}
-                          </button>
-                        </div>
-                      )}
-
-                      {isTaskCompleted && (
-                        <button
-                          type="button"
-                          onClick={() => void loadNextTask()}
-                          className="mining-primary-button mt-5 w-full"
-                        >
-                          Следующее задание
-                        </button>
-                      )}
-                    </div>
-
-                    {taskMessage && <StatusNote>{taskMessage}</StatusNote>}
-                  </>
-                )}
+                <StatusNote>Бот откроется сразу на экране просмотра постов.</StatusNote>
               </section>
             )}
 
@@ -740,26 +499,6 @@ function StatusNote({
   );
 }
 
-function useElapsedSeconds(openedAt: number | null): number {
-  const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
-
-  useEffect(() => {
-    if (!openedAt) return;
-
-    const timer = window.setInterval(() => {
-      setNow(Math.floor(Date.now() / 1000));
-    }, 1000);
-
-    return () => {
-      window.clearInterval(timer);
-    };
-  }, [openedAt]);
-
-  if (!openedAt) return 0;
-
-  return Math.max(0, now - openedAt);
-}
-
 function formatBalance(value: number): string {
   return Number(value || 0)
     .toFixed(2)
@@ -769,27 +508,4 @@ function formatBalance(value: number): string {
 function formatActivity(value: number): string {
   const numeric = Number(value || 0);
   return `${numeric.toFixed(1)}%`;
-}
-
-function taskStateLabel(state: TaskState, completed: boolean): string {
-  if (completed) return "Выполнено";
-
-  switch (state) {
-    case "loading":
-      return "Загрузка";
-    case "opening":
-      return "Открываю";
-    case "opened":
-      return "Ожидание";
-    case "checking":
-      return "Проверка";
-    case "error":
-      return "Ошибка";
-    case "empty":
-      return "Пусто";
-    case "done":
-      return "Готово";
-    default:
-      return "Готово";
-  }
 }

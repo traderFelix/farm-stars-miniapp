@@ -193,6 +193,33 @@ async def _ingest_task_channel_post_payload_via_api(payload: TaskChannelPostPayl
     )
 
 
+async def _build_tasks_screen_text(user_id: int) -> str:
+    menu_payload = await get_bot_main_menu_via_api(user_id)
+    balance = float(menu_payload.get("balance") or 0)
+    tasks_status_text: Optional[str] = None
+
+    try:
+        next_task = await get_next_task(user_id)
+    except ApiClientError as e:
+        _log_user_api_error("tasks_screen.next_task", e)
+        next_task = None
+        tasks_status_text = "⚠️ Не удалось проверить доступные посты."
+    except Exception:
+        next_task = None
+
+    if next_task:
+        tasks_status_text = "Сейчас есть доступные посты для просмотра."
+    elif tasks_status_text is None:
+        tasks_status_text = "Сейчас доступных постов нет."
+
+    return (
+        "👁 Просмотр постов\n\n"
+        "За каждый просмотр начисляется награда.\n"
+        f"{tasks_status_text}\n\n"
+        f"Баланс: {fmt_stars(balance)}⭐️"
+    )
+
+
 @router.channel_post()
 async def ingest_task_channel_post(message: Message):
     has_content = bool(
@@ -278,6 +305,20 @@ async def start(message: Message):
         )
 
     role_level = int(menu_payload.get("role_level") or 0)
+    if start_arg == "tasks":
+        try:
+            tasks_screen_text = await _build_tasks_screen_text(user_id)
+        except ApiClientError as e:
+            await _reply_user_api_error(
+                message,
+                e,
+                context="start.tasks_screen",
+            )
+            return
+
+        await message.answer(tasks_screen_text, reply_markup=tasks_menu())
+        return
+
     if START_VISUAL_PATH.exists():
         try:
             await message.answer_photo(
@@ -300,39 +341,18 @@ async def show_tasks(callback: CallbackQuery):
 
     user_id = callback.from_user.id
     try:
-        menu_payload = await get_bot_main_menu_via_api(user_id)
+        tasks_screen_text = await _build_tasks_screen_text(user_id)
     except ApiClientError as e:
         await _reply_user_api_error_via_callback_message(
             callback,
             e,
-            context="show_tasks.main_menu",
+            context="show_tasks.screen",
         )
         return
 
-    balance = float(menu_payload.get("balance") or 0)
-    tasks_status_text: Optional[str] = None
-
-    try:
-        next_task = await get_next_task(user_id)
-    except ApiClientError as e:
-        _log_user_api_error("show_tasks.next_task", e)
-        next_task = None
-        tasks_status_text = "⚠️ Не удалось проверить доступные посты."
-    except Exception:
-        next_task = None
-
-    if next_task:
-        tasks_status_text = "Сейчас есть доступные посты для просмотра."
-    elif tasks_status_text is None:
-        tasks_status_text = "Сейчас доступных постов нет."
-
     await safe_edit_text(
         callback.message,
-        "👁 Просмотр постов\n\n"
-        "Показываем реальные посты из каналов прямо в Telegram.\n"
-        "За каждый просмотр начисляется награда.\n"
-        f"{tasks_status_text}\n\n"
-        f"Баланс: {fmt_stars(balance)}⭐️",
+        tasks_screen_text,
         reply_markup=tasks_menu(),
     )
 

@@ -1,11 +1,3 @@
-import type {
-    TaskCheckRequest,
-    TaskCheckResponse,
-    TaskListItem,
-    TaskOpenRequest,
-    TaskOpenResponse,
-} from "@/lib/tasks";
-
 const ACCESS_TOKEN_KEY = "farmstars_access_token";
 
 export type TelegramAuthResponse = {
@@ -139,6 +131,10 @@ export type WithdrawalListResponse = {
     items: WithdrawalItem[];
 };
 
+export type OpenBotTasksResponse = {
+    ok: boolean;
+};
+
 type RequestOptions = {
     method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
     body?: unknown;
@@ -258,39 +254,9 @@ export async function getMyProfile(): Promise<Profile> {
     });
 }
 
-export async function getNextTask(): Promise<TaskListItem | null> {
-    try {
-        return await apiRequest<TaskListItem>("/tasks/next", {
-            method: "GET",
-            auth: true,
-        });
-    } catch (error) {
-        const message = error instanceof Error ? error.message : "";
-        if (message === "No available tasks") {
-            return null;
-        }
-        throw error;
-    }
-}
-
-export async function openTask(
-    taskId: number,
-    payload: TaskOpenRequest,
-): Promise<TaskOpenResponse> {
-    return apiRequest<TaskOpenResponse>(`/tasks/${taskId}/open`, {
+export async function openBotTasks(): Promise<OpenBotTasksResponse> {
+    return apiRequest<OpenBotTasksResponse>("/tasks/open-in-bot", {
         method: "POST",
-        body: payload,
-        auth: true,
-    });
-}
-
-export async function checkTask(
-    taskId: number,
-    payload: TaskCheckRequest,
-): Promise<TaskCheckResponse> {
-    return apiRequest<TaskCheckResponse>(`/tasks/${taskId}/check`, {
-        method: "POST",
-        body: payload,
         auth: true,
     });
 }

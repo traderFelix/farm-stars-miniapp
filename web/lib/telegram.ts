@@ -13,6 +13,7 @@ type TgWebApp = {
     expand: () => void;
     showAlert?: (message: string) => void;
     openTelegramLink?: (url: string) => void;
+    close?: () => void;
     HapticFeedback?: {
         notificationOccurred?: (type: "error" | "success" | "warning") => void;
         impactOccurred?: (style: "light" | "medium" | "heavy" | "rigid" | "soft") => void;
@@ -51,4 +52,29 @@ export function getTelegramInitData(): string {
 
 export function getTelegramUserUnsafe() {
     return getTelegramWebApp()?.initDataUnsafe?.user || null;
+}
+
+export function openTelegramLink(url: string): boolean {
+    const webApp = getTelegramWebApp();
+    if (webApp?.openTelegramLink) {
+        webApp.openTelegramLink(url);
+        return true;
+    }
+
+    if (typeof window !== "undefined") {
+        window.location.href = url;
+        return true;
+    }
+
+    return false;
+}
+
+export function closeTelegramMiniApp(): boolean {
+    const webApp = getTelegramWebApp();
+    if (webApp?.close) {
+        webApp.close();
+        return true;
+    }
+
+    return false;
 }
