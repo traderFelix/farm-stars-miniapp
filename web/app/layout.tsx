@@ -2,9 +2,11 @@ import type { Metadata, Viewport } from "next";
 import Script from "next/script";
 import "./globals.css";
 
+const TELEGRAM_WEB_APP_SCRIPT = ["https://telegram.org", "js", "telegram-web-app.js"].join("/");
+
 export const metadata: Metadata = {
-    title: "Felix Farm Mini App",
-    description: "Mini App for Felix Farm Stars",
+    title: "Felix Farm Stars",
+    description: "Мини-приложение для добычи звезд и TON",
 };
 
 export const viewport: Viewport = {
@@ -22,7 +24,7 @@ export default function RootLayout({
     return (
         <html lang="ru" suppressHydrationWarning>
         <body>
-        <Script src="https://telegram.org/js/telegram-web-app.js" strategy="beforeInteractive" />
+        <Script src={TELEGRAM_WEB_APP_SCRIPT} strategy="beforeInteractive" />
         {children}
         </body>
         </html>

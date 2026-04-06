@@ -2,6 +2,9 @@
 
 import { useEffect, useMemo, useState } from "react";
 
+import CampaignsPanel from "@/components/campaigns/CampaignsPanel";
+import ReferralsPanel from "@/components/referrals/ReferralsPanel";
+import WithdrawalPanel from "@/components/withdrawal/WithdrawalPanel";
 import {
   authTelegram,
   checkTask,
@@ -17,27 +20,31 @@ import {
 import { clearOpenedTask, getOpenedTask, saveOpenedTask } from "@/lib/opened-task";
 import type { TaskCheckResponse, TaskListItem } from "@/lib/tasks";
 import { getTelegramInitData, initTelegramMiniApp } from "@/lib/telegram";
-import CampaignsPanel from "@/components/campaigns/CampaignsPanel";
-import ReferralsPanel from "@/components/referrals/ReferralsPanel";
-import WithdrawalPanel from "@/components/withdrawal/WithdrawalPanel";
 
 type BootstrapState = "idle" | "loading" | "ready" | "error";
+type AppTab = "profile" | "mining" | "referrals" | "campaigns" | "withdrawal";
 
 type TaskState =
-    | "idle"
-    | "loading"
-    | "ready"
-    | "opening"
-    | "opened"
-    | "checking"
-    | "done"
-    | "empty"
-    | "error";
+  | "idle"
+  | "loading"
+  | "ready"
+  | "opening"
+  | "opened"
+  | "checking"
+  | "done"
+  | "empty"
+  | "error";
 
 type CheckinState = "idle" | "loading" | "ready" | "claiming" | "error";
 
+const HERO_BANNER_URL = ["/hero", "mining-hero-banner.png"].join("/");
+const HERO_BANNER_STYLE = {
+  backgroundImage: `linear-gradient(180deg, rgba(7, 10, 18, 0.04), rgba(7, 10, 18, 0.1)), url("${HERO_BANNER_URL}")`,
+};
+
 export default function HomePage() {
   const [bootstrapState, setBootstrapState] = useState<BootstrapState>("idle");
+  const [activeTab, setActiveTab] = useState<AppTab>("profile");
   const [profile, setProfile] = useState<Profile | null>(null);
 
   const [checkin, setCheckin] = useState<CheckinStatus | null>(null);
@@ -49,93 +56,8 @@ export default function HomePage() {
   const [openedAt, setOpenedAt] = useState<number | null>(null);
   const [taskMessage, setTaskMessage] = useState("");
 
-  const [debugMessage, setDebugMessage] = useState<string>("STEP 1: start");
+  const [debugMessage, setDebugMessage] = useState<string>("Шаг 1: запуск");
   const [errorMessage, setErrorMessage] = useState<string>("");
-
-  useEffect(() => {
-    let cancelled = false;
-
-    async function bootstrap() {
-      try {
-        setBootstrapState("loading");
-        setErrorMessage("");
-        setDebugMessage("STEP 1: start");
-
-        initTelegramMiniApp();
-        if (cancelled) return;
-
-        setDebugMessage("STEP 2: telegram ready");
-
-        const initData = getTelegramInitData();
-        if (!initData) {
-          // noinspection ExceptionCaughtLocallyJS
-          throw new Error("Telegram initData is empty");
-        }
-
-        setDebugMessage("STEP 3: auth request");
-        await authTelegram(initData);
-        if (cancelled) return;
-
-        setDebugMessage("STEP 4: profile request");
-        const nextProfile = await getMyProfile();
-        if (cancelled) return;
-        setProfile(nextProfile);
-
-        setDebugMessage("STEP 5: checkin request");
-        await loadCheckinStatus({ preserveMessage: true });
-        if (cancelled) return;
-
-        setDebugMessage("STEP 6: task request");
-        await loadNextTask();
-        if (cancelled) return;
-
-        setBootstrapState("ready");
-        setDebugMessage("STEP 7: ready");
-      } catch (error) {
-        if (cancelled) return;
-        clearAccessToken();
-        const message = error instanceof Error ? error.message : "Unknown bootstrap error";
-        setBootstrapState("error");
-        setErrorMessage(message);
-        setDebugMessage(`BOOTSTRAP ERROR {"message":"${message}"}`);
-      }
-    }
-
-    bootstrap();
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!task) {
-      setOpenedAt(null);
-      clearOpenedTask();
-      return;
-    }
-
-    if (task.already_completed || task.status === "completed") {
-      setOpenedAt(null);
-      clearOpenedTask();
-      return;
-    }
-
-    const stored = getOpenedTask();
-    if (!stored) {
-      setOpenedAt(null);
-      return;
-    }
-
-    if (stored.task_id !== task.id) {
-      clearOpenedTask();
-      setOpenedAt(null);
-      return;
-    }
-
-    setOpenedAt(stored.opened_at);
-    setTaskState("opened");
-  }, [task]);
 
   const elapsedSeconds = useElapsedSeconds(openedAt);
   const holdSeconds = task?.hold_seconds ?? 0;
@@ -146,6 +68,8 @@ export default function HomePage() {
 
   const canCheck = Boolean(task && openedAt && remainingSeconds <= 0);
   const isTaskCompleted = Boolean(task?.already_completed || task?.status === "completed");
+  const operatorName = profile?.first_name || profile?.username || "Felix";
+  const taskReward = task ? formatBalance(task.reward) : "0";
 
   async function loadCheckinStatus(options?: { preserveMessage?: boolean }) {
     setCheckinState("loading");
@@ -158,7 +82,7 @@ export default function HomePage() {
       setCheckin(status);
       setCheckinState("ready");
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Ошибка загрузки daily bonus";
+      const message = error instanceof Error ? error.message : "Ошибка загрузки ежедневного бонуса";
       setCheckin(null);
       setCheckinState("error");
       setCheckinMessage(message);
@@ -177,17 +101,17 @@ export default function HomePage() {
       setCheckinMessage(result.message);
 
       setProfile((prev) =>
-          prev
-              ? {
-                ...prev,
-                balance: Number(result.balance ?? prev.balance),
-              }
-              : prev,
+        prev
+          ? {
+              ...prev,
+              balance: Number(result.balance ?? prev.balance),
+            }
+          : prev,
       );
 
       await loadCheckinStatus({ preserveMessage: true });
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Ошибка получения daily bonus";
+      const message = error instanceof Error ? error.message : "Ошибка получения ежедневного бонуса";
       setCheckinState("error");
       setCheckinMessage(message);
     }
@@ -218,6 +142,18 @@ export default function HomePage() {
         return;
       }
 
+      const stored = getOpenedTask();
+      if (stored && stored.task_id === nextTask.id) {
+        setOpenedAt(stored.opened_at);
+        setTaskState("opened");
+        return;
+      }
+
+      if (stored && stored.task_id !== nextTask.id) {
+        clearOpenedTask();
+      }
+
+      setOpenedAt(null);
       setTaskState("ready");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Ошибка загрузки задания";
@@ -226,6 +162,65 @@ export default function HomePage() {
       setTaskMessage(message);
     }
   }
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function bootstrap() {
+      try {
+        setBootstrapState("loading");
+        setErrorMessage("");
+        setDebugMessage("Шаг 1: запуск");
+
+        initTelegramMiniApp();
+        if (cancelled) return;
+
+        setDebugMessage("Шаг 2: Telegram готов");
+
+        const initData = getTelegramInitData();
+        if (!initData) {
+          const message = "Не пришли данные запуска из Telegram";
+          setBootstrapState("error");
+          setErrorMessage(message);
+          setDebugMessage(`Ошибка запуска: ${message}`);
+          return;
+        }
+
+        setDebugMessage("Шаг 3: авторизация");
+        await authTelegram(initData);
+        if (cancelled) return;
+
+        setDebugMessage("Шаг 4: загрузка профиля");
+        const nextProfile = await getMyProfile();
+        if (cancelled) return;
+        setProfile(nextProfile);
+
+        setDebugMessage("Шаг 5: загрузка ежедневного бонуса");
+        await loadCheckinStatus({ preserveMessage: true });
+        if (cancelled) return;
+
+        setDebugMessage("Шаг 6: загрузка заданий");
+        await loadNextTask();
+        if (cancelled) return;
+
+        setBootstrapState("ready");
+        setDebugMessage("Шаг 7: готово");
+      } catch (error) {
+        if (cancelled) return;
+        clearAccessToken();
+        const message = error instanceof Error ? error.message : "Неизвестная ошибка запуска";
+        setBootstrapState("error");
+        setErrorMessage(message);
+        setDebugMessage(`Ошибка запуска: ${message}`);
+      }
+    }
+
+    void bootstrap();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   async function handleOpenTask() {
     if (!task || isTaskCompleted) return;
@@ -257,6 +252,7 @@ export default function HomePage() {
       setOpenedAt(result.opened_at);
       setTaskState("opened");
       setTaskMessage("Пост открыт. Подожди нужное время и нажми проверить.");
+      setActiveTab("mining");
 
       if (result.post_url) {
         window.open(result.post_url, "_blank", "noopener,noreferrer");
@@ -287,12 +283,12 @@ export default function HomePage() {
         setOpenedAt(null);
 
         setProfile((prev) =>
-            prev
-                ? {
-                  ...prev,
-                  balance: Number(result.new_balance || prev.balance),
-                }
-                : prev,
+          prev
+            ? {
+                ...prev,
+                balance: Number(result.new_balance || prev.balance),
+              }
+            : prev,
         );
 
         await loadNextTask();
@@ -313,240 +309,434 @@ export default function HomePage() {
   }
 
   return (
-      <main className="min-h-screen bg-neutral-950 px-4 py-5 text-white">
-        <div className="mx-auto flex max-w-md flex-col gap-4">
-          <header className="rounded-2xl border border-white/10 bg-white/5 p-4">
-            <h1 className="text-xl font-semibold">Felix Farm Stars</h1>
-            <p className="mt-1 text-sm text-white/60">Главный экран</p>
-          </header>
+    <main className="mining-app">
+      <div className="mining-app__mesh" aria-hidden="true" />
+      <div className="mining-app__orb mining-app__orb--gold" aria-hidden="true" />
+      <div className="mining-app__orb mining-app__orb--cyan" aria-hidden="true" />
+      <div className="mining-app__orb mining-app__orb--bottom" aria-hidden="true" />
 
-          {bootstrapState === "loading" && (
-              <section className="rounded-2xl border border-white/10 bg-white/5 p-4">
-                <div className="text-sm font-medium">Загрузка mini app...</div>
-                <div className="mt-2 text-xs text-white/60">{debugMessage}</div>
-              </section>
-          )}
+      <div className="mining-shell mx-auto flex min-h-screen max-w-md flex-col gap-4 px-4 py-5 pt-safe-top">
+        <header className="mining-hero-art" aria-label="Баннер шахты">
+          <div className="mining-hero-art__image" style={HERO_BANNER_STYLE} aria-hidden="true" />
+        </header>
 
-          {bootstrapState === "error" && (
-              <section className="rounded-2xl border border-red-500/30 bg-red-500/10 p-4">
-                <div className="text-sm font-medium">Ошибка загрузки</div>
-                <div className="mt-2 text-xs text-white/60">{debugMessage}</div>
-                <div className="mt-2 text-sm text-red-200">{errorMessage}</div>
-              </section>
-          )}
+        {bootstrapState === "loading" && (
+          <section className="mining-panel">
+            <SectionHeader
+              eyebrow="Запуск"
+              title="Подключаю шахтный контур"
+              description="Поднимаю мини-приложение Telegram, авторизацию и данные смены."
+            />
+            <StatusNote>{debugMessage}</StatusNote>
+          </section>
+        )}
 
-          {bootstrapState === "ready" && profile && (
+        {bootstrapState === "error" && (
+          <section className="mining-panel">
+            <SectionHeader
+              eyebrow="Сбой запуска"
+              title="Не удалось запустить шахту"
+              description="Проверь запуск из Telegram и токен, затем попробуй ещё раз."
+            />
+            <StatusNote tone="error">{debugMessage}</StatusNote>
+            <StatusNote tone="error">{errorMessage}</StatusNote>
+          </section>
+        )}
+
+        {bootstrapState === "ready" && profile && (
+          <>
+            {activeTab === "profile" && (
               <>
-                <section className="rounded-2xl border border-white/10 bg-white/5 p-4">
-                  <h2 className="text-sm font-semibold uppercase tracking-wide text-white/70">Профиль</h2>
-                  <div className="mt-3 grid gap-3">
-                    <Row label="ID" value={String(profile.user_id)} />
-                    <Row label="Username" value={profile.username ? `@${profile.username}` : "-"} />
-                    <Row label="Роль" value={profile.role || "пользователь"} />
-                  </div>
-
-                  <div className="mt-4 grid grid-cols-2 gap-3">
-                    <Stat label="Баланс" value={`${formatBalance(profile.balance)} ⭐`} />
-                    <Stat label="Активность" value={formatActivity(profile.activity_index)} />
-                  </div>
+                <section className="mining-panel mining-profile-panel">
+                  <div className="mining-profile-panel__name">{operatorName}</div>
+                  <span className="mining-profile-panel__role">
+                    {profile.role || "пользователь"}
+                  </span>
                 </section>
 
-                <section className="rounded-2xl border border-white/10 bg-white/5 p-4">
-                  <div className="flex items-center justify-between gap-3">
-                    <h2 className="text-sm font-semibold uppercase tracking-wide text-white/70">
-                      Daily bonus
-                    </h2>
-
-                    <button
-                        type="button"
-                        onClick={() => loadCheckinStatus()}
-                        className="text-xs text-white/60 transition hover:text-white"
-                        disabled={checkinState === "loading" || checkinState === "claiming"}
-                    >
-                      Обновить
-                    </button>
-                  </div>
-
-                  {checkinState === "loading" && (
-                      <p className="mt-3 text-sm text-white/60">Загружаю статус daily bonus...</p>
-                  )}
-
-                  {checkinState === "error" && (
-                      <div className="mt-3 rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-200">
-                        {checkinMessage || "Не удалось загрузить daily bonus"}
-                      </div>
-                  )}
-
-                  {checkin && checkinState !== "loading" && (
-                      <>
-                        <div className="mt-3 grid grid-cols-2 gap-3">
-                          <Stat label="День цикла" value={String(checkin.current_cycle_day)} />
-                          <Stat label="Сегодня" value={`${formatBalance(checkin.reward_today)} ⭐`} />
-                          <Stat label="Завтра" value={`${formatBalance(checkin.next_reward)} ⭐`} />
-                          <Stat
-                              label="Статус"
-                              value={checkin.can_claim ? "Можно забрать" : "Уже получено"}
-                          />
-                        </div>
-
-                        <button
-                            type="button"
-                            onClick={handleClaimCheckin}
-                            disabled={!checkin.can_claim || checkinState === "claiming"}
-                            className="mt-4 w-full rounded-xl bg-white px-4 py-3 text-sm font-medium text-black transition disabled:cursor-not-allowed disabled:opacity-50"
-                        >
-                          {checkinState === "claiming" ? "Забираю..." : "Забрать бонус"}
-                        </button>
-
-                        {checkinMessage && (
-                            <div className="mt-3 rounded-xl border border-white/10 bg-black/20 p-3 text-sm text-white/80">
-                              {checkinMessage}
-                            </div>
-                        )}
-                      </>
-                  )}
-                </section>
-
-                <section className="rounded-2xl border border-white/10 bg-white/5 p-4">
-                  <CampaignsPanel
-                      onBalanceChange={(nextBalance) =>
-                          setProfile((prev) =>
-                              prev
-                                  ? {
-                                    ...prev,
-                                    balance: Number(nextBalance),
-                                  }
-                                  : prev,
-                          )
-                      }
+                <section className="grid grid-cols-2 gap-3">
+                  <OverviewCard
+                    label="Баланс"
+                    value={`${formatBalance(profile.balance)} ⭐`}
+                    hint="Текущий баланс пользователя"
+                    tone="gold"
+                  />
+                  <OverviewCard
+                    label="Активность"
+                    value={formatActivity(profile.activity_index)}
+                    hint="Индекс активности аккаунта"
+                    tone="cyan"
                   />
                 </section>
 
-                <section className="rounded-2xl border border-white/10 bg-white/5 p-4">
-                  <ReferralsPanel />
-                </section>
-
-                <section className="rounded-2xl border border-white/10 bg-white/5 p-4">
-                  <WithdrawalPanel />
-                </section>
-
-                <section className="rounded-2xl border border-white/10 bg-white/5 p-4">
-                  <div className="flex items-center justify-between gap-3">
-                    <h2 className="text-sm font-semibold uppercase tracking-wide text-white/70">
-                      Задание
-                    </h2>
-
-                    <button
+                <section className="mining-panel">
+                  <SectionHeader
+                    eyebrow="Ежедневный бонус"
+                    title="Ежедневная добыча"
+                    description="Забирай бонус за вход и следи за циклом без пропусков."
+                    action={
+                      <button
                         type="button"
-                        onClick={loadNextTask}
-                        className="text-xs text-white/60 transition hover:text-white"
-                        disabled={taskState === "loading" || taskState === "opening" || taskState === "checking"}
+                        onClick={() => void loadCheckinStatus()}
+                        className="mining-ghost-button"
+                        disabled={checkinState === "loading" || checkinState === "claiming"}
+                      >
+                        Обновить
+                      </button>
+                    }
+                  />
+
+                  {checkinState === "loading" && (
+                    <StatusNote>Сканирую суточный цикл добычи...</StatusNote>
+                  )}
+
+                  {checkinState === "error" && (
+                    <StatusNote tone="error">
+                      {checkinMessage || "Не удалось загрузить ежедневный бонус"}
+                    </StatusNote>
+                  )}
+
+                  {checkin && checkinState !== "loading" && (
+                    <>
+                      <div className="mt-4 grid grid-cols-2 gap-3">
+                        <MiniStat
+                          label="День цикла"
+                          value={String(checkin.current_cycle_day)}
+                          tone="slate"
+                        />
+                        <MiniStat
+                          label="Сегодня"
+                          value={`${formatBalance(checkin.reward_today)} ⭐`}
+                          tone="gold"
+                        />
+                        <MiniStat
+                          label="Завтра"
+                          value={`${formatBalance(checkin.next_reward)} ⭐`}
+                          tone="cyan"
+                        />
+                        <MiniStat
+                          label="Статус"
+                          value={checkin.can_claim ? "Можно забрать" : "Уже снято"}
+                          tone="slate"
+                        />
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => void handleClaimCheckin()}
+                        disabled={!checkin.can_claim || checkinState === "claiming"}
+                        className="mining-primary-button mt-4 w-full"
+                      >
+                        {checkinState === "claiming" ? "Добываю..." : "Забрать бонус"}
+                      </button>
+
+                      {checkinMessage && <StatusNote>{checkinMessage}</StatusNote>}
+                    </>
+                  )}
+                </section>
+              </>
+            )}
+
+            {activeTab === "mining" && (
+              <section className="mining-panel">
+                <SectionHeader
+                  eyebrow="Контроль смены"
+                  title="Просмотр постов"
+                  description="Открывай пост, держи нужное время и подтверждай добычу."
+                  action={
+                    <button
+                      type="button"
+                      onClick={() => void loadNextTask()}
+                      className="mining-ghost-button"
+                      disabled={
+                        taskState === "loading" ||
+                        taskState === "opening" ||
+                        taskState === "checking"
+                      }
                     >
                       Обновить
                     </button>
-                  </div>
+                  }
+                />
 
-                  {taskState === "loading" && (
-                      <p className="mt-3 text-sm text-white/60">Загружаю следующее задание...</p>
-                  )}
+                {taskState === "loading" && (
+                  <StatusNote>Подбираю следующую рабочую смену...</StatusNote>
+                )}
 
-                  {taskState === "empty" && (
-                      <div className="mt-3">
-                        <p className="text-sm text-white/70">Сейчас доступных заданий нет.</p>
-                      </div>
-                  )}
+                {taskState === "empty" && (
+                  <StatusNote>Сейчас доступных заданий нет. Шахта пополняется.</StatusNote>
+                )}
 
-                  {taskState === "error" && taskMessage && (
-                      <div className="mt-3 rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-200">
-                        {taskMessage}
-                      </div>
-                  )}
+                {taskState === "error" && taskMessage && (
+                  <StatusNote tone="error">{taskMessage}</StatusNote>
+                )}
 
-                  {task && taskState !== "loading" && taskState !== "empty" && (
-                      <>
-                        <div className="mt-3">
-                          <div className="text-base font-medium">{task.title}</div>
-                          <div className="mt-1 text-sm text-white/60">
+                {task && taskState !== "loading" && taskState !== "empty" && (
+                  <>
+                    <div className="mining-task-card">
+                      <div className="flex items-start justify-between gap-4">
+                        <div className="min-w-0 flex-1">
+                          <span className="mining-chip mining-chip--cyan">ЗАДАНИЕ НА ПРОСМОТР</span>
+                          <div className="mt-3 text-2xl font-semibold text-white">{task.title}</div>
+                          <div className="mt-2 text-sm text-slate-300">
                             {task.description || "Открой пост и подержи нужное время"}
                           </div>
                         </div>
 
-                        {isTaskCompleted && (
-                            <div className="mt-3 rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3 text-sm text-emerald-200">
-                              Задание уже выполнено
-                            </div>
-                        )}
+                        <div className="mining-task-reward">
+                          <span className="mining-task-reward__value">{taskReward}</span>
+                          <span className="mining-task-reward__label">⭐ награда</span>
+                        </div>
+                      </div>
 
-                        {!isTaskCompleted && openedAt && (
-                            <div className="mt-3 rounded-xl border border-white/10 bg-black/20 p-3 text-sm text-white/80">
-                              {remainingSeconds > 0
-                                  ? `Подожди еще ${remainingSeconds} сек`
-                                  : "Можно проверять выполнение"}
-                            </div>
-                        )}
+                      <div className="mt-5 grid grid-cols-2 gap-3">
+                        <MiniStat
+                          label="Удержание"
+                          value={`${holdSeconds} сек`}
+                          tone="slate"
+                        />
+                        <MiniStat
+                          label="Статус"
+                          value={taskStateLabel(taskState, isTaskCompleted)}
+                          tone={canCheck ? "cyan" : "slate"}
+                        />
+                      </div>
 
-                        {!isTaskCompleted && (
-                            <div className="mt-4 grid grid-cols-2 gap-3">
-                              <button
-                                  type="button"
-                                  onClick={handleOpenTask}
-                                  disabled={taskState === "opening" || taskState === "checking"}
-                                  className="rounded-xl bg-white px-4 py-3 text-sm font-medium text-black transition disabled:cursor-not-allowed disabled:opacity-50"
-                              >
-                                {taskState === "opening" ? "Открываю..." : "Открыть пост"}
-                              </button>
+                      {isTaskCompleted && (
+                        <StatusNote tone="success">Задание уже выполнено</StatusNote>
+                      )}
 
-                              <button
-                                  type="button"
-                                  onClick={handleCheckTask}
-                                  disabled={!canCheck || taskState === "opening" || taskState === "checking"}
-                                  className="rounded-xl border border-white/15 bg-transparent px-4 py-3 text-sm font-medium text-white transition disabled:cursor-not-allowed disabled:opacity-50"
-                              >
-                                {taskState === "checking" ? "Проверяю..." : "Проверить"}
-                              </button>
-                            </div>
-                        )}
+                      {!isTaskCompleted && openedAt && (
+                        <div className="mt-4">
+                          <div className="mining-progress">
+                            <div
+                              className="mining-progress__fill"
+                              style={{
+                                width: `${Math.min(
+                                  100,
+                                  holdSeconds > 0
+                                    ? (elapsedSeconds / holdSeconds) * 100
+                                    : 100,
+                                )}%`,
+                              }}
+                            />
+                          </div>
+                          <div className="mt-2 text-sm text-slate-300">
+                            {remainingSeconds > 0
+                              ? `Подожди еще ${remainingSeconds} сек перед проверкой`
+                              : "Можно проверять выполнение"}
+                          </div>
+                        </div>
+                      )}
 
-                        {isTaskCompleted && (
-                            <button
-                                type="button"
-                                onClick={loadNextTask}
-                                className="mt-4 w-full rounded-xl bg-white px-4 py-3 text-sm font-medium text-black transition"
-                            >
-                              Следующее задание
-                            </button>
-                        )}
+                      {!isTaskCompleted && (
+                        <div className="mt-5 grid grid-cols-2 gap-3">
+                          <button
+                            type="button"
+                            onClick={() => void handleOpenTask()}
+                            disabled={taskState === "opening" || taskState === "checking"}
+                            className="mining-primary-button"
+                          >
+                            {taskState === "opening" ? "Открываю..." : "Открыть пост"}
+                          </button>
 
-                        {taskMessage && (
-                            <div className="mt-3 rounded-xl border border-white/10 bg-black/20 p-3 text-sm text-white/80">
-                              {taskMessage}
-                            </div>
-                        )}
-                      </>
-                  )}
-                </section>
-              </>
-          )}
-        </div>
-      </main>
+                          <button
+                            type="button"
+                            onClick={() => void handleCheckTask()}
+                            disabled={
+                              !canCheck || taskState === "opening" || taskState === "checking"
+                            }
+                            className="mining-secondary-button"
+                          >
+                            {taskState === "checking" ? "Проверяю..." : "Проверить"}
+                          </button>
+                        </div>
+                      )}
+
+                      {isTaskCompleted && (
+                        <button
+                          type="button"
+                          onClick={() => void loadNextTask()}
+                          className="mining-primary-button mt-5 w-full"
+                        >
+                          Следующее задание
+                        </button>
+                      )}
+                    </div>
+
+                    {taskMessage && <StatusNote>{taskMessage}</StatusNote>}
+                  </>
+                )}
+              </section>
+            )}
+
+            {activeTab === "withdrawal" && (
+              <section className="mining-panel">
+                <WithdrawalPanel />
+              </section>
+            )}
+
+            {activeTab === "referrals" && (
+              <section className="mining-panel">
+                <ReferralsPanel />
+              </section>
+            )}
+
+            {activeTab === "campaigns" && (
+              <section className="mining-panel">
+                <CampaignsPanel
+                  onBalanceChange={(nextBalance) =>
+                    setProfile((prev) =>
+                      prev
+                        ? {
+                            ...prev,
+                            balance: Number(nextBalance),
+                          }
+                        : prev,
+                    )
+                  }
+                />
+              </section>
+            )}
+
+            <nav className="mining-bottom-nav" aria-label="Нижняя навигация">
+              <div className="mining-bottom-nav__inner">
+                <BottomTabButton
+                  tab="profile"
+                  activeTab={activeTab}
+                  title="Профиль"
+                  onSelect={setActiveTab}
+                />
+                <BottomTabButton
+                  tab="mining"
+                  activeTab={activeTab}
+                  title="Добыча"
+                  onSelect={setActiveTab}
+                />
+                <BottomTabButton
+                  tab="referrals"
+                  activeTab={activeTab}
+                  title="Реф.бонус"
+                  onSelect={setActiveTab}
+                />
+                <BottomTabButton
+                  tab="campaigns"
+                  activeTab={activeTab}
+                  title="Конкурсы"
+                  onSelect={setActiveTab}
+                />
+                <BottomTabButton
+                  tab="withdrawal"
+                  activeTab={activeTab}
+                  title="Вывод"
+                  onSelect={setActiveTab}
+                />
+              </div>
+            </nav>
+          </>
+        )}
+      </div>
+    </main>
   );
 }
 
-function Row({ label, value }: { label: string; value: string }) {
+function SectionHeader({
+  eyebrow,
+  title,
+  description,
+  action,
+}: {
+  eyebrow: string;
+  title: string;
+  description: string;
+  action?: React.ReactNode;
+}) {
   return (
-      <div className="flex items-center justify-between gap-3 rounded-xl border border-white/10 bg-black/20 px-3 py-2">
-        <span className="text-sm text-white/60">{label}</span>
-        <span className="text-sm font-medium text-white">{value}</span>
+    <div className="flex items-start justify-between gap-3">
+      <div>
+        <div className="mining-kicker">{eyebrow}</div>
+        <h2 className="mt-1 text-xl font-semibold text-white">{title}</h2>
+        <p className="mt-1 text-sm text-slate-300">{description}</p>
       </div>
+      {action}
+    </div>
   );
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
+function BottomTabButton({
+  tab,
+  activeTab,
+  title,
+  onSelect,
+}: {
+  tab: AppTab;
+  activeTab: AppTab;
+  title: string;
+  onSelect: (tab: AppTab) => void;
+}) {
+  const active = tab === activeTab;
+
   return (
-      <div className="rounded-xl border border-white/10 bg-black/20 p-3">
-        <div className="text-xs uppercase tracking-wide text-white/50">{label}</div>
-        <div className="mt-1 text-base font-semibold text-white">{value}</div>
-      </div>
+    <button
+      type="button"
+      className="mining-bottom-tab"
+      data-active={active}
+      onClick={() => onSelect(tab)}
+    >
+      <span className="mining-bottom-tab__dot" aria-hidden="true" />
+      <span className="mining-bottom-tab__title">{title}</span>
+    </button>
+  );
+}
+
+function OverviewCard({
+  label,
+  value,
+  hint,
+  tone,
+}: {
+  label: string;
+  value: string;
+  hint: string;
+  tone: "gold" | "cyan" | "slate";
+}) {
+  return (
+    <div className="mining-overview-card" data-tone={tone}>
+      <div className="mining-overview-card__label">{label}</div>
+      <div className="mining-overview-card__value">{value}</div>
+      <div className="mining-overview-card__hint">{hint}</div>
+    </div>
+  );
+}
+
+function MiniStat({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: string;
+  tone: "gold" | "cyan" | "slate";
+}) {
+  return (
+    <div className="mining-mini-stat" data-tone={tone}>
+      <div className="mining-mini-stat__label">{label}</div>
+      <div className="mining-mini-stat__value">{value}</div>
+    </div>
+  );
+}
+
+function StatusNote({
+  children,
+  tone = "default",
+}: {
+  children: React.ReactNode;
+  tone?: "default" | "error" | "success";
+}) {
+  return (
+    <div className="mining-status-note mt-4" data-tone={tone}>
+      {children}
+    </div>
   );
 }
 
@@ -571,10 +761,35 @@ function useElapsedSeconds(openedAt: number | null): number {
 }
 
 function formatBalance(value: number): string {
-  return Number(value || 0).toFixed(2).replace(/\.00$/, "");
+  return Number(value || 0)
+    .toFixed(2)
+    .replace(/\.00$/, "");
 }
 
 function formatActivity(value: number): string {
   const numeric = Number(value || 0);
   return `${numeric.toFixed(1)}%`;
+}
+
+function taskStateLabel(state: TaskState, completed: boolean): string {
+  if (completed) return "Выполнено";
+
+  switch (state) {
+    case "loading":
+      return "Загрузка";
+    case "opening":
+      return "Открываю";
+    case "opened":
+      return "Ожидание";
+    case "checking":
+      return "Проверка";
+    case "error":
+      return "Ошибка";
+    case "empty":
+      return "Пусто";
+    case "done":
+      return "Готово";
+    default:
+      return "Готово";
+  }
 }

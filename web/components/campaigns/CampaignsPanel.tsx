@@ -60,14 +60,18 @@ export default function CampaignsPanel({ onBalanceChange }: CampaignsPanelProps)
     return (
         <div>
             <div className="flex items-center justify-between gap-3">
-                <h2 className="text-sm font-semibold uppercase tracking-wide text-white/70">
-                    Конкурсы
-                </h2>
+                <div>
+                    <div className="mining-kicker">Активные награды</div>
+                    <h2 className="mt-1 text-xl font-semibold text-white">Активные конкурсы</h2>
+                    <p className="mt-1 text-sm text-slate-300">
+                        Дополнительные дропы и награды поверх основной добычи.
+                    </p>
+                </div>
 
                 <button
                     type="button"
                     onClick={() => void loadCampaigns({ preserveMessage: true })}
-                    className="text-xs text-white/60 transition hover:text-white"
+                    className="mining-ghost-button"
                     disabled={loading || claimingKey !== null}
                 >
                     Обновить
@@ -75,22 +79,22 @@ export default function CampaignsPanel({ onBalanceChange }: CampaignsPanelProps)
             </div>
 
             {loading ? (
-                <p className="mt-3 text-sm text-white/60">Загружаю активные конкурсы...</p>
+                <div className="mining-status-note mt-4">Загружаю активные конкурсы...</div>
             ) : items.length === 0 ? (
-                <div className="mt-3 rounded-xl border border-white/10 bg-black/20 p-3 text-sm text-white/60">
+                <div className="mining-note-card text-sm text-slate-300">
                     Сейчас нет активных конкурсов.
                 </div>
             ) : (
-                <div className="mt-3 flex flex-col gap-3">
+                <div className="mt-4 flex flex-col gap-3">
                     {items.map((item) => (
                         <div
                             key={item.campaign_key}
-                            className="rounded-xl border border-white/10 bg-black/20 p-3"
+                            className="mining-list-card"
                         >
                             <div className="flex items-start justify-between gap-3">
                                 <div>
                                     <div className="text-sm font-medium text-white">{item.title}</div>
-                                    <div className="mt-1 text-xs text-white/50">
+                                    <div className="mt-1 text-xs text-slate-400">
                                         Награда: {formatBalance(item.reward_amount)} ⭐
                                     </div>
                                 </div>
@@ -99,7 +103,7 @@ export default function CampaignsPanel({ onBalanceChange }: CampaignsPanelProps)
                                     type="button"
                                     onClick={() => void handleClaim(item.campaign_key)}
                                     disabled={claimingKey !== null}
-                                    className="rounded-xl bg-white px-3 py-2 text-xs font-medium text-black transition disabled:cursor-not-allowed disabled:opacity-50"
+                                    className="mining-primary-button min-h-0 px-4 py-2 text-sm"
                                 >
                                     {claimingKey === item.campaign_key ? "Проверяю..." : "Забрать"}
                                 </button>
@@ -110,7 +114,7 @@ export default function CampaignsPanel({ onBalanceChange }: CampaignsPanelProps)
             )}
 
             {message && (
-                <div className="mt-3 rounded-xl border border-white/10 bg-black/20 p-3 text-sm text-white/80">
+                <div className="mining-status-note mt-4">
                     {message}
                 </div>
             )}

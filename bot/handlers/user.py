@@ -1,6 +1,7 @@
 import asyncio
 import logging
 
+from pathlib import Path
 from typing import Any, Optional, TypedDict, Union
 
 from aiogram import Bot, F, Router
@@ -10,6 +11,7 @@ from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.types import (
     CallbackQuery,
+    FSInputFile,
     InaccessibleMessage,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
@@ -44,9 +46,19 @@ logger = logging.getLogger(__name__)
 LAST_TASK_POST_MSG_ID_KEY = "last_task_post_message_id"
 USER_API_UNAVAILABLE_TEXT = "⚠️ Сервис временно недоступен. Попробуй еще раз чуть позже."
 START_TEXT = (
-    "🚀 Основной интерфейс теперь в Mini App.\n\n"
-    "Открой приложение для профиля, daily bonus, конкурсов, рефералок и вывода.\n"
-    "Просмотры постов можно запускать прямо из бота."
+    "🔥 Начинай прямо сейчас фармить ТГ звезды и TON!\n\n"
+    "⚡ Открывай Mini App\n"
+    "💰 Забирай daily bonus\n"
+    "🏆 Лови конкурсы\n"
+    "🤝 Качай реферальный бонус\n"
+    "🚀 И выводи заработанное"
+)
+START_VISUAL_PATH = (
+    Path(__file__).resolve().parents[2]
+    / "web"
+    / "public"
+    / "hero"
+    / "mining-hero-banner.png"
 )
 
 
@@ -266,10 +278,20 @@ async def start(message: Message):
         )
 
     role_level = int(menu_payload.get("role_level") or 0)
-    await message.answer(
-        START_TEXT,
-        reply_markup=main_menu(role_level),
-    )
+    if START_VISUAL_PATH.exists():
+        try:
+            await message.answer_photo(
+                photo=FSInputFile(START_VISUAL_PATH),
+                caption=START_TEXT,
+                reply_markup=main_menu(role_level),
+            )
+            return
+        except TelegramBadRequest:
+            logger.exception("Failed to send start photo message to user_id=%s", message.chat.id)
+    else:
+        logger.warning("Start visual asset is missing: %s", START_VISUAL_PATH)
+
+    await message.answer(START_TEXT, reply_markup=main_menu(role_level))
 
 
 @router.callback_query(F.data == "tasks")
@@ -515,10 +537,28 @@ async def safe_edit_text(
         message: Union[Message, InaccessibleMessage, None],
         text: str,
         reply_markup=None,
+        parse_mode: Optional[str] = None,
 ):
     editable_message = _require_message(message)
     try:
-        await editable_message.edit_text(text, reply_markup=reply_markup)
+        has_media = bool(
+            editable_message.photo
+            or editable_message.animation
+            or editable_message.document
+            or editable_message.video
+        )
+        if has_media:
+            await editable_message.edit_caption(
+                caption=text,
+                reply_markup=reply_markup,
+                parse_mode=parse_mode,
+            )
+        else:
+            await editable_message.edit_text(
+                text,
+                reply_markup=reply_markup,
+                parse_mode=parse_mode,
+            )
     except TelegramBadRequest as e:
         if "message is not modified" in str(e):
             return
@@ -542,21 +582,20 @@ async def client_home(callback: CallbackQuery):
         return
 
     await callback.answer()
-    callback_message = _require_message(callback.message)
-
-    await callback_message.edit_text(
+    await safe_edit_text(
+        callback.message,
         "🤝 <b>Кабинет клиента</b>\n\n"
         "Тут потом будут:\n"
         "• мои заказы\n"
         "• запуск просмотров\n"
         "• запуск подписок\n"
         "• статистика заказов",
-        parse_mode=ParseMode.HTML,
         reply_markup=InlineKeyboardMarkup(
             inline_keyboard=[
                 [InlineKeyboardButton(text="⬅ Назад", callback_data="back")]
             ]
         ),
+        parse_mode=ParseMode.HTML,
     )
 
 
@@ -577,19 +616,18 @@ async def partner_home(callback: CallbackQuery):
         return
 
     await callback.answer()
-    callback_message = _require_message(callback.message)
-
-    await callback_message.edit_text(
+    await safe_edit_text(
+        callback.message,
         "💼 <b>Кабинет партнера</b>\n\n"
         "Тут потом будут:\n"
         "• приглашенные клиенты\n"
         "• приглашенные юзеры\n"
         "• проценты / бонусы\n"
         "• партнерская статистика",
-        parse_mode=ParseMode.HTML,
         reply_markup=InlineKeyboardMarkup(
             inline_keyboard=[
                 [InlineKeyboardButton(text="⬅ Назад", callback_data="back")]
             ]
         ),
+        parse_mode=ParseMode.HTML,
     )

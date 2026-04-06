@@ -88,39 +88,47 @@ export default function WithdrawalPanel() {
     }
 
     if (loading) {
-        return <div className="text-sm text-white/60">Загрузка вывода...</div>;
+        return <div className="mining-status-note">Загрузка вывода...</div>;
     }
 
     if (!eligibility) {
-        return <div className="text-sm text-red-200">Не удалось загрузить вывод</div>;
+        return (
+            <div className="mining-status-note" data-tone="error">
+                Не удалось загрузить вывод
+            </div>
+        );
     }
 
     return (
         <div>
             <div className="flex items-center justify-between gap-3">
-                <h2 className="text-sm font-semibold uppercase tracking-wide text-white/70">
-                    Вывод
-                </h2>
+                <div>
+                    <div className="mining-kicker">Центр вывода</div>
+                    <h2 className="mt-1 text-xl font-semibold text-white">Вывод и TON-кошелек</h2>
+                    <p className="mt-1 text-sm text-slate-300">
+                        Выводи звезды или TON и следи за историей своих заявок.
+                    </p>
+                </div>
 
                 <button
                     type="button"
                     onClick={() => void loadPanelData({ preserveMessage: true })}
-                    className="text-xs text-white/60 transition hover:text-white"
+                    className="mining-ghost-button"
                     disabled={loading || submitting}
                 >
                     Обновить
                 </button>
             </div>
 
-            <div className="mt-3 grid grid-cols-2 gap-3">
+            <div className="mt-4 grid grid-cols-2 gap-3">
                 <Stat label="Баланс" value={`${formatBalance(eligibility.available_balance)} ⭐`} />
                 <Stat
                     label="Статус"
                     value={eligibility.can_withdraw ? "Доступен" : "Недоступен"}
                 />
                 <Stat
-                    label="Мин. вывод"
-                    value={`${formatBalance(eligibility.min_withdraw)} ⭐`}
+                    label="Заявка"
+                    value={eligibility.has_pending_withdrawal ? "Есть активная" : "Свободно"}
                 />
                 <Stat
                     label="Из заданий"
@@ -128,16 +136,16 @@ export default function WithdrawalPanel() {
                 />
             </div>
 
-            <div className="mt-3 rounded-xl border border-white/10 bg-black/20 p-3 text-sm text-white/80">
+            <div className="mining-note-card text-sm text-slate-200">
                 {eligibility.message}
             </div>
 
-            <div className="mt-3 rounded-xl border border-white/10 bg-black/20 p-3">
-                <div className="text-xs font-semibold uppercase tracking-wide text-white/50">
+            <div className="mining-surface-card">
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
                     Условия вывода
                 </div>
 
-                <div className="mt-2 grid gap-1 text-sm text-white/70">
+                <div className="mt-2 grid gap-1 text-sm text-slate-300">
                     <div>• Минимальная сумма: {formatBalance(eligibility.min_withdraw)} ⭐</div>
                     <div>
                         • Индекс Активности не меннее {formatBalance(eligibility.min_task_percent)}%
@@ -148,7 +156,7 @@ export default function WithdrawalPanel() {
                             href={eligibility.policy.rate_source_url}
                             target="_blank"
                             rel="noreferrer"
-                            className="text-white underline decoration-white/30 underline-offset-2"
+                            className="mining-link"
                         >
                             {eligibility.policy.rate_source_name}
                         </a>
@@ -175,21 +183,21 @@ export default function WithdrawalPanel() {
             </div>
 
             <div className="mt-4">
-                <label className="text-xs uppercase tracking-wide text-white/50">
+                <label className="text-xs uppercase tracking-wide text-slate-400">
                     Метод вывода
                 </label>
                 <select
                     value={method}
                     onChange={(e) => setMethod(e.target.value as WithdrawalMethod)}
-                    className="mt-2 w-full rounded-xl border border-white/10 bg-black/20 px-3 py-3 text-sm text-white outline-none"
+                    className="mt-2"
                 >
-                    <option value="stars">Stars</option>
+                    <option value="stars">Звезды</option>
                     <option value="ton">TON</option>
                 </select>
             </div>
 
             <div className="mt-3">
-                <label className="text-xs uppercase tracking-wide text-white/50">
+                <label className="text-xs uppercase tracking-wide text-slate-400">
                     Сумма
                 </label>
                 <input
@@ -197,30 +205,30 @@ export default function WithdrawalPanel() {
                     value={amount}
                     onChange={(e) => setAmount(e.target.value)}
                     placeholder={`Минимум ${formatBalance(eligibility.min_withdraw)}`}
-                    className="mt-2 w-full rounded-xl border border-white/10 bg-black/20 px-3 py-3 text-sm text-white outline-none placeholder:text-white/30"
+                    className="mt-2"
                 />
             </div>
 
             {method === "ton" && (
                 <div className="mt-3">
-                    <label className="text-xs uppercase tracking-wide text-white/50">
+                    <label className="text-xs uppercase tracking-wide text-slate-400">
                         TON-кошелек
                     </label>
                     <input
                         value={wallet}
                         onChange={(e) => setWallet(e.target.value)}
                         placeholder="EQ..."
-                        className="mt-2 w-full rounded-xl border border-white/10 bg-black/20 px-3 py-3 text-sm text-white outline-none placeholder:text-white/30"
+                        className="mt-2"
                     />
-                    <div className="mt-2 text-xs text-white/40">
+                    <div className="mt-2 text-xs text-slate-500">
                         Укажи кошелек TON для получения выплаты
                     </div>
                 </div>
             )}
 
             {method === "stars" && (
-                <div className="mt-3 rounded-xl border border-white/10 bg-black/20 p-3 text-xs text-white/50">
-                    Вывод в Stars создается заявкой и дальше обрабатывается админом
+                <div className="mining-note-card text-xs text-slate-400">
+                    Вывод в звездах создается заявкой и дальше обрабатывается админом
                 </div>
             )}
 
@@ -228,24 +236,24 @@ export default function WithdrawalPanel() {
                 type="button"
                 onClick={() => void handleSubmit()}
                 disabled={!eligibility.can_withdraw || submitting}
-                className="mt-4 w-full rounded-xl bg-white px-4 py-3 text-sm font-medium text-black transition disabled:cursor-not-allowed disabled:opacity-50"
+                className="mining-primary-button mt-4 w-full"
             >
                 {submitting ? "Отправка..." : "Создать заявку"}
             </button>
 
             {message && (
-                <div className="mt-3 rounded-xl border border-white/10 bg-black/20 p-3 text-sm text-white/80">
+                <div className="mining-status-note mt-4">
                     {message}
                 </div>
             )}
 
             <div className="mt-5">
-                <div className="text-xs font-semibold uppercase tracking-wide text-white/50">
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
                     Мои заявки
                 </div>
 
                 {withdrawals.length === 0 ? (
-                    <div className="mt-3 rounded-xl border border-white/10 bg-black/20 p-3 text-sm text-white/60">
+                    <div className="mining-note-card text-sm text-slate-300">
                         У тебя пока нет заявок на вывод
                     </div>
                 ) : (
@@ -253,18 +261,18 @@ export default function WithdrawalPanel() {
                         {withdrawals.map((item) => (
                             <div
                                 key={item.id}
-                                className="rounded-xl border border-white/10 bg-black/20 p-3"
+                                className="mining-list-card"
                             >
                                 <div className="flex items-center justify-between gap-3">
                                     <div className="text-sm font-medium text-white">
                                         {formatBalance(item.amount)} ⭐
                                     </div>
-                                    <div className="text-xs text-white/60">
+                                    <div className="text-xs text-slate-400">
                                         {statusLabel(item.status)}
                                     </div>
                                 </div>
 
-                                <div className="mt-2 grid gap-1 text-xs text-white/60">
+                                <div className="mt-2 grid gap-1 text-xs text-slate-300">
                                     <div>Метод: {methodLabel(item.method)}</div>
                                     <div>Создано: {item.created_at || "-"}</div>
                                     {item.processed_at ? <div>Обработано: {item.processed_at}</div> : null}
@@ -283,8 +291,8 @@ export default function WithdrawalPanel() {
 
 function Stat({ label, value }: { label: string; value: string }) {
     return (
-        <div className="rounded-xl border border-white/10 bg-black/20 p-3">
-            <div className="text-xs uppercase tracking-wide text-white/50">{label}</div>
+        <div className="mining-mini-stat" data-tone="cyan">
+            <div className="mining-mini-stat__label">{label}</div>
             <div className="mt-1 text-base font-semibold text-white">{value}</div>
         </div>
     );
@@ -316,7 +324,7 @@ function methodLabel(method: string): string {
         case "ton":
             return "TON";
         case "stars":
-            return "Stars";
+            return "Звезды";
         default:
             return method;
     }

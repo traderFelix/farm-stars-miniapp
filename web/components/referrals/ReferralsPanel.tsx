@@ -43,14 +43,18 @@ export default function ReferralsPanel() {
     return (
         <div>
             <div className="flex items-center justify-between gap-3">
-                <h2 className="text-sm font-semibold uppercase tracking-wide text-white/70">
-                    Рефералы
-                </h2>
+                <div>
+                    <div className="mining-kicker">Реферальная сеть</div>
+                    <h2 className="mt-1 text-xl font-semibold text-white">Реферальная шахта</h2>
+                    <p className="mt-1 text-sm text-slate-300">
+                        Расти свою команду и забирай процент с их добычи.
+                    </p>
+                </div>
 
                 <button
                     type="button"
                     onClick={() => void loadReferrals({ preserveMessage: true })}
-                    className="text-xs text-white/60 transition hover:text-white"
+                    className="mining-ghost-button"
                     disabled={loading}
                 >
                     Обновить
@@ -58,24 +62,24 @@ export default function ReferralsPanel() {
             </div>
 
             {loading ? (
-                <p className="mt-3 text-sm text-white/60">Загружаю реферальную ссылку...</p>
+                <div className="mining-status-note mt-4">Загружаю реферальную ссылку...</div>
             ) : referrals ? (
                 <>
-                    <div className="mt-3 grid grid-cols-2 gap-3">
+                    <div className="mt-4 grid grid-cols-2 gap-3">
                         <Stat label="Приглашено" value={String(referrals.invited_count)} />
                         <Stat label="Рефбэк" value={`${formatPercent(referrals.reward_percent)}%`} />
                     </div>
 
-                    <div className="mt-3 rounded-xl border border-white/10 bg-black/20 p-3 text-sm text-white/70">
+                    <div className="mining-note-card text-sm text-slate-300">
                         Получай до {formatPercent(referrals.reward_percent)}% рефбека с каждого
                         вывода приглашенных пользователей.
                     </div>
 
-                    <div className="mt-3 rounded-xl border border-white/10 bg-black/20 p-3">
-                        <div className="text-xs font-semibold uppercase tracking-wide text-white/50">
+                    <div className="mining-copy-card">
+                        <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
                             Твоя ссылка
                         </div>
-                        <div className="mt-2 break-all text-sm text-white/80">
+                        <div className="mt-2 break-all text-sm text-slate-100">
                             {referrals.invite_link}
                         </div>
                     </div>
@@ -83,19 +87,19 @@ export default function ReferralsPanel() {
                     <button
                         type="button"
                         onClick={() => void handleCopy()}
-                        className="mt-4 w-full rounded-xl bg-white px-4 py-3 text-sm font-medium text-black transition"
+                        className="mining-primary-button mt-4 w-full"
                     >
                         Скопировать ссылку
                     </button>
                 </>
             ) : (
-                <div className="mt-3 rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-200">
+                <div className="mining-status-note mt-4" data-tone="error">
                     Не удалось загрузить реферальные данные
                 </div>
             )}
 
             {message && (
-                <div className="mt-3 rounded-xl border border-white/10 bg-black/20 p-3 text-sm text-white/80">
+                <div className="mining-status-note mt-4">
                     {message}
                 </div>
             )}
@@ -105,8 +109,8 @@ export default function ReferralsPanel() {
 
 function Stat({ label, value }: { label: string; value: string }) {
     return (
-        <div className="rounded-xl border border-white/10 bg-black/20 p-3">
-            <div className="text-xs uppercase tracking-wide text-white/50">{label}</div>
+        <div className="mining-mini-stat" data-tone="cyan">
+            <div className="mining-mini-stat__label">{label}</div>
             <div className="mt-1 text-base font-semibold text-white">{value}</div>
         </div>
     );
