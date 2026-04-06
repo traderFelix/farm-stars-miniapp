@@ -140,14 +140,8 @@ export default function WithdrawalPanel() {
                 <div className="mt-2 grid gap-1 text-sm text-white/70">
                     <div>• Минимальная сумма: {formatBalance(eligibility.min_withdraw)} ⭐</div>
                     <div>
-                        • Нужно минимум {formatBalance(eligibility.min_task_percent)}% звезд,
-                        заработанных через задания
+                        • Индекс Активности не меннее {formatBalance(eligibility.min_task_percent)}%
                     </div>
-                    <div>
-                        • Аккаунт должен быть старше{" "}
-                        {formatBalance(eligibility.required_account_age_hours)} ч
-                    </div>
-                    <div>• Одновременно можно иметь только одну активную заявку</div>
                     <div>
                         • Курс обмена в TON определяется по рынку{" "}
                         <a
@@ -162,7 +156,7 @@ export default function WithdrawalPanel() {
                     <div>
                         •{" "}
                         {eligibility.policy.is_first_withdraw
-                            ? "Твой первый вывод сейчас без комиссии"
+                            ? "Первый вывод без комиссии"
                             : "Первый вывод уже был бесплатным, дальше действует шкала комиссий ниже"}
                     </div>
                     {eligibility.policy.fee_tiers.map((tier) => (
