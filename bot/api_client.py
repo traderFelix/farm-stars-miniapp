@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any, Optional, Sequence
 
 import httpx
 
@@ -321,10 +321,10 @@ class CampaignsAdminApi(ApiSection):
     async def delete(self, campaign_key: str) -> JsonDict:
         return await self._post(f"/admin/campaigns/{campaign_key}/delete", json={})
 
-    async def add_winners(self, campaign_key: str, *, usernames: list[str]) -> JsonDict:
+    async def add_winners(self, campaign_key: str, *, usernames: Sequence[str]) -> JsonDict:
         return await self._post(
             f"/admin/campaigns/{campaign_key}/winners",
-            json={"usernames": usernames},
+            json={"usernames": list(usernames)},
         )
 
     async def get_summary(self, *, latest_limit: int = 5) -> JsonDict:
@@ -610,7 +610,7 @@ async def delete_campaign_via_api(campaign_key: str) -> JsonDict:
     return await api_client.admin_campaigns.delete(campaign_key)
 
 
-async def add_campaign_winners_via_api(campaign_key: str, usernames: list[str]) -> JsonDict:
+async def add_campaign_winners_via_api(campaign_key: str, usernames: Sequence[str]) -> JsonDict:
     return await api_client.admin_campaigns.add_winners(campaign_key, usernames=usernames)
 
 
