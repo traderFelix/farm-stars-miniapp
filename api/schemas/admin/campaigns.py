@@ -8,6 +8,7 @@ class CampaignItem(BaseModel):
     title: str
     reward_amount: float
     status: str
+    post_url: Optional[str] = None
     created_at: Optional[str] = None
 
 
@@ -19,6 +20,7 @@ class CampaignCreateRequest(BaseModel):
     campaign_key: str
     title: str
     amount: float
+    post_url: Optional[str] = None
 
 
 class CampaignStatusRequest(BaseModel):

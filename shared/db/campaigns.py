@@ -11,7 +11,7 @@ async def upsert_campaign(
         title: str,
         reward_amount: float,
         status: str = "draft",
-        description: Optional[str] = None,
+        post_url: Optional[str] = None,
 ) -> None:
     await db.execute(
         """
@@ -23,7 +23,7 @@ async def upsert_campaign(
             status=excluded.status,
             description=excluded.description
         """,
-        (campaign_key, title, float(reward_amount), status, description),
+        (campaign_key, title, float(reward_amount), status, post_url),
     )
 
 
@@ -53,7 +53,7 @@ async def get_campaign(
 ):
     async with db.execute(
             """
-            SELECT campaign_key, title, reward_amount, status, created_at
+            SELECT campaign_key, title, reward_amount, status, description AS post_url, created_at
             FROM campaigns
             WHERE campaign_key = ?
             """,
@@ -65,7 +65,7 @@ async def get_campaign(
 async def list_campaigns(db: aiosqlite.Connection):
     async with db.execute(
             """
-            SELECT campaign_key, title, reward_amount, status, created_at
+            SELECT campaign_key, title, reward_amount, status, description AS post_url, created_at
             FROM campaigns
             ORDER BY datetime(created_at) DESC
             """
@@ -79,7 +79,7 @@ async def list_campaigns_latest(
 ):
     async with db.execute(
             """
-            SELECT campaign_key, title, reward_amount, status, created_at
+            SELECT campaign_key, title, reward_amount, status, description AS post_url, created_at
             FROM campaigns
             ORDER BY datetime(created_at) DESC
             LIMIT ?

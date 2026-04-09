@@ -103,8 +103,7 @@ export default function WithdrawalPanel() {
         <div>
             <div className="flex items-center justify-between gap-3">
                 <div>
-                    <div className="mining-kicker">Центр вывода</div>
-                    <h2 className="mt-1 text-xl font-semibold text-white">Вывод и TON-кошелек</h2>
+                    <h2 className="mt-1 text-xl font-semibold text-white">Центр вывода</h2>
                     <p className="mt-1 text-sm text-slate-300">
                         Выводи звезды или TON и следи за историей своих заявок.
                     </p>
@@ -123,20 +122,12 @@ export default function WithdrawalPanel() {
             <div className="mt-4 grid grid-cols-2 gap-3">
                 <Stat label="Баланс" value={`${formatBalance(eligibility.available_balance)} ⭐`} />
                 <Stat
-                    label="Статус"
-                    value={eligibility.can_withdraw ? "Доступен" : "Недоступен"}
-                />
-                <Stat
-                    label="Заявка"
-                    value={eligibility.has_pending_withdrawal ? "Есть активная" : "Свободно"}
-                />
-                <Stat
-                    label="Из заданий"
-                    value={`${formatBalance(eligibility.task_earnings_percent)}%`}
+                    label="Индекс активности"
+                    value={`${formatBalance(eligibility.activity_index)}%`}
                 />
             </div>
 
-            <div className="mining-note-card text-sm text-slate-200">
+            <div className="mining-status-note mt-4 text-sm" data-tone="warning">
                 {eligibility.message}
             </div>
 
@@ -176,8 +167,7 @@ export default function WithdrawalPanel() {
                         </div>
                     ))}
                     <div>
-                        • Комиссия списывается только с баланса {eligibility.policy.fee_currency},
-                        а не с игрового баланса звезд
+                        • Комиссия списывается с баланса {eligibility.policy.fee_currency}
                     </div>
                 </div>
             </div>

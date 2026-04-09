@@ -1,6 +1,7 @@
 import io, logging
 from datetime import date, timedelta
 from typing import Any, Literal, Optional
+from urllib.parse import urlparse
 
 import matplotlib
 
@@ -185,6 +186,7 @@ async def admin_api_unavailable_myrole(message: Message):
         CampaignCreate.key,
         CampaignCreate.amount,
         CampaignCreate.title,
+        CampaignCreate.post_url,
         DeleteWinner.username,
         UserLookup.user,
         AdminAdjust.amount,
@@ -307,6 +309,7 @@ def _build_campaign_card_text(detail: dict) -> tuple[str, str]:
     title = detail.get("title") or ""
     amount = float(detail.get("reward_amount") or 0)
     status = detail.get("status") or "draft"
+    post_url = detail.get("post_url") or ""
 
     if status == "active":
         status_text = "🟢 Активен"
@@ -323,7 +326,14 @@ def _build_campaign_card_text(detail: dict) -> tuple[str, str]:
         f"🎁 Награда: {amount}⭐\n"
         f"📌 Статус: {status_text}"
     )
+    if post_url:
+        text += f"\n🔗 Пост: {post_url}"
     return text, status
+
+
+def _is_valid_post_url(value: str) -> bool:
+    parsed = urlparse(value)
+    return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
 
 
 async def _render_campaign_card(callback: CallbackQuery, key: str):
@@ -543,21 +553,39 @@ async def adm_new_amount(message: Message, state: FSMContext):
         return
     await state.update_data(amount=amount)
     await state.set_state(CampaignCreate.title)
-    await message.answer("И последнее — введи название конкурса (title):")
+    await message.answer("Теперь введи название конкурса")
 
 
 @router.message(CampaignCreate.title)
 async def adm_new_title(message: Message, state: FSMContext):
     title = (message.text or "").strip()
+    if not title:
+        await message.answer("❌ Название не может быть пустым. Введи снова:")
+        return
+
+    await state.update_data(title=title)
+    await state.set_state(CampaignCreate.post_url)
+    await message.answer("Теперь отправь ссылку на пост с розыгрышем, например: https://t.me/...")
+
+
+@router.message(CampaignCreate.post_url)
+async def adm_new_post_url(message: Message, state: FSMContext):
+    post_url = (message.text or "").strip()
+    if not _is_valid_post_url(post_url):
+        await message.answer("❌ Нужна полная ссылка на пост. Пример: https://t.me/...")
+        return
+
     data = await state.get_data()
     key = data["key"]
     amount = data["amount"]
+    title = data["title"]
 
     try:
         detail = await create_campaign_via_api(
             campaign_key=key,
             title=title,
             amount=amount,
+            post_url=post_url,
         )
     except ApiClientError as e:
         await message.answer(f"❌ {e.detail}")
@@ -567,12 +595,15 @@ async def adm_new_title(message: Message, state: FSMContext):
     final_key = detail["campaign_key"]
     final_amount = float(detail.get("reward_amount") or 0)
     final_title = detail.get("title") or ""
+    final_post_url = detail.get("post_url") or ""
+    post_line = f"🔗 {final_post_url}\n" if final_post_url else ""
 
     await message.answer(
         f"✅ Конкурс создан:\n"
         f"🏷 {final_key}\n"
         f"🎁 {final_amount}⭐\n"
         f"📝 {final_title}\n"
+        f"{post_line}"
         f"Статус: 🟡 Черновик",
         reply_markup=campaign_created_kb(final_key)
     )

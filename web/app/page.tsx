@@ -72,10 +72,15 @@ export default function HomePage() {
     try {
       setCheckinState("claiming");
       setCheckinMessage("");
+      const tomorrowReward = checkin?.next_reward ?? 0;
 
       const result = await claimCheckin();
 
-      setCheckinMessage(result.message);
+      setCheckinMessage(
+        result.ok
+          ? buildCheckinSuccessMessage(result.claimed_amount, tomorrowReward)
+          : result.message,
+      );
 
       setProfile((prev) =>
         prev
@@ -186,7 +191,7 @@ export default function HomePage() {
             <SectionHeader
               eyebrow="Запуск"
               title="Подключаю шахтный контур"
-              description="Поднимаю мини-приложение Telegram, авторизацию и данные смены."
+              description="Поднимаю мини-приложение Telegram, авторизацию и данные смены"
             />
             <StatusNote>{debugMessage}</StatusNote>
           </section>
@@ -197,7 +202,7 @@ export default function HomePage() {
             <SectionHeader
               eyebrow="Сбой запуска"
               title="Не удалось запустить шахту"
-              description="Проверь запуск из Telegram и токен, затем попробуй ещё раз."
+              description="Проверь запуск из Telegram и токен, затем попробуй ещё раз"
             />
             <StatusNote tone="error">{debugMessage}</StatusNote>
             <StatusNote tone="error">{errorMessage}</StatusNote>
@@ -219,13 +224,11 @@ export default function HomePage() {
                   <OverviewCard
                     label="Баланс"
                     value={`${formatBalance(profile.balance)} ⭐`}
-                    hint="Текущий баланс пользователя"
                     tone="gold"
                   />
                   <OverviewCard
-                    label="Активность"
+                    label="Индекс активности"
                     value={formatActivity(profile.activity_index)}
-                    hint="Индекс активности аккаунта"
                     tone="cyan"
                   />
                 </section>
@@ -234,7 +237,7 @@ export default function HomePage() {
                   <SectionHeader
                     eyebrow="Ежедневный бонус"
                     title="Ежедневная добыча"
-                    description="Забирай бонус за вход и следи за циклом без пропусков."
+                    description="Забирай бонус за вход и следи за циклом без пропусков"
                     action={
                       <button
                         type="button"
@@ -301,20 +304,10 @@ export default function HomePage() {
             {activeTab === "mining" && (
               <section className="mining-panel">
                 <SectionHeader
-                  eyebrow="Добыча в боте"
+                  eyebrow=""
                   title="Просмотр постов"
-                  description="Этот сценарий перенесен в бота, чтобы просмотры и начисления работали корректно."
+                  description="Этот сценарий перенесен в бота, чтобы просмотры и начисления работали корректно"
                 />
-
-                <div className="mining-note-card text-sm text-slate-300">
-                  Для фарма постов теперь открывается правильный поток прямо внутри бота.
-                  Там сразу доступен экран просмотра и последующее начисление награды.
-                </div>
-
-                <div className="mt-4 grid grid-cols-2 gap-3">
-                  <MiniStat label="Где идет просмотр" value="В боте" tone="cyan" />
-                  <MiniStat label="Запуск" value="Сразу" tone="gold" />
-                </div>
 
                 <button
                   type="button"
@@ -322,10 +315,8 @@ export default function HomePage() {
                   disabled={botTasksOpening}
                   className="mining-primary-button mt-4 w-full"
                 >
-                  {botTasksOpening ? "Открываю поток..." : "Открыть поток постов"}
+                  {botTasksOpening ? "Открываю просмотр постов..." : "Открыть просмотр постов"}
                 </button>
-
-                <StatusNote>Бот откроется сразу на экране просмотра постов.</StatusNote>
               </section>
             )}
 
@@ -451,19 +442,16 @@ function BottomTabButton({
 function OverviewCard({
   label,
   value,
-  hint,
   tone,
 }: {
   label: string;
   value: string;
-  hint: string;
   tone: "gold" | "cyan" | "slate";
 }) {
   return (
     <div className="mining-overview-card" data-tone={tone}>
       <div className="mining-overview-card__label">{label}</div>
       <div className="mining-overview-card__value">{value}</div>
-      <div className="mining-overview-card__hint">{hint}</div>
     </div>
   );
 }
@@ -507,5 +495,13 @@ function formatBalance(value: number): string {
 
 function formatActivity(value: number): string {
   const numeric = Number(value || 0);
-  return `${numeric.toFixed(1)}%`;
+  return `${numeric.toFixed(2)}%`;
+}
+
+function buildCheckinSuccessMessage(claimedAmount: number, nextReward: number): string {
+  return [
+    "Ежедневный бонус зачислен",
+    `На баланс добавлено ${formatBalance(claimedAmount)} ⭐`,
+    `Завтра будет доступно ${formatBalance(nextReward)} ⭐`,
+  ].join("\n");
 }

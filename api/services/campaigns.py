@@ -5,27 +5,20 @@ from typing import Optional
 from api.db.connection import get_db
 from api.schemas.campaigns import CampaignClaimResponse, CampaignItem, CampaignListResponse
 from shared.db.abuse import count_recent_abuse_events, log_abuse_event
+from shared.db.campaigns import get_campaign as get_shared_campaign
 from shared.db.common import tx
 from shared.db.ledger import apply_balance_delta
 from shared.db.users import get_balance, get_user_by_id, register_user
 
 
 async def _get_campaign(db, campaign_key: str):
-    async with db.execute(
-            """
-        SELECT campaign_key, title, reward_amount, status
-        FROM campaigns
-        WHERE campaign_key = ?
-        """,
-            (campaign_key,),
-    ) as cur:
-        return await cur.fetchone()
+    return await get_shared_campaign(db, campaign_key)
 
 
 async def _list_active_campaign_rows(db):
     async with db.execute(
             """
-        SELECT campaign_key, title, reward_amount
+        SELECT campaign_key, title, reward_amount, description AS post_url
         FROM campaigns
         WHERE status = 'active'
         ORDER BY datetime(created_at) DESC
@@ -105,6 +98,7 @@ async def get_active_campaigns_for_user() -> CampaignListResponse:
                 campaign_key=row["campaign_key"],
                 title=row["title"],
                 reward_amount=float(row["reward_amount"] or 0),
+                post_url=row["post_url"] or None,
             )
             for row in rows
         ]
@@ -128,16 +122,18 @@ async def claim_campaign_reward_for_user(
         if recent_claim_clicks >= 3:
             return CampaignClaimResponse(
                 ok=False,
-                message="⏳ Слишком часто. Попробуй через минуту.",
+                message="Слишком частые попытки, попробуй через минуту",
                 new_balance=0,
+                code="rate_limited",
             )
 
         recent_claim_fails = await count_recent_abuse_events(db, user_id, "claim_fail", 10)
         if recent_claim_fails >= 10:
             return CampaignClaimResponse(
                 ok=False,
-                message="🚫 Слишком много неудачных попыток. Попробуй позже.",
+                message="Слишком много неудачных попыток, попробуй позже",
                 new_balance=0,
+                code="too_many_failures",
             )
 
         async with tx(db, immediate=True):
@@ -158,8 +154,9 @@ async def claim_campaign_reward_for_user(
                 await log_abuse_event(db, user_id, "claim_fail")
                 return CampaignClaimResponse(
                     ok=False,
-                    message="❌ Конкурс не найден",
+                    message="Конкурс не найден",
                     new_balance=0,
+                    code="not_found",
                 )
 
             reward_amount = float(row["reward_amount"] or 0)
@@ -169,8 +166,9 @@ async def claim_campaign_reward_for_user(
                 await log_abuse_event(db, user_id, "claim_fail")
                 return CampaignClaimResponse(
                     ok=False,
-                    message="❌ Этот конкурс сейчас неактивен",
+                    message="Этот конкурс сейчас неактивен",
                     new_balance=0,
+                    code="inactive",
                 )
 
             if resolved_username:
@@ -180,8 +178,9 @@ async def claim_campaign_reward_for_user(
                 await log_abuse_event(db, user_id, "claim_fail")
                 return CampaignClaimResponse(
                     ok=False,
-                    message="❌ Ты не в списке победителей этого конкурса",
+                    message="Тебя нет в списке победителей этого конкурса",
                     new_balance=0,
+                    code="not_winner",
                 )
 
             try:
@@ -190,8 +189,9 @@ async def claim_campaign_reward_for_user(
                 await log_abuse_event(db, user_id, "claim_fail")
                 return CampaignClaimResponse(
                     ok=False,
-                    message="⚠️ Ты уже забрал награду в этом конкурсе",
+                    message="Награда по этому конкурсу уже получена",
                     new_balance=0,
+                    code="already_claimed",
                 )
 
             await apply_balance_delta(
@@ -206,8 +206,9 @@ async def claim_campaign_reward_for_user(
             new_balance = await get_balance(db, user_id)
             return CampaignClaimResponse(
                 ok=True,
-                message=f"✅ Ты получил {reward_amount:g}⭐️ ({title})",
+                message=f"Награда за конкурс «{title}» зачислена",
                 new_balance=float(new_balance),
+                code="claimed",
             )
     finally:
         await db.close()

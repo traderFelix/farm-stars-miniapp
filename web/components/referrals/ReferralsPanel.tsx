@@ -34,9 +34,9 @@ export default function ReferralsPanel() {
 
         try {
             await navigator.clipboard.writeText(referrals.invite_link);
-            setMessage("Ссылка приглашения скопирована.");
+            setMessage("Ссылка приглашения скопирована");
         } catch {
-            setMessage("Не удалось скопировать ссылку.");
+            setMessage("Не удалось скопировать ссылку");
         }
     }
 
@@ -44,10 +44,9 @@ export default function ReferralsPanel() {
         <div>
             <div className="flex items-center justify-between gap-3">
                 <div>
-                    <div className="mining-kicker">Реферальная сеть</div>
                     <h2 className="mt-1 text-xl font-semibold text-white">Реферальная шахта</h2>
                     <p className="mt-1 text-sm text-slate-300">
-                        Расти свою команду и забирай процент с их добычи.
+                        Расти свою команду и забирай процент с их добычи
                     </p>
                 </div>
 
@@ -72,7 +71,7 @@ export default function ReferralsPanel() {
 
                     <div className="mining-note-card text-sm text-slate-300">
                         Получай до {formatPercent(referrals.reward_percent)}% рефбека с каждого
-                        вывода приглашенных пользователей.
+                        вывода приглашенных пользователей
                     </div>
 
                     <div className="mining-copy-card">

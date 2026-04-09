@@ -7,6 +7,7 @@ class CampaignItem(BaseModel):
     campaign_key: str
     title: str
     reward_amount: float
+    post_url: Optional[str] = None
 
 
 class CampaignListResponse(BaseModel):
@@ -23,3 +24,4 @@ class CampaignClaimResponse(BaseModel):
     ok: bool
     message: str
     new_balance: float = 0
+    code: Optional[str] = None

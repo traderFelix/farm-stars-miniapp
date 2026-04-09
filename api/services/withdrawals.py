@@ -49,6 +49,7 @@ class EligibilityCheckResult:
     has_pending_withdrawal: bool
     account_age_hours: float
     required_account_age_hours: float
+    activity_index: float
     task_earnings_percent: float
     available_balance: float
     is_first_withdraw: bool
@@ -109,12 +110,13 @@ async def _build_eligibility(user_id: int) -> EligibilityCheckResult:
         if not user:
             return EligibilityCheckResult(
                 can_withdraw=False,
-                message="Пользователь не найден.",
+                message="Пользователь не найден",
                 min_withdraw=MIN_WITHDRAW,
                 min_task_percent=MIN_TASK_PERCENT_VALUE,
                 has_pending_withdrawal=False,
                 account_age_hours=0.0,
                 required_account_age_hours=REQUIRED_ACCOUNT_AGE_HOURS,
+                activity_index=0.0,
                 task_earnings_percent=0.0,
                 available_balance=0.0,
                 is_first_withdraw=True,
@@ -123,6 +125,7 @@ async def _build_eligibility(user_id: int) -> EligibilityCheckResult:
         balance = _safe_float(user["balance"])
         account_age_hours = _safe_float(await user_created_hours_ago(db, user_id))
         pending = await has_pending_withdrawal(db, user_id)
+        activity_index = round(_safe_float(await get_activity_index(db, user_id)), 1)
         breakdown = await get_user_earnings_breakdown(db, user_id)
         task_percent = _extract_task_percent(breakdown)
         first_withdraw = await is_first_withdraw(db, user_id)
@@ -130,12 +133,13 @@ async def _build_eligibility(user_id: int) -> EligibilityCheckResult:
         if pending:
             return EligibilityCheckResult(
                 can_withdraw=False,
-                message="У тебя уже есть заявка на вывод в обработке.",
+                message="У тебя уже есть заявка на вывод в обработке",
                 min_withdraw=MIN_WITHDRAW,
                 min_task_percent=MIN_TASK_PERCENT_VALUE,
                 has_pending_withdrawal=True,
                 account_age_hours=round(account_age_hours, 2),
                 required_account_age_hours=REQUIRED_ACCOUNT_AGE_HOURS,
+                activity_index=activity_index,
                 task_earnings_percent=task_percent,
                 available_balance=balance,
                 is_first_withdraw=first_withdraw,
@@ -144,12 +148,13 @@ async def _build_eligibility(user_id: int) -> EligibilityCheckResult:
         if account_age_hours < REQUIRED_ACCOUNT_AGE_HOURS:
             return EligibilityCheckResult(
                 can_withdraw=False,
-                message="Вывод будет доступен после 24 часов с момента регистрации.",
+                message="Вывод будет доступен после 24 часов с момента регистрации",
                 min_withdraw=MIN_WITHDRAW,
                 min_task_percent=MIN_TASK_PERCENT_VALUE,
                 has_pending_withdrawal=False,
                 account_age_hours=round(account_age_hours, 2),
                 required_account_age_hours=REQUIRED_ACCOUNT_AGE_HOURS,
+                activity_index=activity_index,
                 task_earnings_percent=task_percent,
                 available_balance=balance,
                 is_first_withdraw=first_withdraw,
@@ -158,12 +163,13 @@ async def _build_eligibility(user_id: int) -> EligibilityCheckResult:
         if balance < MIN_WITHDRAW:
             return EligibilityCheckResult(
                 can_withdraw=False,
-                message=f"Минимальная сумма вывода — {MIN_WITHDRAW:.0f}⭐️.",
+                message=f"Минимальная сумма вывода — {MIN_WITHDRAW:.0f}⭐️",
                 min_withdraw=MIN_WITHDRAW,
                 min_task_percent=MIN_TASK_PERCENT_VALUE,
                 has_pending_withdrawal=False,
                 account_age_hours=round(account_age_hours, 2),
                 required_account_age_hours=REQUIRED_ACCOUNT_AGE_HOURS,
+                activity_index=activity_index,
                 task_earnings_percent=task_percent,
                 available_balance=balance,
                 is_first_withdraw=first_withdraw,
@@ -174,13 +180,14 @@ async def _build_eligibility(user_id: int) -> EligibilityCheckResult:
                 can_withdraw=False,
                 message=(
                     f"Для вывода нужно минимум {MIN_TASK_PERCENT_VALUE:.0f}% "
-                    f"звезд, добытых через задания."
+                    f"звезд, добытых через задания"
                 ),
                 min_withdraw=MIN_WITHDRAW,
                 min_task_percent=MIN_TASK_PERCENT_VALUE,
                 has_pending_withdrawal=False,
                 account_age_hours=round(account_age_hours, 2),
                 required_account_age_hours=REQUIRED_ACCOUNT_AGE_HOURS,
+                activity_index=activity_index,
                 task_earnings_percent=task_percent,
                 available_balance=balance,
                 is_first_withdraw=first_withdraw,
@@ -188,12 +195,13 @@ async def _build_eligibility(user_id: int) -> EligibilityCheckResult:
 
         return EligibilityCheckResult(
             can_withdraw=True,
-            message="Вывод доступен.",
+            message="Вывод доступен",
             min_withdraw=MIN_WITHDRAW,
             min_task_percent=MIN_TASK_PERCENT_VALUE,
             has_pending_withdrawal=False,
             account_age_hours=round(account_age_hours, 2),
             required_account_age_hours=REQUIRED_ACCOUNT_AGE_HOURS,
+            activity_index=activity_index,
             task_earnings_percent=task_percent,
             available_balance=balance,
             is_first_withdraw=first_withdraw,
@@ -214,22 +222,22 @@ async def _validate_withdraw_rules(db, user_id: int, amount: float) -> Optional[
 
     user_age_hours = await user_created_hours_ago(db, user_id)
     if user_age_hours < 24:
-        return "⏳ Вывод доступен только через 24 часа после регистрации."
+        return "⏳ Вывод доступен только через 24 часа после регистрации"
 
     if await has_pending_withdrawal(db, user_id):
-        return "⏳ У тебя уже есть заявка на вывод в обработке."
+        return "⏳ У тебя уже есть заявка на вывод в обработке"
 
     recent_withdraw_count = await count_recent_abuse_events(db, user_id, "withdraw_create", 1440)
     if recent_withdraw_count >= 3:
-        return "Лимит: не более 3 заявок на вывод в сутки."
+        return "Лимит: не более 3 заявок на вывод в сутки"
 
     recent_withdraw_sum = await sum_recent_abuse_amount(db, user_id, "withdraw_create", 24)
     if recent_withdraw_sum + amount > 1000:
-        return "Суточный лимит вывода превышен."
+        return "Суточный лимит вывода превышен"
 
     activity_index = await get_activity_index(db, user_id)
     if activity_index <= 0:
-        return "❌ Вывод пока недоступен."
+        return "❌ Вывод пока недоступен"
 
     if activity_index < MIN_WITHDRAW_PERCENT * 100:
         return (
@@ -253,6 +261,7 @@ async def get_withdrawal_eligibility_for_user(
         has_pending_withdrawal=result.has_pending_withdrawal,
         account_age_hours=result.account_age_hours,
         required_account_age_hours=result.required_account_age_hours,
+        activity_index=result.activity_index,
         task_earnings_percent=result.task_earnings_percent,
         available_balance=result.available_balance,
         message=result.message,
@@ -274,7 +283,7 @@ async def preview_withdrawal_for_user(
         available_balance = _safe_float(user["balance"] if user else 0)
 
         if amount <= 0:
-            raise ValueError("Сумма вывода должна быть больше нуля.")
+            raise ValueError("Сумма вывода должна быть больше нуля")
 
         error_text = await _validate_withdraw_rules(db, user_id, amount)
         if error_text:
@@ -282,11 +291,11 @@ async def preview_withdrawal_for_user(
 
         if method == "ton":
             if not wallet:
-                raise ValueError("Для вывода в TON нужно указать кошелек.")
+                raise ValueError("Для вывода в TON нужно указать кошелек")
 
             wallet_in_use = await wallet_used_by_another_user(db, user_id, wallet)
             if wallet_in_use:
-                raise ValueError("Этот TON-кошелек уже используется другим пользователем.")
+                raise ValueError("Этот TON-кошелек уже используется другим пользователем")
 
         first = await is_first_withdraw(db, user_id)
         expected_fee = get_withdraw_fee(amount, first)
@@ -317,7 +326,7 @@ async def create_withdrawal_for_user(
     fee_invoice_payload = payload.fee_invoice_payload
 
     if amount <= 0:
-        raise ValueError("Сумма вывода должна быть больше нуля.")
+        raise ValueError("Сумма вывода должна быть больше нуля")
 
     db = await get_db()
     try:
@@ -327,16 +336,16 @@ async def create_withdrawal_for_user(
 
         if method == "ton":
             if not wallet:
-                raise ValueError("Для вывода в TON нужно указать кошелек.")
+                raise ValueError("Для вывода в TON нужно указать кошелек")
 
             wallet_in_use = await wallet_used_by_another_user(db, user_id, wallet)
             if wallet_in_use:
-                raise ValueError("Этот TON-кошелек уже используется другим пользователем.")
+                raise ValueError("Этот TON-кошелек уже используется другим пользователем")
 
         first = await is_first_withdraw(db, user_id)
         expected_fee = get_withdraw_fee(amount, first)
         if paid_fee != expected_fee:
-            raise ValueError("Сумма комиссии не совпадает с ожидаемой.")
+            raise ValueError("Сумма комиссии не совпадает с ожидаемой")
 
         withdrawal_id = await create_withdrawal(
             db=db,
@@ -387,7 +396,7 @@ async def create_withdrawal_for_user(
             ok=True,
             withdrawal_id=withdrawal_id,
             status="pending",
-            message="Заявка на вывод создана.",
+            message="Заявка на вывод создана",
             balance=float(balance or 0),
             fee_xtr=paid_fee,
         )

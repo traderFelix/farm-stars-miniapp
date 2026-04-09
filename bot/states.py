@@ -4,6 +4,7 @@ class CampaignCreate(StatesGroup):
     key = State()
     amount = State()
     title = State()
+    post_url = State()
 
 class AddWinners(StatesGroup):
     usernames = State()

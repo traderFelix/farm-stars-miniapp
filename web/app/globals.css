@@ -526,6 +526,12 @@ textarea:focus {
   box-shadow: 0 0 0 1px rgba(110, 255, 183, 0.08), 0 0 24px rgba(110, 255, 183, 0.12);
 }
 
+.mining-status-note[data-tone="warning"] {
+  border-color: rgba(255, 112, 143, 0.42);
+  color: #ffd2dc;
+  box-shadow: 0 0 0 1px rgba(255, 112, 143, 0.08), 0 0 24px rgba(255, 112, 143, 0.12);
+}
+
 .mining-task-card {
   margin-top: 1rem;
 }

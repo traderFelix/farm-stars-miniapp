@@ -1,5 +1,6 @@
 import sqlite3
-from typing import Any
+from typing import Any, Optional
+from urllib.parse import urlparse
 
 import aiosqlite
 from fastapi import HTTPException
@@ -30,6 +31,7 @@ def _serialize_campaign(row: Any) -> dict[str, Any]:
         "title": row["title"] or "",
         "reward_amount": float(row["reward_amount"] or 0),
         "status": row["status"] or "draft",
+        "post_url": row["post_url"] or None,
         "created_at": row["created_at"],
     }
 
@@ -68,6 +70,18 @@ def _normalize_campaign_amount(value: float) -> float:
     return normalized
 
 
+def _normalize_campaign_post_url(value: Optional[str]) -> Optional[str]:
+    normalized = (value or "").strip()
+    if not normalized:
+        return None
+
+    parsed = urlparse(normalized)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise HTTPException(status_code=400, detail="Ссылка на пост должна начинаться с http:// или https://")
+
+    return normalized
+
+
 def _normalize_status(value: str) -> str:
     normalized = (value or "").strip().lower()
     if normalized not in {"draft", "active", "ended"}:
@@ -96,10 +110,12 @@ async def create_campaign_entry(
         campaign_key: str,
         title: str,
         amount: float,
+        post_url: Optional[str] = None,
 ) -> dict[str, Any]:
     normalized_key = _normalize_campaign_key(campaign_key)
     normalized_title = _normalize_campaign_title(title)
     normalized_amount = _normalize_campaign_amount(amount)
+    normalized_post_url = _normalize_campaign_post_url(post_url)
 
     async with tx(db):
         await upsert_campaign(
@@ -108,6 +124,7 @@ async def create_campaign_entry(
             normalized_title,
             normalized_amount,
             "draft",
+            normalized_post_url,
         )
 
     return await get_campaign_detail(db, normalized_key)

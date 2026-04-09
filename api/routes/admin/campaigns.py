@@ -71,6 +71,7 @@ async def create_campaign_route(payload: CampaignCreateRequest):
             campaign_key=payload.campaign_key,
             title=payload.title,
             amount=payload.amount,
+            post_url=payload.post_url,
         )
     finally:
         await db.close()

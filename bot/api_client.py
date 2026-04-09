@@ -300,6 +300,7 @@ class CampaignsAdminApi(ApiSection):
             campaign_key: str,
             title: str,
             amount: float,
+            post_url: Optional[str] = None,
     ) -> JsonDict:
         return await self._post(
             "/admin/campaigns",
@@ -307,6 +308,7 @@ class CampaignsAdminApi(ApiSection):
                 "campaign_key": campaign_key,
                 "title": title,
                 "amount": float(amount),
+                "post_url": post_url,
             },
         )
 
@@ -590,11 +592,13 @@ async def create_campaign_via_api(
         campaign_key: str,
         title: str,
         amount: float,
+        post_url: Optional[str] = None,
 ) -> JsonDict:
     return await api_client.admin_campaigns.create(
         campaign_key=campaign_key,
         title=title,
         amount=amount,
+        post_url=post_url,
     )
 
 

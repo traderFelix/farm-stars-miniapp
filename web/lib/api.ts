@@ -43,6 +43,7 @@ export type CampaignItem = {
     campaign_key: string;
     title: string;
     reward_amount: number;
+    post_url?: string | null;
 };
 
 export type CampaignListResponse = {
@@ -53,6 +54,7 @@ export type CampaignClaimResponse = {
     ok: boolean;
     message: string;
     new_balance: number;
+    code?: string | null;
 };
 
 export type ReferralMeResponse = {
@@ -93,6 +95,7 @@ export type WithdrawalEligibilityResponse = {
     has_pending_withdrawal: boolean;
     account_age_hours: number;
     required_account_age_hours: number;
+    activity_index: number;
     task_earnings_percent: number;
     available_balance: number;
     message: string;
