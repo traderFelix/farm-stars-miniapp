@@ -90,12 +90,7 @@ function openWindowFallback(url: string): boolean {
     }
 
     const opened = window.open(url, "_blank", "noopener,noreferrer");
-    if (opened) {
-        return true;
-    }
-
-    window.location.assign(url);
-    return true;
+    return opened !== null;
 }
 
 export function openExternalLink(url: string): boolean {

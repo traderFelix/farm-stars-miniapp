@@ -78,8 +78,14 @@ export default function CampaignsPanel({ onBalanceChange }: CampaignsPanelProps)
     }
 
     function handlePostLinkClick(event: MouseEvent<HTMLAnchorElement>, postUrl: string) {
-        if (openTelegramLink(postUrl)) {
-            event.preventDefault();
+        event.preventDefault();
+
+        if (!openTelegramLink(postUrl)) {
+            setNotice({
+                tone: "warning",
+                title: "Не удалось открыть пост",
+                body: "Попробуй открыть ссылку еще раз",
+            });
         }
     }
 

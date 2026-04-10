@@ -52,8 +52,10 @@ export default function WithdrawalPanel() {
     }, []);
 
     function handleRateSourceClick(event: MouseEvent<HTMLAnchorElement>, url: string) {
-        if (openExternalLink(url)) {
-            event.preventDefault();
+        event.preventDefault();
+
+        if (!openExternalLink(url)) {
+            setMessage("Не удалось открыть ссылку");
         }
     }
 
