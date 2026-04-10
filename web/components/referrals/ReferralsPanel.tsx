@@ -70,7 +70,7 @@ export default function ReferralsPanel() {
                     </div>
 
                     <div className="mining-note-card text-sm text-slate-300">
-                        Получай до {formatPercent(referrals.reward_percent)}% рефбека с каждого
+                        Получай {formatPercent(referrals.reward_percent)}% рефбека с каждого
                         вывода приглашенных пользователей
                     </div>
 
