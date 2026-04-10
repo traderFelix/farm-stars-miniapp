@@ -125,7 +125,7 @@ async def _build_eligibility(user_id: int) -> EligibilityCheckResult:
         balance = _safe_float(user["balance"])
         account_age_hours = _safe_float(await user_created_hours_ago(db, user_id))
         pending = await has_pending_withdrawal(db, user_id)
-        activity_index = round(_safe_float(await get_activity_index(db, user_id)), 1)
+        activity_index = _safe_float(await get_activity_index(db, user_id))
         breakdown = await get_user_earnings_breakdown(db, user_id)
         task_percent = _extract_task_percent(breakdown)
         first_withdraw = await is_first_withdraw(db, user_id)

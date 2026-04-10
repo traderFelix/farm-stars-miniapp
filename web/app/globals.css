@@ -1,9 +1,11 @@
+@import url("https://fonts.googleapis.com/css2?family=Exo+2:wght@400;500;600;700;800&display=swap");
 @import "tailwindcss";
 
 :root {
   --background: #05070f;
   --background-2: #0d1023;
   --foreground: #f4f8ff;
+  --font-ui: "Exo 2", "Avenir Next", "Trebuchet MS", "Segoe UI", sans-serif;
   --muted: #9ba6c8;
   --border: rgba(88, 108, 164, 0.34);
   --panel: rgba(14, 18, 40, 0.88);
@@ -34,7 +36,11 @@ body {
     radial-gradient(circle at bottom right, rgba(32, 86, 197, 0.16), transparent 34%),
     linear-gradient(180deg, #060814 0%, #0b1021 52%, #05070f 100%);
   color: var(--foreground);
-  font-family: "Trebuchet MS", "Segoe UI", "Arial Rounded MT Bold", sans-serif;
+  font-family: var(--font-ui);
+  letter-spacing: -0.015em;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 .pt-safe-top {
@@ -289,6 +295,8 @@ textarea:focus {
   font-size: 1.65rem;
   line-height: 1.1;
   font-weight: 700;
+  font-variant-numeric: lining-nums tabular-nums;
+  letter-spacing: -0.035em;
   word-break: break-word;
 }
 
@@ -334,6 +342,8 @@ textarea:focus {
   font-size: 1.7rem;
   line-height: 1.05;
   font-weight: 700;
+  letter-spacing: -0.04em;
+  font-variant-numeric: lining-nums tabular-nums;
 }
 
 .mining-profile-panel__role {

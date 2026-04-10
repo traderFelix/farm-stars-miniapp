@@ -15,6 +15,7 @@ import {
   type CheckinStatus,
   type Profile,
 } from "@/lib/api";
+import { formatActivity, formatBalance } from "@/lib/format";
 import {
   closeTelegramMiniApp,
   getTelegramInitData,
@@ -485,17 +486,6 @@ function StatusNote({
       {children}
     </div>
   );
-}
-
-function formatBalance(value: number): string {
-  return Number(value || 0)
-    .toFixed(2)
-    .replace(/\.00$/, "");
-}
-
-function formatActivity(value: number): string {
-  const numeric = Number(value || 0);
-  return `${numeric.toFixed(2)}%`;
 }
 
 function buildCheckinSuccessMessage(claimedAmount: number, nextReward: number): string {

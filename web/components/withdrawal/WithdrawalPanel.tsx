@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type MouseEvent } from "react";
 import {
     createWithdrawal,
     getMyWithdrawals,
@@ -9,6 +9,8 @@ import {
     type WithdrawalItem,
     type WithdrawalMethod,
 } from "@/lib/api";
+import { formatActivity, formatBalance } from "@/lib/format";
+import { openExternalLink } from "@/lib/telegram";
 
 export default function WithdrawalPanel() {
     const [loading, setLoading] = useState(true);
@@ -48,6 +50,12 @@ export default function WithdrawalPanel() {
     useEffect(() => {
         void loadPanelData();
     }, []);
+
+    function handleRateSourceClick(event: MouseEvent<HTMLAnchorElement>, url: string) {
+        if (openExternalLink(url)) {
+            event.preventDefault();
+        }
+    }
 
     async function handleSubmit() {
         if (!eligibility?.can_withdraw) return;
@@ -120,10 +128,15 @@ export default function WithdrawalPanel() {
             </div>
 
             <div className="mt-4 grid grid-cols-2 gap-3">
-                <Stat label="Баланс" value={`${formatBalance(eligibility.available_balance)} ⭐`} />
+                <Stat
+                    label="Баланс"
+                    value={`${formatBalance(eligibility.available_balance)} ⭐`}
+                    tone="gold"
+                />
                 <Stat
                     label="Индекс активности"
-                    value={`${formatBalance(eligibility.activity_index)}%`}
+                    value={formatActivity(eligibility.activity_index)}
+                    tone="cyan"
                 />
             </div>
 
@@ -148,6 +161,7 @@ export default function WithdrawalPanel() {
                             target="_blank"
                             rel="noreferrer"
                             className="mining-link"
+                            onClick={(event) => handleRateSourceClick(event, eligibility.policy.rate_source_url)}
                         >
                             {eligibility.policy.rate_source_name}
                         </a>
@@ -279,17 +293,21 @@ export default function WithdrawalPanel() {
     );
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
+function Stat({
+    label,
+    value,
+    tone,
+}: {
+    label: string;
+    value: string;
+    tone: "gold" | "cyan" | "slate";
+}) {
     return (
-        <div className="mining-mini-stat" data-tone="cyan">
-            <div className="mining-mini-stat__label">{label}</div>
-            <div className="mt-1 text-base font-semibold text-white">{value}</div>
+        <div className="mining-overview-card" data-tone={tone}>
+            <div className="mining-overview-card__label">{label}</div>
+            <div className="mining-overview-card__value">{value}</div>
         </div>
     );
-}
-
-function formatBalance(value: number): string {
-    return Number(value || 0).toFixed(2).replace(/\.00$/, "");
 }
 
 function statusLabel(status: string): string {
