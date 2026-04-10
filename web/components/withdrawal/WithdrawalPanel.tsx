@@ -9,7 +9,7 @@ import {
     type WithdrawalItem,
     type WithdrawalMethod,
 } from "@/lib/api";
-import { formatActivity, formatBalance } from "@/lib/format";
+import { formatBalance } from "@/lib/format";
 import { openExternalLink } from "@/lib/telegram";
 
 export default function WithdrawalPanel() {
@@ -127,19 +127,6 @@ export default function WithdrawalPanel() {
                 >
                     Обновить
                 </button>
-            </div>
-
-            <div className="mt-4 grid grid-cols-2 gap-3">
-                <Stat
-                    label="Баланс"
-                    value={`${formatBalance(eligibility.available_balance)} ⭐`}
-                    tone="gold"
-                />
-                <Stat
-                    label="Индекс активности"
-                    value={formatActivity(eligibility.activity_index)}
-                    tone="cyan"
-                />
             </div>
 
             <div className="mining-status-note mt-4 text-sm" data-tone="warning">
@@ -291,23 +278,6 @@ export default function WithdrawalPanel() {
                     </div>
                 )}
             </div>
-        </div>
-    );
-}
-
-function Stat({
-    label,
-    value,
-    tone,
-}: {
-    label: string;
-    value: string;
-    tone: "gold" | "cyan" | "slate";
-}) {
-    return (
-        <div className="mining-overview-card" data-tone={tone}>
-            <div className="mining-overview-card__label">{label}</div>
-            <div className="mining-overview-card__value">{value}</div>
         </div>
     );
 }

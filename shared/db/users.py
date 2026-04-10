@@ -2,7 +2,13 @@ import aiosqlite, json
 from typing import Optional, Any
 from datetime import datetime, timedelta, timezone
 
-from shared.db.common import tx, normalize_daily_cycle_day, daily_checkin_reward
+from shared.db.common import (
+    tx,
+    normalize_daily_cycle_day,
+    daily_checkin_reward,
+    daily_checkin_schedule,
+    daily_checkin_season_length,
+)
 from shared.formatting import fmt_stars
 from shared.config import (
     OWNER_ID, ADMIN_IDS, ROLE_USER, ROLE_CLIENT, ROLE_PARTNER, ROLE_ADMIN, ROLE_OWNER,
@@ -482,12 +488,19 @@ def _build_daily_checkin_state(
     reward_today = daily_checkin_reward(current_cycle_day)
     next_cycle_day = normalize_daily_cycle_day(current_cycle_day + 1)
     next_reward = daily_checkin_reward(next_cycle_day)
+    claimed_days_count = current_cycle_day if already_claimed_today else max(current_cycle_day - 1, 0)
+    claimed_total_reward = sum(
+        daily_checkin_reward(day)
+        for day in range(1, claimed_days_count + 1)
+    )
 
     return {
         "already_claimed_today": already_claimed_today,
         "claimed_yesterday": claimed_yesterday,
         "can_claim": can_claim,
         "current_cycle_day": current_cycle_day,
+        "claimed_days_count": claimed_days_count,
+        "claimed_total_reward": float(claimed_total_reward),
         "reward_today": reward_today,
         "next_cycle_day": next_cycle_day,
         "next_reward": next_reward,
@@ -530,6 +543,10 @@ async def get_daily_checkin_status(
         "can_claim": state["can_claim"],
         "already_claimed_today": state["already_claimed_today"],
         "current_cycle_day": state["current_cycle_day"],
+        "claimed_days_count": state["claimed_days_count"],
+        "claimed_total_reward": state["claimed_total_reward"],
+        "season_length": daily_checkin_season_length(),
+        "cycle_rewards": daily_checkin_schedule(),
         "reward_today": float(state["reward_today"]),
         "next_cycle_day": state["next_cycle_day"],
         "next_reward": float(state["next_reward"]),

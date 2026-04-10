@@ -16,7 +16,7 @@ import {
   type CheckinStatus,
   type Profile,
 } from "@/lib/api";
-import { formatActivity, formatBalance } from "@/lib/format";
+import { formatActivity, formatBalance, formatCompactBalance } from "@/lib/format";
 import {
   closeTelegramMiniApp,
   getTelegramInitData,
@@ -46,6 +46,7 @@ export default function HomePage() {
   const [checkinMessage, setCheckinMessage] = useState("");
   const [checkinRewardPopup, setCheckinRewardPopup] = useState<{
     claimedAmount: number;
+    nextCycleDay: number;
     nextReward: number;
   } | null>(null);
   const [botTasksOpening, setBotTasksOpening] = useState(false);
@@ -85,6 +86,7 @@ export default function HomePage() {
       if (result.ok) {
         setCheckinRewardPopup({
           claimedAmount: result.claimed_amount,
+          nextCycleDay: checkin?.next_cycle_day ?? 1,
           nextReward: tomorrowReward,
         });
       } else {
@@ -188,8 +190,11 @@ export default function HomePage() {
       {checkinRewardPopup ? (
         <RewardPopup
           kicker="Ежедневный бонус зачислен"
-          amountLabel={`+${formatBalance(checkinRewardPopup.claimedAmount)} ⭐`}
-          description={`Завтра будет доступно ${formatBalance(checkinRewardPopup.nextReward)} ⭐`}
+          amountLabel={`+${formatCompactBalance(checkinRewardPopup.claimedAmount)} ⭐`}
+          description={buildCheckinPopupDescription(
+            checkinRewardPopup.nextCycleDay,
+            checkinRewardPopup.nextReward,
+          )}
           onClose={() => setCheckinRewardPopup(null)}
         />
       ) : null}
@@ -280,28 +285,7 @@ export default function HomePage() {
 
                   {checkin && checkinState !== "loading" && (
                     <>
-                      <div className="mt-4 grid grid-cols-2 gap-3">
-                        <MiniStat
-                          label="День цикла"
-                          value={String(checkin.current_cycle_day)}
-                          tone="slate"
-                        />
-                        <MiniStat
-                          label="Сегодня"
-                          value={`${formatBalance(checkin.reward_today)} ⭐`}
-                          tone="gold"
-                        />
-                        <MiniStat
-                          label="Завтра"
-                          value={`${formatBalance(checkin.next_reward)} ⭐`}
-                          tone="cyan"
-                        />
-                        <MiniStat
-                          label="Статус"
-                          value={checkin.can_claim ? "Можно забрать" : "Уже снято"}
-                          tone="slate"
-                        />
-                      </div>
+                      <CheckinSeasonBoard checkin={checkin} />
 
                       <button
                         type="button"
@@ -474,23 +458,6 @@ function OverviewCard({
   );
 }
 
-function MiniStat({
-  label,
-  value,
-  tone,
-}: {
-  label: string;
-  value: string;
-  tone: "gold" | "cyan" | "slate";
-}) {
-  return (
-    <div className="mining-mini-stat" data-tone={tone}>
-      <div className="mining-mini-stat__label">{label}</div>
-      <div className="mining-mini-stat__value">{value}</div>
-    </div>
-  );
-}
-
 function StatusNote({
   children,
   tone = "default",
@@ -502,5 +469,150 @@ function StatusNote({
     <div className="mining-status-note mt-4" data-tone={tone}>
       {children}
     </div>
+  );
+}
+
+function CheckinSeasonBoard({ checkin }: { checkin: CheckinStatus }) {
+  const claimedLabel = `${checkin.claimed_days_count}/${checkin.season_length}`;
+  const totalCycleReward = checkin.cycle_rewards.reduce((total, item) => total + item.reward, 0);
+  const claimedRewardLabel = `${formatCompactBalance(checkin.claimed_total_reward)}/${formatCompactBalance(totalCycleReward)}`;
+
+  return (
+    <div className="mt-4">
+      <div className="mining-checkin-hero">
+        <div className="mining-overview-card mining-checkin-hero__card" data-tone="gold">
+          <div className="mining-overview-card__label">Добыто за цикл</div>
+          <div className="mining-overview-card__value mining-checkin-hero__value">
+            <RewardInline value={claimedRewardLabel} />
+          </div>
+        </div>
+
+        <div className="mining-overview-card mining-checkin-hero__card" data-tone="cyan">
+          <div className="mining-overview-card__label">Заклеймлено</div>
+          <div className="mining-overview-card__value">{claimedLabel}</div>
+        </div>
+      </div>
+
+      <div className="mining-checkin-board">
+        {checkin.cycle_rewards.map((item) => (
+          <CheckinRewardCell key={item.day} item={item} checkin={checkin} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function CheckinRewardCell({
+  item,
+  checkin,
+}: {
+  item: CheckinStatus["cycle_rewards"][number];
+  checkin: CheckinStatus;
+}) {
+  const state = getCheckinRewardState(item.day, checkin);
+  const placement = getCheckinRewardPlacement(item.day);
+
+  return (
+    <div
+      className="mining-checkin-day"
+      data-state={state}
+      data-tier={item.tier}
+      data-day={item.day}
+      data-large={item.day === 30}
+      style={placement}
+    >
+      <div className="mining-checkin-day__top">
+        <span className="mining-checkin-day__number">№{item.day}</span>
+      </div>
+      <div className="mining-checkin-day__reward">
+        <span className="mining-checkin-day__rewardValue">{formatCompactBalance(item.reward)}</span>
+        <span className="mining-checkin-day__rewardStar">⭐</span>
+      </div>
+    </div>
+  );
+}
+
+function getCheckinRewardState(
+  day: number,
+  checkin: CheckinStatus,
+): "claimed" | "claimable" | "upcoming" {
+  if (day <= checkin.claimed_days_count) {
+    return "claimed";
+  }
+
+  if (day === checkin.current_cycle_day && checkin.can_claim) {
+    return "claimable";
+  }
+
+  return "upcoming";
+}
+
+function getCheckinRewardPlacement(day: number) {
+  const fixedPlacement: Record<number, { gridColumn: string; gridRow: string }> = {
+    7: { gridColumn: "7", gridRow: "1" },
+    14: { gridColumn: "7", gridRow: "2" },
+    21: { gridColumn: "7", gridRow: "3" },
+    26: { gridColumn: "2", gridRow: "5" },
+    27: { gridColumn: "3", gridRow: "5" },
+    28: { gridColumn: "4", gridRow: "5" },
+    29: { gridColumn: "1", gridRow: "5" },
+    30: { gridColumn: "5 / span 3", gridRow: "4 / span 2" },
+  };
+
+  if (fixedPlacement[day]) {
+    return fixedPlacement[day];
+  }
+
+  if (day <= 6) {
+    return {
+      gridColumn: String(day),
+      gridRow: "1",
+    };
+  }
+
+  if (day <= 13) {
+    return {
+      gridColumn: String(day - 7),
+      gridRow: "2",
+    };
+  }
+
+  if (day <= 20) {
+    return {
+      gridColumn: String(day - 14),
+      gridRow: "3",
+    };
+  }
+
+  return {
+    gridColumn: String(day - 21),
+    gridRow: "4",
+  };
+}
+
+function buildCheckinPopupDescription(nextCycleDay: number, nextReward: number): string {
+  if (nextCycleDay === 30) {
+    return `Завтра откроется джекпот ${formatCompactBalance(nextReward)} ⭐`;
+  }
+
+  if ([7, 14, 21].includes(nextCycleDay)) {
+    return `Завтра откроется буст ${formatCompactBalance(nextReward)} ⭐`;
+  }
+
+  return `Завтра будет доступно ${formatCompactBalance(nextReward)} ⭐`;
+}
+
+function RewardInline({
+  value,
+  compact = false,
+}: {
+  value: string;
+  compact?: boolean;
+}) {
+  return (
+    <span className="mining-inline-reward" data-compact={compact}>
+      <span className="mining-inline-reward__value">{value}</span>
+      <span className="mining-inline-reward__star">⭐</span>
+    </span>
   );
 }

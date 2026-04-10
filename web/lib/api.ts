@@ -22,6 +22,14 @@ export type Profile = {
 export type CheckinStatus = {
     can_claim: boolean;
     already_claimed_today: boolean;
+    claimed_days_count: number;
+    claimed_total_reward: number;
+    season_length: number;
+    cycle_rewards: Array<{
+        day: number;
+        reward: number;
+        tier: string;
+    }>;
     current_cycle_day: number;
     reward_today: number;
     next_cycle_day: number;

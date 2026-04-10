@@ -283,6 +283,7 @@ textarea:focus {
   color: #94a6d2;
   font-size: 0.76rem;
   font-weight: 700;
+  line-height: 1.18;
   letter-spacing: 0.12em;
   text-transform: uppercase;
 }
@@ -309,8 +310,24 @@ textarea:focus {
 }
 
 .mining-overview-card {
+  display: flex;
+  flex-direction: column;
   border-radius: 24px;
-  padding: 0.95rem 1rem;
+  min-height: 5.7rem;
+  padding: 0.78rem 0.95rem 0.62rem;
+}
+
+.mining-overview-card__label {
+  display: flex;
+  align-items: flex-start;
+  min-height: 1.56rem;
+}
+
+.mining-overview-card__value {
+  margin-top: 0;
+  line-height: 1.02;
+  white-space: nowrap;
+  word-break: normal;
 }
 
 .mining-overview-card[data-tone="gold"] {
@@ -455,6 +472,240 @@ textarea:focus {
 
 .mining-mini-stat[data-tone="slate"] {
   box-shadow: inset 0 0 0 1px rgba(93, 110, 156, 0.12);
+}
+
+.mining-checkin-hero {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+  align-items: stretch;
+}
+
+.mining-checkin-hero__card {
+  min-width: 0;
+}
+
+.mining-checkin-hero__value {
+  white-space: nowrap;
+}
+
+.mining-inline-reward {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.04em;
+  white-space: nowrap;
+}
+
+.mining-inline-reward__value,
+.mining-inline-reward__star {
+  display: inline-block;
+}
+
+.mining-inline-reward__star {
+  font-size: 0.88em;
+  line-height: 1;
+  transform: translateY(0.01em);
+}
+
+.mining-inline-reward[data-compact="true"] {
+  font-size: 0.98em;
+}
+
+:root {
+  --checkin-gap: 0.34rem;
+}
+
+.mining-checkin-board {
+  margin-top: 0.95rem;
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  grid-template-rows: repeat(5, minmax(0, 1fr));
+  gap: var(--checkin-gap);
+  align-items: center;
+}
+
+.mining-checkin-day {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  aspect-ratio: 1 / 1;
+  min-height: 0;
+  border-radius: 999px;
+  border: 1px solid rgba(88, 108, 164, 0.28);
+  background: linear-gradient(180deg, rgba(16, 22, 41, 0.96), rgba(10, 14, 26, 0.96));
+  padding: 0.34rem 0.28rem;
+  box-shadow: var(--shadow-soft);
+  text-align: center;
+}
+
+.mining-checkin-day[data-large="true"] {
+  justify-self: stretch;
+  align-self: stretch;
+  inline-size: 100%;
+  block-size: 100%;
+  aspect-ratio: auto;
+  width: 100%;
+  height: 100%;
+  border-radius: 999px;
+  padding: 0.42rem 1.15rem;
+}
+
+.mining-checkin-day::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(circle at top right, rgba(99, 240, 255, 0.1), transparent 28%),
+    radial-gradient(circle at bottom left, rgba(255, 154, 46, 0.1), transparent 32%);
+  opacity: 0.85;
+  pointer-events: none;
+}
+
+.mining-checkin-day__top,
+.mining-checkin-day__reward {
+  position: relative;
+  z-index: 1;
+}
+
+.mining-checkin-day__top {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.1rem;
+}
+
+.mining-checkin-day__number {
+  color: #c6d4f5;
+  font-size: 0.52rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.mining-checkin-day__reward {
+  margin-top: 0.22rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.03rem;
+  white-space: nowrap;
+  color: #f7fbff;
+  font-size: 0.6rem;
+  line-height: 1;
+  font-weight: 800;
+  font-variant-numeric: lining-nums tabular-nums;
+  letter-spacing: -0.05em;
+}
+
+.mining-checkin-day__rewardValue {
+  display: inline-block;
+}
+
+.mining-checkin-day__rewardStar {
+  display: inline-block;
+  font-size: 0.76em;
+  line-height: 1;
+  transform: translateY(0.01em);
+}
+
+.mining-checkin-day[data-large="true"] .mining-checkin-day__number {
+  font-size: 0.74rem;
+  letter-spacing: 0.05em;
+}
+
+.mining-checkin-day[data-large="true"] .mining-checkin-day__reward {
+  margin-top: 0.18rem;
+  font-size: 1.7rem;
+  gap: 0.02rem;
+}
+
+.mining-checkin-day[data-state="claimable"] {
+  border-color: rgba(99, 240, 255, 0.44);
+  box-shadow: var(--shadow-soft), var(--shadow-glow-cyan);
+  animation: mining-checkin-pulse 1.8s ease-in-out infinite;
+}
+
+.mining-checkin-day[data-state="claimable"][data-tier="boost"],
+.mining-checkin-day[data-state="claimable"][data-tier="jackpot"] {
+  border-color: rgba(255, 166, 72, 0.5);
+  box-shadow: var(--shadow-soft), var(--shadow-glow-gold);
+}
+
+.mining-checkin-day[data-state="upcoming"] {
+  opacity: 0.78;
+}
+
+.mining-checkin-day[data-tier="boost"] {
+  border-color: rgba(99, 240, 255, 0.36);
+  background: linear-gradient(180deg, rgba(14, 28, 56, 0.98), rgba(8, 17, 33, 0.96));
+  box-shadow: var(--shadow-soft), var(--shadow-glow-cyan);
+}
+
+.mining-checkin-day[data-tier="boost"] .mining-checkin-day__reward {
+  color: #e9fbff;
+  font-weight: 900;
+  font-size: 0.86rem;
+  text-shadow: 0 0 16px rgba(99, 240, 255, 0.2);
+}
+
+.mining-checkin-day[data-tier="jackpot"] {
+  border-color: rgba(255, 166, 72, 0.4);
+  background: linear-gradient(180deg, rgba(34, 24, 14, 0.98), rgba(17, 13, 9, 0.96));
+  box-shadow: var(--shadow-soft), var(--shadow-glow-gold);
+}
+
+.mining-checkin-day[data-tier="jackpot"] .mining-checkin-day__reward {
+  color: #fff3cf;
+  font-weight: 900;
+  text-shadow: 0 0 18px rgba(255, 166, 72, 0.22);
+}
+
+.mining-checkin-day[data-day="7"],
+.mining-checkin-day[data-day="14"],
+.mining-checkin-day[data-day="21"] {
+  z-index: 1;
+}
+
+.mining-checkin-day[data-day="7"] .mining-checkin-day__number,
+.mining-checkin-day[data-day="14"] .mining-checkin-day__number,
+.mining-checkin-day[data-day="21"] .mining-checkin-day__number {
+  font-size: 0.58rem;
+}
+
+.mining-checkin-day[data-day="7"] .mining-checkin-day__reward,
+.mining-checkin-day[data-day="14"] .mining-checkin-day__reward,
+.mining-checkin-day[data-day="21"] .mining-checkin-day__reward {
+  font-size: 0.9rem;
+}
+
+.mining-checkin-day[data-state="claimed"] {
+  border-color: rgba(110, 255, 183, 0.28);
+  background: linear-gradient(180deg, rgba(14, 29, 31, 0.96), rgba(10, 18, 24, 0.96));
+  box-shadow: 0 0 0 1px rgba(110, 255, 183, 0.06), 0 0 22px rgba(110, 255, 183, 0.1);
+}
+
+.mining-checkin-day[data-state="claimed"] .mining-checkin-day__number {
+  color: #9fd8c0;
+}
+
+.mining-checkin-day[data-state="claimed"] .mining-checkin-day__reward {
+  color: #dffff0;
+  font-weight: 850;
+  text-shadow: none;
+}
+
+@keyframes mining-checkin-pulse {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+
+  50% {
+    transform: translateY(-1px);
+  }
 }
 
 .mining-primary-button,
