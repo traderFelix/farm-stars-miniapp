@@ -36,7 +36,7 @@ body {
     radial-gradient(circle at bottom right, rgba(32, 86, 197, 0.16), transparent 34%),
     linear-gradient(180deg, #060814 0%, #0b1021 52%, #05070f 100%);
   color: var(--foreground);
-  font-family: var(--font-ui);
+  font-family: var(--font-ui), sans-serif;
   letter-spacing: -0.015em;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
