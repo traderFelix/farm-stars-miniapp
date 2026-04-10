@@ -365,15 +365,15 @@ export default function HomePage() {
                   onSelect={setActiveTab}
                 />
                 <BottomTabButton
-                  tab="referrals"
-                  activeTab={activeTab}
-                  title="Реф.бонус"
-                  onSelect={setActiveTab}
-                />
-                <BottomTabButton
                   tab="campaigns"
                   activeTab={activeTab}
                   title="Конкурсы"
+                  onSelect={setActiveTab}
+                />
+                <BottomTabButton
+                  tab="referrals"
+                  activeTab={activeTab}
+                  title="Реф.бонус"
                   onSelect={setActiveTab}
                 />
                 <BottomTabButton
