@@ -154,7 +154,7 @@ export default function WithdrawalPanel() {
                 <div className="mt-2 grid gap-1 text-sm text-slate-300">
                     <div>• Минимальная сумма: {formatBalance(eligibility.min_withdraw)} ⭐</div>
                     <div>
-                        • Индекс Активности не меннее {formatBalance(eligibility.min_task_percent)}%
+                        • Индекс активности выше {formatBalance(eligibility.min_task_percent)}%
                     </div>
                     <div>
                         • Курс обмена в TON определяется по рынку{" "}

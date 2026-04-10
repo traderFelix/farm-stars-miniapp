@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 
+import RewardPopup from "@/components/RewardPopup";
 import CampaignsPanel from "@/components/campaigns/CampaignsPanel";
 import ReferralsPanel from "@/components/referrals/ReferralsPanel";
 import WithdrawalPanel from "@/components/withdrawal/WithdrawalPanel";
@@ -43,6 +44,10 @@ export default function HomePage() {
   const [checkin, setCheckin] = useState<CheckinStatus | null>(null);
   const [checkinState, setCheckinState] = useState<CheckinState>("idle");
   const [checkinMessage, setCheckinMessage] = useState("");
+  const [checkinRewardPopup, setCheckinRewardPopup] = useState<{
+    claimedAmount: number;
+    nextReward: number;
+  } | null>(null);
   const [botTasksOpening, setBotTasksOpening] = useState(false);
 
   const [debugMessage, setDebugMessage] = useState<string>("Шаг 1: запуск");
@@ -77,11 +82,14 @@ export default function HomePage() {
 
       const result = await claimCheckin();
 
-      setCheckinMessage(
-        result.ok
-          ? buildCheckinSuccessMessage(result.claimed_amount, tomorrowReward)
-          : result.message,
-      );
+      if (result.ok) {
+        setCheckinRewardPopup({
+          claimedAmount: result.claimed_amount,
+          nextReward: tomorrowReward,
+        });
+      } else {
+        setCheckinMessage(result.message);
+      }
 
       setProfile((prev) =>
         prev
@@ -177,6 +185,15 @@ export default function HomePage() {
 
   return (
     <main className="mining-app">
+      {checkinRewardPopup ? (
+        <RewardPopup
+          kicker="Ежедневный бонус зачислен"
+          amountLabel={`+${formatBalance(checkinRewardPopup.claimedAmount)} ⭐`}
+          description={`Завтра будет доступно ${formatBalance(checkinRewardPopup.nextReward)} ⭐`}
+          onClose={() => setCheckinRewardPopup(null)}
+        />
+      ) : null}
+
       <div className="mining-app__mesh" aria-hidden="true" />
       <div className="mining-app__orb mining-app__orb--gold" aria-hidden="true" />
       <div className="mining-app__orb mining-app__orb--cyan" aria-hidden="true" />
@@ -295,7 +312,7 @@ export default function HomePage() {
                         {checkinState === "claiming" ? "Добываю..." : "Забрать бонус"}
                       </button>
 
-                      {checkinMessage && <StatusNote>{checkinMessage}</StatusNote>}
+                      {checkinMessage && <StatusNote tone="error">{checkinMessage}</StatusNote>}
                     </>
                   )}
                 </section>
@@ -486,12 +503,4 @@ function StatusNote({
       {children}
     </div>
   );
-}
-
-function buildCheckinSuccessMessage(claimedAmount: number, nextReward: number): string {
-  return [
-    "Ежедневный бонус зачислен",
-    `На баланс добавлено ${formatBalance(claimedAmount)} ⭐`,
-    `Завтра будет доступно ${formatBalance(nextReward)} ⭐`,
-  ].join("\n");
 }

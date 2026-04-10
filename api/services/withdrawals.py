@@ -175,13 +175,10 @@ async def _build_eligibility(user_id: int) -> EligibilityCheckResult:
                 is_first_withdraw=first_withdraw,
             )
 
-        if task_percent < MIN_WITHDRAW_PERCENT:
+        if activity_index <= MIN_TASK_PERCENT_VALUE:
             return EligibilityCheckResult(
                 can_withdraw=False,
-                message=(
-                    f"Для вывода нужно минимум {MIN_TASK_PERCENT_VALUE:.0f}% "
-                    f"звезд, добытых через задания"
-                ),
+                message=f"Для вывода нужен индекс активности выше {MIN_TASK_PERCENT_VALUE:.0f}%",
                 min_withdraw=MIN_WITHDRAW,
                 min_task_percent=MIN_TASK_PERCENT_VALUE,
                 has_pending_withdrawal=False,
@@ -239,10 +236,10 @@ async def _validate_withdraw_rules(db, user_id: int, amount: float) -> Optional[
     if activity_index <= 0:
         return "❌ Вывод пока недоступен"
 
-    if activity_index < MIN_WITHDRAW_PERCENT * 100:
+    if activity_index <= MIN_WITHDRAW_PERCENT * 100:
         return (
             "❌ Вывод пока недоступен\n\n"
-            f"Для вывода нужен Индекс Активности не ниже {MIN_WITHDRAW_PERCENT * 100:.0f}%.\n\n"
+            f"Для вывода нужен Индекс Активности выше {MIN_WITHDRAW_PERCENT * 100:.0f}%\n\n"
             f"• Индекс Активности: {activity_index:.1f}%"
         )
 

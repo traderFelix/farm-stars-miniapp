@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 
+import RewardPopup from "@/components/RewardPopup";
 import {
     claimCampaign,
     getActiveCampaigns,
@@ -80,27 +81,12 @@ export default function CampaignsPanel({ onBalanceChange }: CampaignsPanelProps)
     return (
         <div>
             {successState ? (
-                <div className="mining-popup-backdrop" onClick={() => setSuccessState(null)}>
-                    <div
-                        className="mining-popup-card mining-popup-card--success"
-                        onClick={(event) => event.stopPropagation()}
-                    >
-                        <div className="mining-popup-card__kicker">Награда зачислена</div>
-                        <div className="mining-popup-card__title">
-                            +{formatBalance(successState.amount)} ⭐
-                        </div>
-                        <div className="mining-popup-card__text">
-                            Бонус за конкурс {successState.title} уже на балансе
-                        </div>
-                        <button
-                            type="button"
-                            className="mining-primary-button mt-4 w-full"
-                            onClick={() => setSuccessState(null)}
-                        >
-                            Отлично
-                        </button>
-                    </div>
-                </div>
+                <RewardPopup
+                    kicker="Награда зачислена"
+                    amountLabel={`+${formatBalance(successState.amount)} ⭐`}
+                    description={`Бонус за конкурс ${successState.title} уже на балансе`}
+                    onClose={() => setSuccessState(null)}
+                />
             ) : null}
 
             <div className="flex items-center justify-between gap-3">
