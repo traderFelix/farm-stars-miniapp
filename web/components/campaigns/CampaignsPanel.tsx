@@ -1,48 +1,33 @@
 "use client";
 
-import { useEffect, useState, type MouseEvent } from "react";
+import { useEffect, useState } from "react";
 
 import {
     claimCampaign,
     getActiveCampaigns,
-    type CampaignClaimResponse,
     type CampaignItem,
 } from "@/lib/api";
-import { openTelegramLink } from "@/lib/telegram";
+import { getTelegramWebApp, openTelegramLink } from "@/lib/telegram";
 
 type CampaignsPanelProps = {
     onBalanceChange?: (nextBalance: number) => void;
 };
 
-type NoticeTone = "error" | "success" | "warning";
-
-type CampaignNotice = {
-    title: string;
-    body: string;
-    tone: NoticeTone;
-};
-
 export default function CampaignsPanel({ onBalanceChange }: CampaignsPanelProps) {
     const [loading, setLoading] = useState(true);
     const [items, setItems] = useState<CampaignItem[]>([]);
-    const [notice, setNotice] = useState<CampaignNotice | null>(null);
     const [claimingKey, setClaimingKey] = useState<string | null>(null);
+    const [claimError, setClaimError] = useState("");
+    const [successState, setSuccessState] = useState<{
+        title: string;
+        amount: number;
+    } | null>(null);
 
-    async function loadCampaigns(options?: { preserveNotice?: boolean }) {
+    async function loadCampaigns() {
         try {
             setLoading(true);
-            if (!options?.preserveNotice) {
-                setNotice(null);
-            }
-
             const response = await getActiveCampaigns();
             setItems(response.items || []);
-        } catch (error) {
-            setNotice({
-                tone: "error",
-                title: "Не удалось загрузить конкурсы",
-                body: error instanceof Error ? error.message : "Попробуй еще раз позже",
-            });
         } finally {
             setLoading(false);
         }
@@ -54,43 +39,70 @@ export default function CampaignsPanel({ onBalanceChange }: CampaignsPanelProps)
 
     async function handleClaim(campaignKey: string) {
         const currentItem = items.find((item) => item.campaign_key === campaignKey);
+        if (!currentItem?.is_winner || currentItem.already_claimed) {
+            return;
+        }
 
         try {
+            setClaimError("");
             setClaimingKey(campaignKey);
-            setNotice(null);
-
             const result = await claimCampaign(campaignKey);
-            setNotice(buildClaimNotice(result, currentItem));
 
             if (result.ok) {
                 onBalanceChange?.(Number(result.new_balance || 0));
-                setItems((prev) => prev.filter((item) => item.campaign_key !== campaignKey));
+                setSuccessState({
+                    title: currentItem.title,
+                    amount: currentItem.reward_amount,
+                });
+                getTelegramWebApp()?.HapticFeedback?.notificationOccurred?.("success");
+                setItems((prev) =>
+                    prev.map((item) =>
+                        item.campaign_key === campaignKey
+                            ? {
+                                ...item,
+                                already_claimed: true,
+                              }
+                            : item
+                    )
+                );
+            } else {
+                setClaimError(result.message || "Не удалось забрать награду");
+                getTelegramWebApp()?.HapticFeedback?.notificationOccurred?.("error");
             }
         } catch (error) {
-            setNotice({
-                tone: "error",
-                title: "Не удалось получить награду",
-                body: error instanceof Error ? error.message : "Попробуй еще раз позже",
-            });
+            setClaimError(error instanceof Error ? error.message : "Не удалось забрать награду");
+            getTelegramWebApp()?.HapticFeedback?.notificationOccurred?.("error");
         } finally {
             setClaimingKey(null);
         }
     }
 
-    function handlePostLinkClick(event: MouseEvent<HTMLAnchorElement>, postUrl: string) {
-        event.preventDefault();
-
-        if (!openTelegramLink(postUrl)) {
-            setNotice({
-                tone: "warning",
-                title: "Не удалось открыть пост",
-                body: "Попробуй открыть ссылку еще раз",
-            });
-        }
-    }
-
     return (
         <div>
+            {successState ? (
+                <div className="mining-popup-backdrop" onClick={() => setSuccessState(null)}>
+                    <div
+                        className="mining-popup-card mining-popup-card--success"
+                        onClick={(event) => event.stopPropagation()}
+                    >
+                        <div className="mining-popup-card__kicker">Награда зачислена</div>
+                        <div className="mining-popup-card__title">
+                            +{formatBalance(successState.amount)} ⭐
+                        </div>
+                        <div className="mining-popup-card__text">
+                            Бонус за конкурс {successState.title} уже на балансе
+                        </div>
+                        <button
+                            type="button"
+                            className="mining-primary-button mt-4 w-full"
+                            onClick={() => setSuccessState(null)}
+                        >
+                            Отлично
+                        </button>
+                    </div>
+                </div>
+            ) : null}
+
             <div className="flex items-center justify-between gap-3">
                 <div>
                     <h2 className="mt-1 text-xl font-semibold text-white">Активные конкурсы</h2>
@@ -101,7 +113,7 @@ export default function CampaignsPanel({ onBalanceChange }: CampaignsPanelProps)
 
                 <button
                     type="button"
-                    onClick={() => void loadCampaigns({ preserveNotice: true })}
+                    onClick={() => void loadCampaigns()}
                     className="mining-ghost-button"
                     disabled={loading || claimingKey !== null}
                 >
@@ -109,12 +121,11 @@ export default function CampaignsPanel({ onBalanceChange }: CampaignsPanelProps)
                 </button>
             </div>
 
-            {notice && (
-                <div className="mining-status-note mt-4" data-tone={notice.tone}>
-                    <div className="text-sm font-semibold text-white">{notice.title}</div>
-                    <div className="mt-1 text-sm">{notice.body}</div>
+            {claimError ? (
+                <div className="mining-status-note mt-4" data-tone="error">
+                    {claimError}
                 </div>
-            )}
+            ) : null}
 
             {loading ? (
                 <div className="mining-status-note mt-4">Загружаю активные конкурсы...</div>
@@ -137,91 +148,43 @@ export default function CampaignsPanel({ onBalanceChange }: CampaignsPanelProps)
                                     </div>
                                 </div>
 
-                                <button
-                                    type="button"
-                                    onClick={() => void handleClaim(item.campaign_key)}
-                                    disabled={claimingKey !== null}
-                                    className="mining-primary-button min-h-0 px-4 py-2 text-sm"
-                                >
-                                    {claimingKey === item.campaign_key ? "Проверяю..." : "Забрать"}
-                                </button>
+                                {item.post_button_url ? (
+                                    <button
+                                        type="button"
+                                        className="mining-inline-button mining-inline-button--corner"
+                                        onClick={() => {
+                                            void openTelegramLink(item.post_button_url!);
+                                        }}
+                                    >
+                                        {item.post_button_label || "Пост с розыгрышем"}
+                                    </button>
+                                ) : null}
                             </div>
 
-                            <div className="mining-note-card mt-3 text-sm text-slate-300">
-                                <div className="font-medium text-white">Пост с розыгрышем был тут</div>
-                                {item.post_url ? (
-                                    <a
-                                        href={item.post_url}
-                                        target="_blank"
-                                        rel="noreferrer"
-                                        className="mining-link mt-1 inline-flex"
-                                        onClick={(event) => handlePostLinkClick(event, item.post_url!)}
-                                    >
-                                        Открыть пост
-                                    </a>
-                                ) : (
-                                    <div className="mt-1 text-slate-400">Ссылка появится позже</div>
-                                )}
-                            </div>
+                            <button
+                                type="button"
+                                onClick={() => void handleClaim(item.campaign_key)}
+                                disabled={claimingKey !== null || !item.is_winner || item.already_claimed}
+                                className="mining-primary-button mt-4 w-full"
+                            >
+                                {claimingKey === item.campaign_key ? "Проверяю..." : "Забрать награду"}
+                            </button>
+
+                            {item.already_claimed ? (
+                                <div className="mt-3 text-sm font-medium text-rose-300">
+                                    Награда уже получена
+                                </div>
+                            ) : !item.is_winner ? (
+                                <div className="mt-3 text-sm font-medium text-rose-300">
+                                    Тебя нет в списке победителей
+                                </div>
+                            ) : null}
                         </div>
                     ))}
                 </div>
             )}
         </div>
     );
-}
-
-function buildClaimNotice(
-    result: CampaignClaimResponse,
-    item?: CampaignItem,
-): CampaignNotice {
-    if (result.ok) {
-        return {
-            tone: "success",
-            title: "Награда зачислена",
-            body: item
-                ? `${formatBalance(item.reward_amount)} ⭐ уже на балансе за конкурс «${item.title}»`
-                : sanitizeMessage(result.message),
-        };
-    }
-
-    switch (result.code) {
-        case "not_winner":
-            return {
-                tone: "error",
-                title: "Награда недоступна",
-                body: "В этом конкурсе тебя нет среди победителей",
-            };
-        case "inactive":
-            return {
-                tone: "warning",
-                title: "Конкурс уже закрыт",
-                body: "Этот розыгрыш сейчас неактивен",
-            };
-        case "already_claimed":
-            return {
-                tone: "warning",
-                title: "Награда уже получена",
-                body: "Бонус по этому конкурсу уже был зачислен раньше",
-            };
-        case "rate_limited":
-        case "too_many_failures":
-            return {
-                tone: "warning",
-                title: "Попробуй чуть позже",
-                body: sanitizeMessage(result.message),
-            };
-        default:
-            return {
-                tone: "error",
-                title: "Не удалось получить награду",
-                body: sanitizeMessage(result.message),
-            };
-    }
-}
-
-function sanitizeMessage(value: string): string {
-    return (value || "").trim() || "Попробуй еще раз позже";
 }
 
 function formatBalance(value: number): string {

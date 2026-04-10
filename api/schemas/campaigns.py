@@ -8,6 +8,10 @@ class CampaignItem(BaseModel):
     title: str
     reward_amount: float
     post_url: Optional[str] = None
+    post_button_url: Optional[str] = None
+    post_button_label: Optional[str] = None
+    is_winner: bool = False
+    already_claimed: bool = False
 
 
 class CampaignListResponse(BaseModel):

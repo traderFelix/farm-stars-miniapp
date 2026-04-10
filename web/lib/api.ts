@@ -44,6 +44,10 @@ export type CampaignItem = {
     title: string;
     reward_amount: number;
     post_url?: string | null;
+    post_button_url?: string | null;
+    post_button_label?: string | null;
+    is_winner: boolean;
+    already_claimed: boolean;
 };
 
 export type CampaignListResponse = {

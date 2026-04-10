@@ -506,6 +506,32 @@ textarea:focus {
   background: rgba(15, 20, 36, 0.72);
 }
 
+.mining-inline-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 2rem;
+  border-radius: 999px;
+  border: 1px solid rgba(99, 240, 255, 0.28);
+  padding: 0.45rem 0.8rem;
+  color: #9eedff;
+  background: rgba(14, 19, 33, 0.76);
+  font-size: 0.78rem;
+  font-weight: 700;
+  line-height: 1;
+  box-shadow: 0 0 0 1px rgba(99, 240, 255, 0.06), 0 0 18px rgba(47, 137, 255, 0.12);
+}
+
+.mining-inline-button:hover {
+  transform: translateY(-1px);
+}
+
+.mining-inline-button--corner {
+  flex-shrink: 0;
+  max-width: 11rem;
+  text-align: center;
+}
+
 .mining-primary-button:disabled,
 .mining-secondary-button:disabled,
 .mining-ghost-button:disabled {
@@ -540,6 +566,77 @@ textarea:focus {
   border-color: rgba(255, 112, 143, 0.42);
   color: #ffd2dc;
   box-shadow: 0 0 0 1px rgba(255, 112, 143, 0.08), 0 0 24px rgba(255, 112, 143, 0.12);
+}
+
+.mining-popup-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.25rem;
+  background: rgba(4, 8, 18, 0.68);
+  backdrop-filter: blur(12px);
+}
+
+.mining-popup-card {
+  position: relative;
+  width: min(100%, 24rem);
+  overflow: hidden;
+  border-radius: 28px;
+  border: 1px solid rgba(88, 108, 164, 0.34);
+  background: linear-gradient(180deg, rgba(18, 24, 46, 0.98), rgba(8, 12, 22, 0.98));
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.5);
+  padding: 1.2rem;
+}
+
+.mining-popup-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(circle at top right, rgba(99, 240, 255, 0.16), transparent 30%),
+    radial-gradient(circle at bottom left, rgba(255, 154, 46, 0.18), transparent 34%);
+  pointer-events: none;
+}
+
+.mining-popup-card--success {
+  border-color: rgba(255, 166, 72, 0.28);
+  box-shadow:
+    0 24px 80px rgba(0, 0, 0, 0.5),
+    0 0 0 1px rgba(255, 168, 66, 0.08),
+    0 0 34px rgba(255, 154, 46, 0.18);
+}
+
+.mining-popup-card__kicker,
+.mining-popup-card__title,
+.mining-popup-card__text {
+  position: relative;
+  z-index: 1;
+}
+
+.mining-popup-card__kicker {
+  color: #ffd08d;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.mining-popup-card__title {
+  margin-top: 0.55rem;
+  color: #fff6da;
+  font-size: clamp(2rem, 7vw, 2.8rem);
+  font-weight: 800;
+  line-height: 1;
+}
+
+.mining-popup-card__text {
+  margin-top: 0.8rem;
+  color: #d9e4fd;
+  font-size: 0.98rem;
+  line-height: 1.5;
 }
 
 .mining-task-card {

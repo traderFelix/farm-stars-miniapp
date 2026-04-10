@@ -19,8 +19,7 @@ router = APIRouter(prefix="/campaigns", tags=["campaigns"])
 async def get_active_campaigns(
         user_id: int = Depends(get_current_user_id),
 ) -> CampaignListResponse:
-    _ = user_id
-    return await get_active_campaigns_for_user()
+    return await get_active_campaigns_for_user(user_id=user_id)
 
 
 @router.post("/{campaign_key}/claim", response_model=CampaignClaimResponse)
