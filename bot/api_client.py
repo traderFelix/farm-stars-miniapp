@@ -358,6 +358,7 @@ class TaskChannelsApi(ApiSection):
             *,
             chat_id: str,
             title: Optional[str],
+            client_user_id: Optional[int],
             total_bought_views: int,
             views_per_post: int,
             view_seconds: int,
@@ -367,6 +368,7 @@ class TaskChannelsApi(ApiSection):
             json={
                 "chat_id": chat_id,
                 "title": title,
+                "client_user_id": int(client_user_id) if client_user_id is not None else None,
                 "total_bought_views": int(total_bought_views),
                 "views_per_post": int(views_per_post),
                 "view_seconds": int(view_seconds),
@@ -390,6 +392,14 @@ class TaskChannelsApi(ApiSection):
                 "total_bought_views": int(total_bought_views),
                 "views_per_post": int(views_per_post),
                 "view_seconds": int(view_seconds),
+            },
+        )
+
+    async def bind_client(self, channel_id: int, *, client_user_id: int) -> JsonDict:
+        return await self._post(
+            f"/admin/task-channels/{int(channel_id)}/client",
+            json={
+                "client_user_id": int(client_user_id),
             },
         )
 
@@ -704,6 +714,7 @@ async def create_task_channel_via_api(
         *,
         chat_id: str,
         title: Optional[str],
+        client_user_id: Optional[int],
         total_bought_views: int,
         views_per_post: int,
         view_seconds: int,
@@ -711,6 +722,7 @@ async def create_task_channel_via_api(
     return await api_client.task_channels.create(
         chat_id=chat_id,
         title=title,
+        client_user_id=client_user_id,
         total_bought_views=total_bought_views,
         views_per_post=views_per_post,
         view_seconds=view_seconds,
@@ -733,6 +745,17 @@ async def update_task_channel_params_via_api(
         total_bought_views=total_bought_views,
         views_per_post=views_per_post,
         view_seconds=view_seconds,
+    )
+
+
+async def bind_task_channel_client_via_api(
+        channel_id: int,
+        *,
+        client_user_id: int,
+) -> JsonDict:
+    return await api_client.task_channels.bind_client(
+        channel_id,
+        client_user_id=client_user_id,
     )
 
 
@@ -839,6 +862,7 @@ __all__ = [
     "list_task_channels_via_api",
     "get_task_channel_via_api",
     "create_task_channel_via_api",
+    "bind_task_channel_client_via_api",
     "toggle_task_channel_via_api",
     "update_task_channel_params_via_api",
     "get_task_channel_posts_via_api",

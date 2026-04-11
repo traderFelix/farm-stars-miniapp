@@ -23,6 +23,7 @@ class AdminRefundFee(StatesGroup):
 
 class TaskChannelCreate(StatesGroup):
     chat_id = State()
+    client_ref = State()
     total_bought_views = State()
     views_per_post = State()
     view_seconds = State()
@@ -31,3 +32,7 @@ class TaskChannelEdit(StatesGroup):
     total_bought_views = State()
     views_per_post = State()
     view_seconds = State()
+
+
+class TaskChannelBindClient(StatesGroup):
+    client_ref = State()

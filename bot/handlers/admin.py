@@ -9,6 +9,7 @@ from bot.api_client import (
     ApiClientError,
     add_campaign_winners_via_api,
     adjust_user_balance,
+    bind_task_channel_client_via_api,
     clear_user_suspicious,
     create_campaign_via_api,
     create_task_channel_via_api,
@@ -71,7 +72,7 @@ from bot.keyboards import (
 )
 
 from bot.states import (
-    CampaignCreate, AddWinners, DeleteWinner, UserLookup, AdminAdjust, AdminRefundFee, TaskChannelCreate, TaskChannelEdit,
+    CampaignCreate, AddWinners, DeleteWinner, UserLookup, AdminAdjust, AdminRefundFee, TaskChannelBindClient, TaskChannelCreate, TaskChannelEdit,
 )
 
 router = Router()
@@ -192,9 +193,11 @@ async def admin_api_unavailable_myrole(message: Message):
         AdminAdjust.amount,
         AdminRefundFee.waiting_manual_data,
         TaskChannelCreate.chat_id,
+        TaskChannelCreate.client_ref,
         TaskChannelCreate.total_bought_views,
         TaskChannelCreate.views_per_post,
         TaskChannelCreate.view_seconds,
+        TaskChannelBindClient.client_ref,
         TaskChannelEdit.total_bought_views,
         TaskChannelEdit.views_per_post,
         TaskChannelEdit.view_seconds,
@@ -283,13 +286,24 @@ def _build_task_channel_card_text(detail: dict) -> tuple[str, bool, int]:
     total_required = int(stats.get("total_required") or 0)
     total_current = int(stats.get("total_current") or 0)
     active_posts = int(stats.get("active_posts") or 0)
+    client_user_id = _to_optional_int(channel.get("client_user_id"))
+    client_username = (channel.get("client_username") or "").strip()
+    client_first_name = (channel.get("client_first_name") or "").strip()
 
     status_text = "🟢 Включен" if is_active else "🔴 Отключен"
+    client_label = "не привязан"
+    if client_user_id is not None:
+        client_label = f"id:{client_user_id}"
+        if client_username:
+            client_label = f"@{client_username}"
+        elif client_first_name:
+            client_label = f"{client_first_name} ({client_label})"
 
     text = (
         "📺 Канал просмотров\n\n"
         f"Название: {title}\n"
         f"ID канала: {chat_id}\n"
+        f"Клиент: {client_label}\n"
         f"Статус: {status_text}\n\n"
         f"Куплено просмотров: {total_bought}\n"
         f"На один пост: {views_per_post}\n"
@@ -1702,8 +1716,38 @@ async def adm_task_channel_new_chat_id(message: Message, state: FSMContext):
         return
 
     await state.update_data(chat_id=chat_id)
+    await state.set_state(TaskChannelCreate.client_ref)
+    await message.answer("Теперь пришли @username или user_id клиента, которому принадлежит этот канал:")
+
+
+@router.message(TaskChannelCreate.client_ref)
+async def adm_task_channel_new_client_ref(message: Message, state: FSMContext):
+    query = (message.text or "").strip()
+    if not query:
+        await message.answer("❌ Нужен @username или user_id клиента")
+        return
+
+    try:
+        profile = await lookup_user(query)
+    except ApiClientError as e:
+        await message.answer(f"❌ {e.detail}")
+        return
+
+    client_user_id = int(profile["user_id"])
+    client_username = (profile.get("username") or "").strip()
+    client_name = (profile.get("first_name") or "").strip()
+    client_label = f"id:{client_user_id}"
+    if client_username:
+        client_label = f"@{client_username}"
+    elif client_name:
+        client_label = f"{client_name} ({client_label})"
+
+    await state.update_data(client_user_id=client_user_id)
     await state.set_state(TaskChannelCreate.total_bought_views)
-    await message.answer("Теперь введи, сколько просмотров куплено всего для этого канала:")
+    await message.answer(
+        f"Клиент привязан: {client_label}\n\n"
+        "Теперь введи, сколько просмотров куплено всего для этого канала:"
+    )
 
 
 @router.message(TaskChannelCreate.total_bought_views)
@@ -2005,6 +2049,7 @@ async def adm_task_channel_new_view_seconds(message: Message, state: FSMContext)
 
     data = await state.get_data()
     chat_id = data["chat_id"]
+    client_user_id = int(data["client_user_id"])
     total_bought_views = int(data["total_bought_views"])
     views_per_post = int(data["views_per_post"])
 
@@ -2012,6 +2057,7 @@ async def adm_task_channel_new_view_seconds(message: Message, state: FSMContext)
         detail = await create_task_channel_via_api(
             chat_id=chat_id,
             title=None,
+            client_user_id=client_user_id,
             total_bought_views=total_bought_views,
             views_per_post=views_per_post,
             view_seconds=view_seconds,
@@ -2026,6 +2072,7 @@ async def adm_task_channel_new_view_seconds(message: Message, state: FSMContext)
     await message.answer(
         "✅ Канал подключен\n\n"
         f"chat_id: {chat_id}\n"
+        f"Клиент user_id: {client_user_id}\n"
         f"Куплено просмотров: {total_bought_views}\n"
         f"На 1 пост: {views_per_post}\n"
         f"Секунд просмотра: {view_seconds}"
@@ -2039,6 +2086,51 @@ async def adm_task_channel_new_view_seconds(message: Message, state: FSMContext)
                 [InlineKeyboardButton(text="📺 Все каналы", callback_data="adm:tch:list")],
             ]
         )
+    )
+
+
+@router.callback_query(F.data.startswith("adm:tch:client:"))
+async def adm_task_channel_bind_client(callback: CallbackQuery, state: FSMContext):
+    channel_id = int(callback.data.rsplit(":", 1)[1])
+    await callback.answer()
+    await state.clear()
+    await state.update_data(channel_id=channel_id)
+    await state.set_state(TaskChannelBindClient.client_ref)
+    await callback.message.answer(
+        "Пришли @username или user_id клиента для этого канала:"
+    )
+
+
+@router.message(TaskChannelBindClient.client_ref)
+async def adm_task_channel_bind_client_value(message: Message, state: FSMContext):
+    data = await state.get_data()
+    channel_id = _to_optional_int(data.get("channel_id"))
+    if channel_id is None:
+        await state.clear()
+        await message.answer("❌ Не удалось определить канал, попробуй открыть его заново")
+        return
+
+    query = (message.text or "").strip()
+    if not query:
+        await message.answer("❌ Нужен @username или user_id клиента")
+        return
+
+    try:
+        profile = await lookup_user(query)
+        detail = await bind_task_channel_client_via_api(
+            int(channel_id),
+            client_user_id=int(profile["user_id"]),
+        )
+    except ApiClientError as e:
+        await message.answer(f"❌ {e.detail}")
+        return
+
+    await state.clear()
+
+    text, is_active, channel_id_value = _build_task_channel_card_text(detail)
+    await message.answer(
+        "✅ Клиент привязан\n\n" + text,
+        reply_markup=admin_task_channel_card_kb(channel_id_value, is_active),
     )
 
 @router.callback_query(F.data.startswith("adm:growth_back:"))

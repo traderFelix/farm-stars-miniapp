@@ -1,6 +1,10 @@
 import json
+import logging
 import time
+from html import escape
 from typing import Optional
+from urllib import error as urllib_error
+from urllib import request as urllib_request
 
 from api.db.connection import get_db
 from api.schemas.tasks import (
@@ -11,12 +15,16 @@ from api.schemas.tasks import (
 from shared.db.tasks import (
     add_task_post_view,
     allocate_task_post_from_channel_post,
+    get_task_channel_by_chat_id,
     get_next_view_post_task_for_user,
     get_view_post_task_for_user,
     increment_task_post_views,
 )
 from shared.db.abuse import count_recent_abuse_events, log_abuse_event
 from shared.db.common import tx
+from shared.config import TELEGRAM_BOT_TOKEN
+
+logger = logging.getLogger(__name__)
 
 
 def build_task_post_url(
@@ -39,6 +47,84 @@ def build_task_title(row) -> str:
     if channel_title:
         return f"Посмотреть пост — {channel_title}"
     return "Посмотреть пост"
+
+
+def _telegram_api_url(method: str) -> str:
+    return f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/{method}"
+
+
+def _build_client_mention(
+        *,
+        username: Optional[str],
+ ) -> Optional[str]:
+    normalized_username = (username or "").strip().lstrip("@")
+    if normalized_username:
+        return f"@{escape(normalized_username)}"
+
+    return None
+
+
+def _build_channel_alert_heading(client_mention: Optional[str]) -> str:
+    if client_mention:
+        return f"⚠️ {client_mention}, внимание по каналу просмотров"
+    return "⚠️ Внимание по каналу просмотров"
+
+
+def _build_low_posts_alert_text(
+        *,
+        client_mention: Optional[str],
+        channel_title: str,
+        remaining_post_slots: int,
+        remaining_views: int,
+) -> str:
+    title = escape((channel_title or "").strip() or "твоего канала")
+    return (
+        f"{_build_channel_alert_heading(client_mention)}\n\n"
+        f"Для {title} осталось просмотров примерно на {remaining_post_slots} поста\n"
+        f"Остаток: {remaining_views} просмотров\n\n"
+        "Если хочешь, чтобы новые посты продолжали попадать в задания без остановки, пополни лимит заранее"
+    )
+
+
+def _build_exhausted_posts_alert_text(
+        *,
+        client_mention: Optional[str],
+        channel_title: str,
+) -> str:
+    title = escape((channel_title or "").strip() or "твоего канала")
+    return (
+        f"{_build_channel_alert_heading(client_mention)}\n\n"
+        f"Для {title} просмотры закончились\n"
+        "Новые посты больше не будут попадать в задания\n\n"
+        "Пополни лимит, чтобы канал снова начал участвовать в просмотрах"
+    )
+
+
+def _send_low_posts_alert(*, user_id: int, text: str) -> None:
+    if not TELEGRAM_BOT_TOKEN:
+        return
+
+    payload = json.dumps(
+        {
+            "chat_id": int(user_id),
+            "text": text,
+            "parse_mode": "HTML",
+        },
+        ensure_ascii=False,
+    ).encode("utf-8")
+
+    request = urllib_request.Request(
+        _telegram_api_url("sendMessage"),
+        data=payload,
+        headers={"Content-Type": "application/json; charset=utf-8"},
+        method="POST",
+    )
+
+    with urllib_request.urlopen(request, timeout=15) as response:
+        response_payload = json.loads(response.read().decode("utf-8"))
+
+    if not response_payload.get("ok"):
+        raise RuntimeError(response_payload.get("description") or "Telegram API request failed")
 
 
 async def _get_user_balance_safe(db, user_id: int) -> float:
@@ -342,6 +428,45 @@ async def ingest_task_channel_post_message(
                 title=title,
                 reward=float(reward),
             )
+
+            channel = None
+            if allocated:
+                channel = await get_task_channel_by_chat_id(db, str(chat_id))
+
+        if allocated and channel:
+            client_user_id = channel["client_user_id"]
+            remaining_views = int(channel["remaining_views"] or 0)
+            views_per_post = int(channel["views_per_post"] or 0)
+            remaining_post_slots = remaining_views // views_per_post if views_per_post > 0 else 0
+            client_mention = _build_client_mention(
+                username=channel["client_username"],
+            )
+
+            if client_user_id is not None and remaining_post_slots in {0, 3}:
+                try:
+                    _send_low_posts_alert(
+                        user_id=int(client_user_id),
+                        text=(
+                            _build_exhausted_posts_alert_text(
+                                client_mention=client_mention,
+                                channel_title=channel["title"] or title or str(chat_id),
+                            )
+                            if remaining_post_slots == 0
+                            else _build_low_posts_alert_text(
+                                client_mention=client_mention,
+                                channel_title=channel["title"] or title or str(chat_id),
+                                remaining_post_slots=remaining_post_slots,
+                                remaining_views=remaining_views,
+                            )
+                        ),
+                    )
+                except (urllib_error.HTTPError, urllib_error.URLError, RuntimeError) as exc:
+                    logger.warning(
+                        "Failed to notify client about task channel stock state channel_id=%s client_user_id=%s detail=%s",
+                        channel["id"],
+                        client_user_id,
+                        exc,
+                    )
 
         return {
             "allocated": bool(allocated),

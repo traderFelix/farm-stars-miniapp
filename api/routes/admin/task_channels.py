@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends
 from api.db.connection import get_db
 from api.dependencies.internal import require_internal_token
 from api.schemas.admin.task_channels import (
+    TaskChannelClientBindRequest,
     TaskChannelCreateRequest,
     TaskChannelDetailResponse,
     TaskChannelPostsResponse,
@@ -10,6 +11,7 @@ from api.schemas.admin.task_channels import (
     TaskChannelUpdateRequest,
 )
 from api.services.admin.task_channels import (
+    bind_channel_client,
     build_channel_detail,
     create_channel,
     get_channel_posts,
@@ -51,6 +53,7 @@ async def create_task_channel_route(payload: TaskChannelCreateRequest):
             db,
             chat_id=payload.chat_id,
             title=payload.title,
+            client_user_id=payload.client_user_id,
             total_bought_views=payload.total_bought_views,
             views_per_post=payload.views_per_post,
             view_seconds=payload.view_seconds,
@@ -81,6 +84,22 @@ async def update_task_channel_params_route(
             total_bought_views=payload.total_bought_views,
             views_per_post=payload.views_per_post,
             view_seconds=payload.view_seconds,
+        )
+    finally:
+        await db.close()
+
+
+@router.post("/{channel_id}/client", response_model=TaskChannelDetailResponse)
+async def bind_task_channel_client_route(
+        channel_id: int,
+        payload: TaskChannelClientBindRequest,
+):
+    db = await get_db()
+    try:
+        return await bind_channel_client(
+            db,
+            channel_id=channel_id,
+            client_user_id=payload.client_user_id,
         )
     finally:
         await db.close()

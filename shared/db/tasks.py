@@ -3,6 +3,24 @@ from typing import Optional
 import aiosqlite
 
 
+async def _column_exists(db: aiosqlite.Connection, table_name: str, column_name: str) -> bool:
+    async with db.execute(f"PRAGMA table_info({table_name})") as cur:
+        rows = await cur.fetchall()
+
+    for row in rows:
+        name = row["name"] if isinstance(row, aiosqlite.Row) else row[1]
+        if name == column_name:
+            return True
+    return False
+
+
+async def ensure_task_channels_client_schema(db: aiosqlite.Connection) -> None:
+    if not await _column_exists(db, "task_channels", "client_user_id"):
+        await db.execute(
+            "ALTER TABLE task_channels ADD COLUMN client_user_id INTEGER"
+        )
+
+
 async def count_available_view_post_tasks_for_user(
         db: aiosqlite.Connection,
         user_id: int,
@@ -135,42 +153,52 @@ async def increment_task_post_views(
 
 
 async def list_task_channels(db: aiosqlite.Connection):
+    await ensure_task_channels_client_schema(db)
     async with db.execute(
             """
         SELECT
-            id,
-            chat_id,
+            c.id,
+            c.chat_id,
             COALESCE(title, '') AS title,
-            is_active,
-            total_bought_views,
-            views_per_post,
-            view_seconds,
-            allocated_views,
-            (total_bought_views - allocated_views) AS remaining_views,
-            created_at
-        FROM task_channels
-        ORDER BY id DESC
+            c.is_active,
+            c.total_bought_views,
+            c.views_per_post,
+            c.view_seconds,
+            c.allocated_views,
+            (c.total_bought_views - c.allocated_views) AS remaining_views,
+            c.created_at,
+            c.client_user_id,
+            u.username AS client_username,
+            u.tg_first_name AS client_first_name
+        FROM task_channels c
+        LEFT JOIN users u ON u.user_id = c.client_user_id
+        ORDER BY c.id DESC
         """
     ) as cur:
         return await cur.fetchall()
 
 
 async def get_task_channel(db: aiosqlite.Connection, channel_id: int):
+    await ensure_task_channels_client_schema(db)
     async with db.execute(
             """
         SELECT
-            id,
-            chat_id,
-            COALESCE(title, '') AS title,
-            is_active,
-            total_bought_views,
-            views_per_post,
-            view_seconds,
-            allocated_views,
-            (total_bought_views - allocated_views) AS remaining_views,
-            created_at
-        FROM task_channels
-        WHERE id = ?
+            c.id,
+            c.chat_id,
+            COALESCE(c.title, '') AS title,
+            c.is_active,
+            c.total_bought_views,
+            c.views_per_post,
+            c.view_seconds,
+            c.allocated_views,
+            (c.total_bought_views - c.allocated_views) AS remaining_views,
+            c.created_at,
+            c.client_user_id,
+            u.username AS client_username,
+            u.tg_first_name AS client_first_name
+        FROM task_channels c
+        LEFT JOIN users u ON u.user_id = c.client_user_id
+        WHERE c.id = ?
         LIMIT 1
         """,
             (int(channel_id),),
@@ -179,21 +207,26 @@ async def get_task_channel(db: aiosqlite.Connection, channel_id: int):
 
 
 async def get_task_channel_by_chat_id(db: aiosqlite.Connection, chat_id: str):
+    await ensure_task_channels_client_schema(db)
     async with db.execute(
             """
         SELECT
-            id,
-            chat_id,
-            COALESCE(title, '') AS title,
-            is_active,
-            total_bought_views,
-            views_per_post,
-            view_seconds,
-            allocated_views,
-            (total_bought_views - allocated_views) AS remaining_views,
-            created_at
-        FROM task_channels
-        WHERE chat_id = ?
+            c.id,
+            c.chat_id,
+            COALESCE(c.title, '') AS title,
+            c.is_active,
+            c.total_bought_views,
+            c.views_per_post,
+            c.view_seconds,
+            c.allocated_views,
+            (c.total_bought_views - c.allocated_views) AS remaining_views,
+            c.created_at,
+            c.client_user_id,
+            u.username AS client_username,
+            u.tg_first_name AS client_first_name
+        FROM task_channels c
+        LEFT JOIN users u ON u.user_id = c.client_user_id
+        WHERE c.chat_id = ?
         LIMIT 1
         """,
             (str(chat_id),),
@@ -205,26 +238,48 @@ async def create_task_channel(
         db: aiosqlite.Connection,
         chat_id: str,
         title: Optional[str],
+        client_user_id: Optional[int],
         total_bought_views: int,
         views_per_post: int,
         view_seconds: int,
 ) -> int:
+    await ensure_task_channels_client_schema(db)
     cur = await db.execute(
         """
         INSERT INTO task_channels (
-            chat_id, title, is_active, total_bought_views, views_per_post, view_seconds, allocated_views, created_at
+            chat_id, title, client_user_id, is_active, total_bought_views, views_per_post, view_seconds, allocated_views, created_at
         )
-        VALUES (?, ?, 1, ?, ?, ?, 0, datetime('now'))
+        VALUES (?, ?, ?, 1, ?, ?, ?, 0, datetime('now'))
         """,
         (
             str(chat_id),
             title,
+            int(client_user_id) if client_user_id is not None else None,
             int(total_bought_views),
             int(views_per_post),
             int(view_seconds),
         ),
     )
     return int(cur.lastrowid)
+
+
+async def set_task_channel_client(
+        db: aiosqlite.Connection,
+        channel_id: int,
+        client_user_id: Optional[int],
+) -> None:
+    await ensure_task_channels_client_schema(db)
+    await db.execute(
+        """
+        UPDATE task_channels
+        SET client_user_id = ?
+        WHERE id = ?
+        """,
+        (
+            int(client_user_id) if client_user_id is not None else None,
+            int(channel_id),
+        ),
+    )
 
 
 async def set_task_channel_active(db: aiosqlite.Connection, channel_id: int, is_active: int) -> None:

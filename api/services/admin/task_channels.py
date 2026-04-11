@@ -7,14 +7,17 @@ from fastapi import HTTPException
 from shared.db.common import tx
 from shared.db.tasks import (
     create_task_channel,
+    ensure_task_channels_client_schema,
     get_task_channel,
     get_task_channel_allocated_views,
     list_task_channels,
     list_task_posts_by_channel,
+    set_task_channel_client,
     set_task_channel_active,
     task_channel_stats,
     update_task_channel_params,
 )
+from shared.db.users import get_user_by_id
 
 
 def _serialize_channel(row: Any) -> dict[str, Any]:
@@ -22,6 +25,9 @@ def _serialize_channel(row: Any) -> dict[str, Any]:
         "id": int(row["id"]),
         "chat_id": str(row["chat_id"]),
         "title": row["title"] or "",
+        "client_user_id": int(row["client_user_id"]) if row["client_user_id"] is not None else None,
+        "client_username": row["client_username"] or None,
+        "client_first_name": row["client_first_name"] or None,
         "is_active": bool(row["is_active"] or 0),
         "total_bought_views": int(row["total_bought_views"] or 0),
         "views_per_post": int(row["views_per_post"] or 0),
@@ -86,6 +92,7 @@ async def build_channel_detail(
         db: aiosqlite.Connection,
         channel_id: int,
 ) -> dict[str, Any]:
+    await ensure_task_channels_client_schema(db)
     row = await _get_channel_row(db, int(channel_id))
     stats = await task_channel_stats(db, int(channel_id))
     return {
@@ -95,6 +102,7 @@ async def build_channel_detail(
 
 
 async def list_channels(db: aiosqlite.Connection) -> dict[str, Any]:
+    await ensure_task_channels_client_schema(db)
     rows = await list_task_channels(db)
     return {
         "items": [_serialize_channel(row) for row in rows],
@@ -156,6 +164,7 @@ async def create_channel(
         *,
         chat_id: str,
         title: Optional[str],
+        client_user_id: Optional[int],
         total_bought_views: int,
         views_per_post: int,
         view_seconds: int,
@@ -166,12 +175,16 @@ async def create_channel(
     view_seconds = _validate_positive_int(view_seconds, field_name="view_seconds")
     _validate_views_ratio(total_bought_views, views_per_post)
 
+    if client_user_id is not None and not await get_user_by_id(db, int(client_user_id)):
+        raise HTTPException(status_code=404, detail="Клиент не найден")
+
     try:
         async with tx(db):
             channel_id = await create_task_channel(
                 db=db,
                 chat_id=chat_id,
                 title=title,
+                client_user_id=client_user_id,
                 total_bought_views=total_bought_views,
                 views_per_post=views_per_post,
                 view_seconds=view_seconds,
@@ -181,6 +194,23 @@ async def create_channel(
             status_code=409,
             detail="Канал с таким chat_id уже существует.",
         ) from e
+
+    return await build_channel_detail(db, int(channel_id))
+
+
+async def bind_channel_client(
+        db: aiosqlite.Connection,
+        channel_id: int,
+        *,
+        client_user_id: int,
+) -> dict[str, Any]:
+    await _get_channel_row(db, int(channel_id))
+
+    if not await get_user_by_id(db, int(client_user_id)):
+        raise HTTPException(status_code=404, detail="Клиент не найден")
+
+    async with tx(db):
+        await set_task_channel_client(db, int(channel_id), int(client_user_id))
 
     return await build_channel_detail(db, int(channel_id))
 

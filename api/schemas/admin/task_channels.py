@@ -7,6 +7,9 @@ class TaskChannelItem(BaseModel):
     id: int
     chat_id: str
     title: str = ""
+    client_user_id: Optional[int] = None
+    client_username: Optional[str] = None
+    client_first_name: Optional[str] = None
     is_active: bool
     total_bought_views: int
     views_per_post: int
@@ -50,6 +53,7 @@ class TaskChannelPostsResponse(BaseModel):
 class TaskChannelCreateRequest(BaseModel):
     chat_id: str
     title: Optional[str] = None
+    client_user_id: Optional[int] = None
     total_bought_views: int
     views_per_post: int
     view_seconds: int
@@ -59,3 +63,7 @@ class TaskChannelUpdateRequest(BaseModel):
     total_bought_views: int
     views_per_post: int
     view_seconds: int
+
+
+class TaskChannelClientBindRequest(BaseModel):
+    client_user_id: int

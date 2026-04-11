@@ -245,6 +245,7 @@ def admin_task_channel_card_kb(channel_id: int, is_active: bool) -> InlineKeyboa
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="📊 Статус по постам", callback_data=f"adm:tch:posts:{channel_id}")],
+            [InlineKeyboardButton(text="👤 Привязать клиента", callback_data=f"adm:tch:client:{channel_id}")],
             [InlineKeyboardButton(text="⚙️ Редактировать параметры", callback_data=f"adm:tch:edit:{channel_id}")],
             [InlineKeyboardButton(
                 text="🔴 Отключить канал" if is_active else "🟢 Включить канал",
