@@ -24,7 +24,6 @@ export default function WithdrawalPanel() {
 
     const [submitting, setSubmitting] = useState(false);
     const [message, setMessage] = useState<string>("");
-
     async function loadPanelData(options?: { preserveMessage?: boolean }) {
         try {
             setLoading(true);
