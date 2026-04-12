@@ -1,7 +1,6 @@
 import asyncio
 import logging
 
-from pathlib import Path
 from typing import Any, Optional, TypedDict, Union
 
 from aiogram import Bot, F, Router
@@ -36,6 +35,7 @@ from bot.pending_channel_posts import (
     enqueue_task_channel_post_for_retry,
     flush_pending_task_channel_posts,
 )
+from shared.assets import MINING_HERO_BANNER_PATH
 from shared.config import ROLE_CLIENT, ROLE_PARTNER
 from shared.formatting import fmt_stars
 
@@ -53,13 +53,7 @@ START_TEXT = (
     "🤝 Качай реферальный бонус\n"
     "🚀 И выводи заработанное"
 )
-START_VISUAL_PATH = (
-    Path(__file__).resolve().parents[2]
-    / "web"
-    / "public"
-    / "hero"
-    / "mining-hero-banner.png"
-)
+START_VISUAL_PATH = MINING_HERO_BANNER_PATH
 
 
 class TelegramUserContext(TypedDict):
