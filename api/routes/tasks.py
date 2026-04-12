@@ -27,6 +27,7 @@ from api.services.tasks import (
     open_task_for_user,
 )
 from api.services.users import get_bot_main_menu_by_user_id
+from shared.assets import MINING_HERO_BANNER_PATH
 from shared.config import TELEGRAM_BOT_TOKEN
 
 router = APIRouter(
@@ -34,13 +35,7 @@ router = APIRouter(
     tags=["tasks"],
 )
 
-TASKS_BANNER_PATH = (
-    Path(__file__).resolve().parents[2]
-    / "web"
-    / "public"
-    / "hero"
-    / "mining-hero-banner.png"
-)
+TASKS_BANNER_PATH = MINING_HERO_BANNER_PATH
 
 
 async def _get_next_task_or_404(user_id: int) -> TaskListItem:
