@@ -1,0 +1,71 @@
+from typing import Literal, Optional
+
+from pydantic import BaseModel, Field
+
+
+TaskType = Literal["view_post"]
+TaskStatus = Literal["available", "in_progress", "completed", "blocked"]
+TaskCheckStatus = Literal["completed", "already_completed", "too_early", "rejected"]
+
+
+class TaskListItem(BaseModel):
+    id: int
+    type: TaskType = "view_post"
+    title: str
+    description: Optional[str] = None
+    reward: float
+
+    status: TaskStatus = "available"
+
+    chat_id: Optional[str] = None
+    channel_post_id: Optional[int] = None
+    post_url: Optional[str] = None
+
+    already_completed: bool = False
+    can_claim: bool = False
+    hold_seconds: int = 0
+
+
+class TaskOpenRequest(BaseModel):
+    source: Optional[str] = Field(default="miniapp")
+
+
+class TaskOpenResponse(BaseModel):
+    ok: bool
+    task_id: int
+    message: Optional[str] = None
+    opened_at: int
+    hold_seconds: int = 0
+    can_check_at: int = 0
+
+    chat_id: Optional[str] = None
+    channel_post_id: Optional[int] = None
+    post_url: Optional[str] = None
+
+    session_id: Optional[str] = None
+
+
+class TaskCheckRequest(BaseModel):
+    session_id: Optional[str] = None
+
+
+class TaskCheckResponse(BaseModel):
+    ok: bool
+    task_id: int
+    status: TaskCheckStatus
+    message: str
+
+    reward_granted: float = 0
+    new_balance: float = 0
+    task_completed: bool = False
+
+
+class TaskChannelPostIngestRequest(BaseModel):
+    chat_id: str
+    channel_post_id: int
+    title: Optional[str] = None
+    reward: float = 0.01
+
+
+class TaskChannelPostIngestResponse(BaseModel):
+    allocated: bool

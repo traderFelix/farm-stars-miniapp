@@ -2,4 +2,3 @@ aiogram==3.10
 aiofiles==23.2.1
 matplotlib
 python-dotenv
-aiosqlite

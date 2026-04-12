@@ -1,7 +1,7 @@
 from typing import Any
 
 
-def format_admin_user_profile_card(profile: dict[str, Any]) -> str:
+def format_user_profile_card(profile: dict[str, Any]) -> str:
     user_id = profile["user_id"]
     username = profile.get("username")
     balance = float(profile.get("balance") or 0)

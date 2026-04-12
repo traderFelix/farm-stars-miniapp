@@ -1,70 +1,37 @@
-from aiogram.types import InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
+from aiogram.types import (
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    WebAppInfo,
+)
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-from shared.config import CHANNEL_LINK, ROLE_CLIENT, ROLE_PARTNER, ROLE_ADMIN
-
-def bottom_menu_kb() -> ReplyKeyboardMarkup:
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="🏠 Главное меню")]
-        ],
-        resize_keyboard=True,
-        one_time_keyboard=False,
-        selective=False,
-        input_field_placeholder=""
-    )
+from shared.config import WEB_ORIGIN_NGROK, ROLE_ADMIN, ROLE_CLIENT, ROLE_PARTNER
 
 # ---------- USER KEYBOARDS ----------
 
-def subscribe_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="📢 Подписаться", url=CHANNEL_LINK)],
-            [InlineKeyboardButton(text="✅ Проверить подписку", callback_data="check_sub")],
-        ]
+
+def _miniapp_button() -> InlineKeyboardButton:
+    if not WEB_ORIGIN_NGROK:
+        raise RuntimeError("Environment variable WEB_ORIGIN_NGROK is required")
+
+    return InlineKeyboardButton(
+        text="🚀 Открыть приложение",
+        web_app=WebAppInfo(url=WEB_ORIGIN_NGROK),
     )
+
 
 def main_menu(role_level: int = 0) -> InlineKeyboardMarkup:
     rows = [
-        [InlineKeyboardButton(text="🎁 Ежедневный бонус", callback_data="daily_checkin")],
-        [InlineKeyboardButton(text="🧸 Награда за конкурс", callback_data="claim")],
-        [InlineKeyboardButton(text="📋 Задания", callback_data="tasks")],
-        [InlineKeyboardButton(text="👛 Вывод", callback_data="withdraw")],
-        [InlineKeyboardButton(text="🫂 Пригласить друга", callback_data="referrals")],
+        [_miniapp_button()],
+        [InlineKeyboardButton(text="👁 Просмотр постов", callback_data="tasks")],
     ]
     if role_level >= ROLE_CLIENT:
         rows.append([InlineKeyboardButton(text="🤝 Кабинет клиента", callback_data="client:home")])
     if role_level >= ROLE_PARTNER:
-        rows.append([InlineKeyboardButton(text="💼 Кабинет парнера", callback_data="partner:home")])
+        rows.append([InlineKeyboardButton(text="💼 Кабинет партнера", callback_data="partner:home")])
     if role_level >= ROLE_ADMIN:
         rows.append([InlineKeyboardButton(text="🔐 Админка", callback_data="adm:home")])
 
     return InlineKeyboardMarkup(inline_keyboard=rows)
-
-def referrals_kb() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="⬅ Назад", callback_data="back")]
-        ]
-    )
-
-def withdraw_menu_kb():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="➕ Создать заявку", callback_data="withdraw:new")],
-        [InlineKeyboardButton(text="📜 Мои заявки", callback_data="withdraw:my")],
-        [InlineKeyboardButton(text="⬅ Назад", callback_data="back")],
-    ])
-
-def withdraw_back_kb():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="⬅ Назад", callback_data="withdraw")],
-    ])
-
-def withdraw_method_kb():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="⭐ Вывести звезды", callback_data="withdraw:method:stars")],
-        [InlineKeyboardButton(text="🔄 Обменять звезды на TON", callback_data="withdraw:method:ton")],
-        [InlineKeyboardButton(text="⬅ Назад", callback_data="withdraw")],
-    ])
 
 def tasks_menu() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
@@ -104,7 +71,15 @@ def admin_menu_kb() -> InlineKeyboardMarkup:
 
 def admin_withdraw_list_kb(rows):
     kb = []
-    for wid, user_id, username, amount, method, wallet, status, created_at in rows:
+    for row in rows:
+        if isinstance(row, dict):
+            wid = int(row["id"])
+            user_id = int(row["user_id"])
+            username = row.get("username")
+            amount = float(row.get("amount") or 0)
+            method = row.get("method")
+        else:
+            wid, user_id, username, amount, method, wallet, status, created_at = row
         name = f"@{username}" if username else f"id:{user_id}"
         kb.append([InlineKeyboardButton(
             text=f"#{wid} {name} — {float(amount):g}⭐ ({method})",
@@ -121,9 +96,7 @@ def admin_withdraw_actions_kb(withdrawal_id: int):
         [InlineKeyboardButton(text="⬅ Назад", callback_data="adm:wd:list")],
     ])
 
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-
-def admin_user_kb(user_id: int) -> InlineKeyboardMarkup:
+def user_actions_kb(user_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="📊 Статистика ⭐", callback_data=f"adm:user:stats:{user_id}",)],
@@ -154,7 +127,13 @@ def _status_icon(status: str) -> str:
 
 def campaigns_list_kb(rows) -> InlineKeyboardMarkup:
     keyboard = []
-    for key, amount, status, created_at in rows[:50]:
+    for row in rows[:50]:
+        if isinstance(row, dict):
+            key = row["campaign_key"]
+            amount = row.get("reward_amount") or 0
+            status = row.get("status") or "draft"
+        else:
+            key, amount, status, created_at = row
         icon = _status_icon(str(status))
         keyboard.append([
             InlineKeyboardButton(
@@ -168,7 +147,12 @@ def campaigns_list_kb(rows) -> InlineKeyboardMarkup:
 
 def stats_list_kb(rows) -> InlineKeyboardMarkup:
     keyboard = []
-    for key, amount, status, created_at in rows:
+    for row in rows:
+        if isinstance(row, dict):
+            key = row["campaign_key"]
+            status = row.get("status") or "draft"
+        else:
+            key, amount, status, created_at = row
         icon = _status_icon(str(status))
         keyboard.append([
             InlineKeyboardButton(
@@ -220,7 +204,7 @@ def campaign_created_kb(key: str) -> InlineKeyboardMarkup:
         ]
     )
 
-def admin_user_details_kb(user_id: int) -> InlineKeyboardMarkup:
+def user_details_kb(user_id: int) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.button(text="👤 Детали пользователя", callback_data=f"adm:user:details:{user_id}")
     builder.button(text="⬅️ Назад", callback_data="adm:users")
@@ -235,19 +219,6 @@ def admin_fee_refund_kb():
             [InlineKeyboardButton(text="⬅ Назад", callback_data="adm:back")],
         ]
     )
-
-def withdraw_stars_amount_kb():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="100⭐", callback_data="withdraw:stars_amount:100"),
-            InlineKeyboardButton(text="200⭐", callback_data="withdraw:stars_amount:200"),
-            InlineKeyboardButton(text="500⭐", callback_data="withdraw:stars_amount:500"),
-            InlineKeyboardButton(text="1000⭐", callback_data="withdraw:stars_amount:1000"),
-        ],
-        [
-            InlineKeyboardButton(text="⬅ Назад", callback_data="withdraw:new"),
-        ],
-    ])
 
 def admin_task_channels_kb(rows) -> InlineKeyboardMarkup:
     kb = []
@@ -274,6 +245,7 @@ def admin_task_channel_card_kb(channel_id: int, is_active: bool) -> InlineKeyboa
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="📊 Статус по постам", callback_data=f"adm:tch:posts:{channel_id}")],
+            [InlineKeyboardButton(text="👤 Привязать клиента", callback_data=f"adm:tch:client:{channel_id}")],
             [InlineKeyboardButton(text="⚙️ Редактировать параметры", callback_data=f"adm:tch:edit:{channel_id}")],
             [InlineKeyboardButton(
                 text="🔴 Отключить канал" if is_active else "🟢 Включить канал",
@@ -292,50 +264,3 @@ def admin_growth_photo_kb(origin_message_id: int) -> InlineKeyboardMarkup:
             )]
         ]
     )
-
-def daily_checkin_kb(
-        current_day: int,
-        already_claimed_today: bool,
-) -> InlineKeyboardMarkup:
-    rows = []
-    day = 1
-
-    for _ in range(5):
-        row = []
-        for _ in range(6):
-            if day < current_day or (day == current_day and already_claimed_today):
-                text = f"✅ {day}"
-            elif day == current_day:
-                text = f"🎁 {day}"
-            else:
-                text = str(day)
-
-            row.append(
-                InlineKeyboardButton(
-                    text=text,
-                    callback_data="daily_checkin:noop",
-                )
-            )
-            day += 1
-        rows.append(row)
-
-    if already_claimed_today:
-        rows.append([
-            InlineKeyboardButton(
-                text="✅ Бонус получен",
-                callback_data="daily_checkin:noop",
-            )
-        ])
-    else:
-        rows.append([
-            InlineKeyboardButton(
-                text="🎁 Забрать бонус",
-                callback_data="daily_checkin:claim",
-            )
-        ])
-
-    rows.append([
-        InlineKeyboardButton(text="⬅️ Назад", callback_data="back")
-    ])
-
-    return InlineKeyboardMarkup(inline_keyboard=rows)

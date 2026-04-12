@@ -38,5 +38,4 @@ ngrok http 3000
 ```bash
 cd web
 npm run build
-npm run start
 ```

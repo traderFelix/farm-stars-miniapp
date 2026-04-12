@@ -4,6 +4,7 @@ class CampaignCreate(StatesGroup):
     key = State()
     amount = State()
     title = State()
+    post_url = State()
 
 class AddWinners(StatesGroup):
     usernames = State()
@@ -17,16 +18,12 @@ class UserLookup(StatesGroup):
 class AdminAdjust(StatesGroup):
     amount = State()
 
-class WithdrawCreate(StatesGroup):
-    amount = State()
-    wallet = State()
-    fee_payment = State()
-
 class AdminRefundFee(StatesGroup):
     waiting_manual_data = State()
 
 class TaskChannelCreate(StatesGroup):
     chat_id = State()
+    client_ref = State()
     total_bought_views = State()
     views_per_post = State()
     view_seconds = State()
@@ -35,3 +32,7 @@ class TaskChannelEdit(StatesGroup):
     total_bought_views = State()
     views_per_post = State()
     view_seconds = State()
+
+
+class TaskChannelBindClient(StatesGroup):
+    client_ref = State()
