@@ -196,6 +196,21 @@ class UsersApi(ApiSection):
             },
         )
 
+    async def get_risk(
+            self,
+            user_id: int,
+            *,
+            page: int = 0,
+            page_size: int = 20,
+    ) -> JsonDict:
+        return await self._get(
+            f"/admin/users/{int(user_id)}/risk",
+            params={
+                "page": int(page),
+                "page_size": int(page_size),
+            },
+        )
+
     async def set_role(self, user_id: int, role_level: int) -> JsonDict:
         return await self._post(
             f"/admin/users/{int(user_id)}/role",
@@ -560,6 +575,19 @@ async def get_user_ledger_page(
     )
 
 
+async def get_user_risk_page(
+        user_id: int,
+        *,
+        page: int = 0,
+        page_size: int = 20,
+) -> JsonDict:
+    return await api_client.users.get_risk(
+        user_id,
+        page=page,
+        page_size=page_size,
+    )
+
+
 async def lookup_user(query: str) -> JsonDict:
     return await api_client.users.lookup(query)
 
@@ -833,6 +861,7 @@ __all__ = [
     "get_user_profile",
     "get_user_stats",
     "get_user_ledger_page",
+    "get_user_risk_page",
     "lookup_user",
     "set_user_role",
     "adjust_user_balance",

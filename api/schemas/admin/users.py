@@ -9,6 +9,7 @@ class ProfileResponse(BaseModel):
     first_name: Optional[str] = None
     last_name: Optional[str] = None
     balance: float
+    risk_score: float = 0
     role_level: int
     role: str
     activity_index: float
@@ -64,3 +65,21 @@ class UserLedgerResponse(BaseModel):
     page_size: int
     has_next: bool
     items: list[UserLedgerEntry]
+
+
+class UserRiskEventEntry(BaseModel):
+    id: int
+    created_at: str
+    delta: float
+    score_after: float
+    reason: Optional[str] = None
+    source: Optional[str] = None
+    meta: Optional[str] = None
+
+
+class UserRiskEventsResponse(BaseModel):
+    user_id: int
+    page: int
+    page_size: int
+    has_next: bool
+    items: list[UserRiskEventEntry]

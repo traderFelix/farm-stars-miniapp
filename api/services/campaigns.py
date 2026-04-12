@@ -8,13 +8,15 @@ from urllib import parse as urllib_parse
 from urllib import request as urllib_request
 
 from api.db.connection import get_db
+from api.security.request_fingerprint import RequestFingerprint
+from api.services.antiabuse import log_user_action_with_fingerprint
 from api.schemas.campaigns import CampaignClaimResponse, CampaignItem, CampaignListResponse
 from shared.config import CHANNEL_ID, CHANNEL_LINK, TELEGRAM_BOT_TOKEN
-from shared.db.abuse import count_recent_abuse_events, log_abuse_event
+from shared.db.abuse import count_recent_abuse_events
 from shared.db.campaigns import get_campaign as get_shared_campaign
 from shared.db.common import tx
 from shared.db.ledger import apply_balance_delta
-from shared.db.users import get_balance, get_user_by_id, register_user
+from shared.db.users import add_user_risk_score, get_balance, get_user_by_id, register_user
 
 
 async def _get_campaign(db, campaign_key: str):
@@ -243,6 +245,7 @@ async def claim_campaign_reward_for_user(
         username: Optional[str] = None,
         first_name: Optional[str] = None,
         last_name: Optional[str] = None,
+        fingerprint: Optional[RequestFingerprint] = None,
 ) -> CampaignClaimResponse:
     user_id = int(user_id)
     normalized_campaign_key = (campaign_key or "").strip()
@@ -277,12 +280,27 @@ async def claim_campaign_reward_for_user(
                 user_row["tg_last_name"] if user_row else None
             )
 
-            await log_abuse_event(db, user_id, "claim_click")
+            await log_user_action_with_fingerprint(
+                db,
+                user_id=user_id,
+                action="claim_click",
+                fingerprint=fingerprint,
+                entity_type="campaign",
+                entity_id=normalized_campaign_key,
+            )
             await register_user(db, user_id, resolved_username, resolved_first_name, resolved_last_name)
 
             row = await _get_campaign(db, normalized_campaign_key)
             if not row:
-                await log_abuse_event(db, user_id, "claim_fail")
+                await log_user_action_with_fingerprint(
+                    db,
+                    user_id=user_id,
+                    action="claim_fail",
+                    fingerprint=fingerprint,
+                    entity_type="campaign",
+                    entity_id=normalized_campaign_key,
+                    meta="not_found",
+                )
                 return CampaignClaimResponse(
                     ok=False,
                     message="Конкурс не найден",
@@ -294,7 +312,15 @@ async def claim_campaign_reward_for_user(
             title = row["title"]
             status = row["status"]
             if status != "active":
-                await log_abuse_event(db, user_id, "claim_fail")
+                await log_user_action_with_fingerprint(
+                    db,
+                    user_id=user_id,
+                    action="claim_fail",
+                    fingerprint=fingerprint,
+                    entity_type="campaign",
+                    entity_id=normalized_campaign_key,
+                    meta="inactive",
+                )
                 return CampaignClaimResponse(
                     ok=False,
                     message="Этот конкурс сейчас неактивен",
@@ -306,7 +332,24 @@ async def claim_campaign_reward_for_user(
                 await _attach_winner_user_id(db, normalized_campaign_key, resolved_username, user_id)
 
             if not await _is_winner(db, normalized_campaign_key, user_id, resolved_username):
-                await log_abuse_event(db, user_id, "claim_fail")
+                await log_user_action_with_fingerprint(
+                    db,
+                    user_id=user_id,
+                    action="claim_fail",
+                    fingerprint=fingerprint,
+                    entity_type="campaign",
+                    entity_id=normalized_campaign_key,
+                    meta="not_winner",
+                )
+                if recent_claim_fails >= 5:
+                    await add_user_risk_score(
+                        db,
+                        user_id,
+                        12,
+                        "Много неудачных попыток клейма конкурсов",
+                        source="campaigns",
+                        meta=f"campaign={normalized_campaign_key}",
+                    )
                 return CampaignClaimResponse(
                     ok=False,
                     message="Тебя нет в списке победителей этого конкурса",
@@ -317,7 +360,15 @@ async def claim_campaign_reward_for_user(
             try:
                 await _add_claim(db, user_id, normalized_campaign_key, reward_amount)
             except Exception:
-                await log_abuse_event(db, user_id, "claim_fail")
+                await log_user_action_with_fingerprint(
+                    db,
+                    user_id=user_id,
+                    action="claim_fail",
+                    fingerprint=fingerprint,
+                    entity_type="campaign",
+                    entity_id=normalized_campaign_key,
+                    meta="already_claimed",
+                )
                 return CampaignClaimResponse(
                     ok=False,
                     message="Награда по этому конкурсу уже получена",

@@ -12,7 +12,39 @@ from shared.db.common import (
 from shared.formatting import fmt_stars
 from shared.config import (
     OWNER_ID, ADMIN_IDS, ROLE_USER, ROLE_CLIENT, ROLE_PARTNER, ROLE_ADMIN, ROLE_OWNER,
+    RISK_SCORE_SUSPICIOUS_THRESHOLD,
 )
+
+
+async def _column_exists(db: aiosqlite.Connection, table_name: str, column_name: str) -> bool:
+    async with db.execute(f"PRAGMA table_info({table_name})") as cur:
+        rows = await cur.fetchall()
+
+    for row in rows:
+        name = row["name"] if isinstance(row, aiosqlite.Row) else row[1]
+        if name == column_name:
+            return True
+    return False
+
+
+async def ensure_users_risk_schema(db: aiosqlite.Connection) -> None:
+    if not await _column_exists(db, "users", "risk_score"):
+        await db.execute("ALTER TABLE users ADD COLUMN risk_score REAL NOT NULL DEFAULT 0")
+
+    await db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS risk_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            delta REAL NOT NULL,
+            score_after REAL NOT NULL DEFAULT 0,
+            reason TEXT,
+            source TEXT,
+            meta TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+        """
+    )
 
 def normalize_role_level(role_level: int) -> int:
     value = int(role_level)
@@ -52,10 +84,12 @@ def has_role_level(current_level: int, required_level: int) -> bool:
 
 
 async def get_user_by_id(db: aiosqlite.Connection, user_id: int):
+    await ensure_users_risk_schema(db)
     async with db.execute(
             """
         SELECT user_id, username, tg_first_name, tg_last_name, balance, role_level,
-               is_suspicious, suspicious_reason, created_at, last_seen_at
+               is_suspicious, suspicious_reason, COALESCE(risk_score, 0) AS risk_score,
+               created_at, last_seen_at
         FROM users
         WHERE user_id = ?
         """,
@@ -91,6 +125,7 @@ async def register_user(
         first_name: Optional[str] = None,
         last_name: Optional[str] = None,
 ) -> None:
+    await ensure_users_risk_schema(db)
     u = (username or "").strip().lstrip("@") or None
     fn = (first_name or "").strip() or None
     ln = (last_name or "").strip() or None
@@ -224,9 +259,10 @@ async def get_balance(db: aiosqlite.Connection, user_id: int) -> float:
 
 
 async def get_user_admin_details(db: aiosqlite.Connection, user_id: int):
+    await ensure_users_risk_schema(db)
     async with db.execute(
             """
-        SELECT user_id, username, balance, is_suspicious, suspicious_reason
+        SELECT user_id, username, balance, is_suspicious, suspicious_reason, COALESCE(risk_score, 0) AS risk_score
         FROM users
         WHERE user_id = ?
         """,
@@ -264,6 +300,7 @@ async def build_user_profile(db: aiosqlite.Connection, user_id: int) -> Optional
         "first_name": row["tg_first_name"],
         "last_name": row["tg_last_name"],
         "balance": float(row["balance"] or 0),
+        "risk_score": float(row["risk_score"] or 0),
         "role_level": int(role_level),
         "role": role_title_from_level(role_level),
         "activity_index": await get_activity_index(db, user_id),
@@ -419,10 +456,16 @@ async def user_created_hours_ago(db: aiosqlite.Connection, user_id: int) -> floa
 
 
 async def mark_user_suspicious(db, user_id: int, reason: str):
-    row = await db.execute_fetchone(
-        "SELECT is_suspicious, suspicious_reason FROM users WHERE user_id = ?",
-        (user_id,),
-    )
+    await ensure_users_risk_schema(db)
+    return await _mark_user_suspicious(db, user_id, reason, commit=True)
+
+
+async def _mark_user_suspicious(db, user_id: int, reason: str, *, commit: bool) -> None:
+    async with db.execute(
+            "SELECT is_suspicious, suspicious_reason FROM users WHERE user_id = ?",
+            (user_id,),
+    ) as cur:
+        row = await cur.fetchone()
     if not row:
         return
 
@@ -444,10 +487,12 @@ async def mark_user_suspicious(db, user_id: int, reason: str):
         """,
         (new_reason, user_id),
     )
-    await db.commit()
+    if commit:
+        await db.commit()
 
 
 async def clear_user_suspicious(db, user_id: int):
+    await ensure_users_risk_schema(db)
     await db.execute(
         """
         UPDATE users
@@ -458,6 +503,89 @@ async def clear_user_suspicious(db, user_id: int):
         (user_id,),
     )
     await db.commit()
+
+
+async def get_user_risk_score(db: aiosqlite.Connection, user_id: int) -> float:
+    await ensure_users_risk_schema(db)
+    async with db.execute(
+            "SELECT COALESCE(risk_score, 0) AS risk_score FROM users WHERE user_id = ?",
+            (int(user_id),),
+    ) as cur:
+        row = await cur.fetchone()
+    return float(row["risk_score"] or 0.0) if row else 0.0
+
+
+async def add_user_risk_score(
+        db: aiosqlite.Connection,
+        user_id: int,
+        delta: float,
+        reason: str,
+        *,
+        source: Optional[str] = None,
+        meta: Optional[str] = None,
+        suspicious_threshold: float = RISK_SCORE_SUSPICIOUS_THRESHOLD,
+) -> float:
+    await ensure_users_risk_schema(db)
+    delta_value = float(delta)
+    if delta_value == 0:
+        return await get_user_risk_score(db, int(user_id))
+
+    cur = await db.execute(
+        """
+        UPDATE users
+        SET risk_score = MAX(COALESCE(risk_score, 0) + ?, 0)
+        WHERE user_id = ?
+        """,
+        (delta_value, int(user_id)),
+    )
+    if cur.rowcount != 1:
+        return 0.0
+
+    current_score = await get_user_risk_score(db, int(user_id))
+    await db.execute(
+        """
+        INSERT INTO risk_events (user_id, delta, score_after, reason, source, meta)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (
+            int(user_id),
+            delta_value,
+            float(current_score),
+            reason,
+            source,
+            meta,
+        ),
+    )
+    if current_score >= float(suspicious_threshold):
+        await _mark_user_suspicious(
+            db,
+            int(user_id),
+            f"Автофлаг риска: {reason}",
+            commit=False,
+        )
+
+    return current_score
+
+
+async def list_user_risk_events(
+        db: aiosqlite.Connection,
+        user_id: int,
+        *,
+        limit: int,
+        offset: int,
+):
+    await ensure_users_risk_schema(db)
+    async with db.execute(
+            """
+        SELECT id, delta, score_after, reason, source, meta, created_at
+        FROM risk_events
+        WHERE user_id = ?
+        ORDER BY datetime(created_at) DESC, id DESC
+        LIMIT ? OFFSET ?
+        """,
+            (int(user_id), int(limit), int(offset)),
+    ) as cur:
+        return await cur.fetchall()
 
 
 def _build_daily_checkin_state(
@@ -629,19 +757,6 @@ async def claim_daily_checkin(
         )
 
         return True, text, balance
-
-
-async def _column_exists(db: aiosqlite.Connection, table_name: str, column_name: str) -> bool:
-    async with db.execute(f"PRAGMA table_info({table_name})") as cur:
-        rows = await cur.fetchall()
-
-    for row in rows:
-        name = row["name"] if isinstance(row, aiosqlite.Row) else row[1]
-        if name == column_name:
-            return True
-    return False
-
-
 async def ensure_users_role_schema(db: aiosqlite.Connection) -> None:
     if not await _column_exists(db, "users", "role_level"):
         await db.execute(

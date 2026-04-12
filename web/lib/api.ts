@@ -1,4 +1,5 @@
 const ACCESS_TOKEN_KEY = "farmstars_access_token";
+const CLIENT_SESSION_KEY = "farmstars_client_session";
 
 export type TelegramAuthResponse = {
     ok: boolean;
@@ -180,6 +181,23 @@ export function clearAccessToken(): void {
     localStorage.removeItem(ACCESS_TOKEN_KEY);
 }
 
+function getClientSessionId(): string | null {
+    if (!isBrowser()) return null;
+
+    const existing = localStorage.getItem(CLIENT_SESSION_KEY);
+    if (existing) {
+        return existing;
+    }
+
+    const nextValue =
+        typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+            ? crypto.randomUUID()
+            : `sess_${Math.random().toString(36).slice(2)}_${Date.now()}`;
+
+    localStorage.setItem(CLIENT_SESSION_KEY, nextValue);
+    return nextValue;
+}
+
 function buildHeaders(auth: boolean, hasBody: boolean): HeadersInit {
     const headers: HeadersInit = {};
 
@@ -192,6 +210,11 @@ function buildHeaders(auth: boolean, hasBody: boolean): HeadersInit {
         if (token) {
             headers["Authorization"] = `Bearer ${token}`;
         }
+    }
+
+    const sessionId = getClientSessionId();
+    if (sessionId) {
+        headers["X-Client-Session"] = sessionId;
     }
 
     return headers;

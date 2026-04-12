@@ -1,7 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from typing import Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
 from api.dependencies.auth import get_current_user_id
 from api.dependencies.internal import require_internal_token
+from api.security.request_fingerprint import build_request_fingerprint
 from api.schemas.withdrawals import (
     WithdrawalEligibilityResponse,
     WithdrawalCreateRequest,
@@ -20,12 +23,30 @@ from api.services.withdrawals import (
 router = APIRouter(prefix="/withdrawals", tags=["withdrawals"])
 
 
-async def _create_withdrawal(user_id: int, payload: WithdrawalCreateRequest) -> WithdrawalCreateResponse:
-    return await create_withdrawal_for_user(user_id, payload)
+async def _create_withdrawal(
+        user_id: int,
+        payload: WithdrawalCreateRequest,
+        *,
+        request: Optional[Request] = None,
+) -> WithdrawalCreateResponse:
+    return await create_withdrawal_for_user(
+        user_id,
+        payload,
+        fingerprint=build_request_fingerprint(request) if request is not None else None,
+    )
 
 
-async def _preview_withdrawal(user_id: int, payload: WithdrawalPreviewRequest) -> WithdrawalPreviewResponse:
-    return await preview_withdrawal_for_user(user_id, payload)
+async def _preview_withdrawal(
+        user_id: int,
+        payload: WithdrawalPreviewRequest,
+        *,
+        request: Optional[Request] = None,
+) -> WithdrawalPreviewResponse:
+    return await preview_withdrawal_for_user(
+        user_id,
+        payload,
+        fingerprint=build_request_fingerprint(request) if request is not None else None,
+    )
 
 
 async def _get_my_withdrawals(user_id: int, limit: int) -> WithdrawalListResponse:
@@ -42,10 +63,11 @@ async def get_withdrawal_eligibility(
 @router.post("", response_model=WithdrawalCreateResponse)
 async def create_withdrawal(
         payload: WithdrawalCreateRequest,
+        request: Request,
         user_id: int = Depends(get_current_user_id),
 ) -> WithdrawalCreateResponse:
     try:
-        return await _create_withdrawal(user_id, payload)
+        return await _create_withdrawal(user_id, payload, request=request)
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -61,10 +83,11 @@ async def create_withdrawal(
 @router.post("/preview", response_model=WithdrawalPreviewResponse)
 async def preview_withdrawal(
         payload: WithdrawalPreviewRequest,
+        request: Request,
         user_id: int = Depends(get_current_user_id),
 ) -> WithdrawalPreviewResponse:
     try:
-        return await _preview_withdrawal(user_id, payload)
+        return await _preview_withdrawal(user_id, payload, request=request)
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

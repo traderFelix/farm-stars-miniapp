@@ -15,6 +15,7 @@ from shared.db.users import (
     get_user_by_id,
     get_user_id_by_username,
     get_user_role_level,
+    list_user_risk_events,
     mark_user_suspicious,
     role_title_from_level,
     set_user_role_level,
@@ -176,6 +177,49 @@ async def get_user_ledger(
                 "delta": float(row["delta"] or 0),
                 "reason": row["reason"],
                 "campaign_key": row["campaign_key"],
+            }
+            for row in history
+        ],
+    }
+
+
+async def get_user_risk_history(
+        db: aiosqlite.Connection,
+        user_id: int,
+        *,
+        page: int,
+        page_size: int,
+) -> dict[str, Any]:
+    await _ensure_user_exists(db, int(user_id))
+
+    safe_page = max(int(page), 0)
+    safe_page_size = max(int(page_size), 1)
+    offset = safe_page * safe_page_size
+
+    history = await list_user_risk_events(
+        db,
+        int(user_id),
+        limit=safe_page_size + 1,
+        offset=offset,
+    )
+
+    has_next = len(history) > safe_page_size
+    history = history[:safe_page_size]
+
+    return {
+        "user_id": int(user_id),
+        "page": safe_page,
+        "page_size": safe_page_size,
+        "has_next": has_next,
+        "items": [
+            {
+                "id": int(row["id"]),
+                "created_at": row["created_at"],
+                "delta": float(row["delta"] or 0),
+                "score_after": float(row["score_after"] or 0),
+                "reason": row["reason"],
+                "source": row["source"],
+                "meta": row["meta"],
             }
             for row in history
         ],

@@ -1,7 +1,8 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 
 from api.dependencies.auth import get_current_user_id
 from api.dependencies.internal import require_internal_token
+from api.security.request_fingerprint import build_request_fingerprint
 from api.schemas.campaigns import (
     CampaignClaimContextRequest,
     CampaignClaimResponse,
@@ -25,11 +26,13 @@ async def get_active_campaigns(
 @router.post("/{campaign_key}/claim", response_model=CampaignClaimResponse)
 async def claim_campaign(
         campaign_key: str,
+        request: Request,
         user_id: int = Depends(get_current_user_id),
 ) -> CampaignClaimResponse:
     return await claim_campaign_reward_for_user(
         user_id=user_id,
         campaign_key=campaign_key,
+        fingerprint=build_request_fingerprint(request),
     )
 
 

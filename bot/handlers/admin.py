@@ -28,6 +28,7 @@ from bot.api_client import (
     get_task_channel_via_api,
     get_user_ledger_page,
     get_user_profile,
+    get_user_risk_page,
     get_user_stats,
     list_campaigns_via_api,
     list_withdrawals_queue,
@@ -248,6 +249,36 @@ def _user_ledger_nav_kb(user_id: int, page: int, has_next: bool) -> InlineKeyboa
             InlineKeyboardButton(
                 text="След ➡",
                 callback_data=f"adm:user:ledger:{user_id}:{page + 1}",
+            )
+        )
+
+    keyboard = []
+    if row:
+        keyboard.append(row)
+
+    keyboard.append([
+        InlineKeyboardButton(
+            text="⬅ Назад",
+            callback_data=f"adm:user:details:{user_id}",
+        )
+    ])
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+
+def _user_risk_nav_kb(user_id: int, page: int, has_next: bool) -> InlineKeyboardMarkup:
+    row = []
+    if page > 0:
+        row.append(
+            InlineKeyboardButton(
+                text="⬅ Пред",
+                callback_data=f"adm:user:risk:{user_id}:{page - 1}",
+            )
+        )
+    if has_next:
+        row.append(
+            InlineKeyboardButton(
+                text="След ➡",
+                callback_data=f"adm:user:risk:{user_id}:{page + 1}",
             )
         )
 
@@ -1507,6 +1538,75 @@ async def adm_user_stats(callback: CallbackQuery):
         if "message is not modified" not in str(e):
             raise
 
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("adm:user:risk:"))
+async def adm_user_risk(callback: CallbackQuery):
+    parts = (callback.data or "").split(":")
+
+    try:
+        user_id = int(parts[3])
+    except (ValueError, IndexError):
+        await callback.answer("Некорректный user_id", show_alert=True)
+        return
+
+    page = 0
+    if len(parts) >= 5:
+        try:
+            page = max(int(parts[4]), 0)
+        except ValueError:
+            page = 0
+
+    try:
+        result = await get_user_risk_page(
+            user_id,
+            page=page,
+            page_size=LEDGER_PAGE_SIZE,
+        )
+    except ApiClientError as e:
+        await callback.answer(f"❌ {e.detail}", show_alert=True)
+        return
+
+    history = result.get("items") or []
+
+    if not history and page > 0:
+        await callback.answer("Дальше записей нет")
+        return
+
+    has_next = bool(result.get("has_next") or False)
+    lines = []
+    start_n = page * LEDGER_PAGE_SIZE + 1
+
+    for i, row in enumerate(history, start=start_n):
+        created_at = row["created_at"]
+        delta = float(row.get("delta") or 0)
+        score_after = float(row.get("score_after") or 0)
+        source = row.get("source") or "system"
+        reason = row.get("reason") or "-"
+        meta = row.get("meta")
+        sign = "+" if delta >= 0 else ""
+        line = (
+            f"{i}. {created_at}: {sign}{delta:g} риска → {score_after:g}\n"
+            f"{source}: {reason}"
+        )
+        if meta:
+            line += f"\nmeta: {meta}"
+        lines.append(line)
+
+    if not lines:
+        lines = ["нет событий риска"]
+
+    text = (
+        f"🛡 Риск-история пользователя, страница {page + 1}\n\n"
+        + "\n\n".join(lines)
+    )
+
+    await safe_edit_text(
+        callback.message,
+        text,
+        reply_markup=_user_risk_nav_kb(user_id, page, has_next),
+    )
     await callback.answer()
 
 @router.callback_query(F.data == "adm:fee_refund_menu")
