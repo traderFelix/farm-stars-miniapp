@@ -1,3 +1,5 @@
+from typing import Any, cast
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -5,6 +7,7 @@ from shared.config import WEB_ORIGIN_DEV, WEB_ORIGIN_NGROK
 
 from api.routes.admin.analytics import router as analytics_admin_router
 from api.routes.admin.campaigns import router as campaigns_admin_router
+from api.routes.admin.promos import router as promos_admin_router
 from api.routes.admin.users import router as users_router
 from api.routes.admin.task_channels import router as task_channels_router
 from api.routes.admin.withdrawals import router as withdrawals_admin_router
@@ -14,6 +17,7 @@ from api.routes.health import router as health_router
 from api.routes.internal_users import router as internal_users_router
 from api.routes.miniapp_compat import router as miniapp_compat_router
 from api.routes.profile import router as profile_router
+from api.routes.promos import router as promos_router
 from api.routes.referrals import router as referrals_router
 from api.routes.tasks import router as tasks_router
 from api.routes.ledger import router as ledger_router
@@ -22,12 +26,14 @@ from api.routes.withdrawals import router as withdrawals_router
 
 app = FastAPI(title="Farm Stars")
 
-allowed_origins = [WEB_ORIGIN_DEV]
-if WEB_ORIGIN_NGROK:
-    allowed_origins.append(WEB_ORIGIN_NGROK)
+allowed_origins: list[str] = [
+    origin
+    for origin in (WEB_ORIGIN_DEV, WEB_ORIGIN_NGROK)
+    if origin
+]
 
 app.add_middleware(
-    CORSMiddleware,
+    cast(Any, CORSMiddleware),
     allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
@@ -37,6 +43,7 @@ app.add_middleware(
 app.include_router(health_router)
 app.include_router(auth_router)
 app.include_router(campaigns_router)
+app.include_router(promos_router)
 app.include_router(internal_users_router)
 app.include_router(profile_router)
 app.include_router(referrals_router)
@@ -45,6 +52,7 @@ app.include_router(miniapp_compat_router)
 app.include_router(users_router)
 app.include_router(analytics_admin_router)
 app.include_router(campaigns_admin_router)
+app.include_router(promos_admin_router)
 app.include_router(task_channels_router)
 app.include_router(withdrawals_admin_router)
 app.include_router(ledger_router)

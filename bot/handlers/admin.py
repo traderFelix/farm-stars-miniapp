@@ -12,9 +12,11 @@ from bot.api_client import (
     bind_task_channel_client_via_api,
     clear_user_suspicious,
     create_campaign_via_api,
+    create_promo_via_api,
     create_task_channel_via_api,
     delete_campaign_via_api,
     delete_campaign_winner_via_api,
+    delete_promo_via_api,
     get_admin_ledger_page_via_api,
     get_audit_via_api,
     get_campaign_stats_via_api,
@@ -22,6 +24,9 @@ from bot.api_client import (
     get_campaign_winners_via_api,
     get_campaigns_summary_via_api,
     get_growth_via_api,
+    get_promo_stats_via_api,
+    get_promo_via_api,
+    get_promos_summary_via_api,
     get_top_balances_via_api,
     get_withdrawal_details,
     get_task_channel_posts_via_api,
@@ -31,6 +36,7 @@ from bot.api_client import (
     get_user_risk_page,
     get_user_stats,
     list_campaigns_via_api,
+    list_promos_via_api,
     list_withdrawals_queue,
     list_recent_fee_payments_via_api,
     list_task_channels_via_api,
@@ -41,6 +47,7 @@ from bot.api_client import (
     record_withdrawal_fee_refund,
     reject_withdrawal,
     set_campaign_status_via_api,
+    set_promo_status_via_api,
     set_user_role,
     toggle_task_channel_via_api,
     update_task_channel_params_via_api,
@@ -69,11 +76,12 @@ from shared.formatting import fmt_stars
 from bot.keyboards import (
     admin_menu_kb, admin_back_kb, campaigns_list_kb, campaign_manage_kb, stats_list_kb, admin_fee_refund_kb,
     campaign_created_kb, user_actions_kb, admin_withdraw_list_kb, admin_withdraw_actions_kb, campaign_delete_confirm_kb,
-    admin_task_channels_kb, admin_task_channel_card_kb, admin_growth_photo_kb,
+    admin_task_channels_kb, admin_task_channel_card_kb, admin_growth_photo_kb, promos_list_kb, promo_manage_kb,
+    promo_delete_confirm_kb, promo_created_kb, promo_stats_list_kb, admin_campaigns_menu_kb, admin_promos_menu_kb,
 )
 
 from bot.states import (
-    CampaignCreate, AddWinners, DeleteWinner, UserLookup, AdminAdjust, AdminRefundFee, TaskChannelBindClient, TaskChannelCreate, TaskChannelEdit,
+    CampaignCreate, PromoCreate, AddWinners, DeleteWinner, UserLookup, AdminAdjust, AdminRefundFee, TaskChannelBindClient, TaskChannelCreate, TaskChannelEdit,
 )
 
 router = Router()
@@ -189,6 +197,10 @@ async def admin_api_unavailable_myrole(message: Message):
         CampaignCreate.amount,
         CampaignCreate.title,
         CampaignCreate.post_url,
+        PromoCreate.code,
+        PromoCreate.amount,
+        PromoCreate.total_uses,
+        PromoCreate.title,
         DeleteWinner.username,
         UserLookup.user,
         AdminAdjust.amount,
@@ -376,6 +388,36 @@ def _build_campaign_card_text(detail: dict) -> tuple[str, str]:
     return text, status
 
 
+def _build_promo_card_text(detail: dict) -> tuple[str, str]:
+    code = detail["promo_code"]
+    title = detail.get("title") or "—"
+    amount = float(detail.get("reward_amount") or 0)
+    total_uses = int(detail.get("total_uses") or 0)
+    claims_count = int(detail.get("claims_count") or 0)
+    remaining_uses = int(detail.get("remaining_uses") or 0)
+    status = detail.get("status") or "draft"
+
+    if status == "active":
+        status_text = "🟢 Активен"
+    elif status == "draft":
+        status_text = "🟡 Черновик"
+    elif status == "ended":
+        status_text = "🔴 Завершен"
+    else:
+        status_text = f"⚪ {status}"
+
+    text = (
+        f"🎟 {code}\n"
+        f"📝 {title}\n"
+        f"🎁 Награда: {amount:g}⭐\n"
+        f"📦 Лимит активаций: {total_uses}\n"
+        f"✅ Уже забрали: {claims_count}\n"
+        f"🪫 Осталось: {remaining_uses}\n"
+        f"📌 Статус: {status_text}"
+    )
+    return text, status
+
+
 def _is_valid_post_url(value: str) -> bool:
     parsed = urlparse(value)
     return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
@@ -386,13 +428,13 @@ async def _render_campaign_card(callback: CallbackQuery, key: str):
         detail = await get_campaign_via_api(key)
     except ApiClientError as e:
         if e.status_code == 404:
-            await safe_edit_text(callback.message, "❌ Конкурс не найден.", reply_markup=admin_back_kb())
+            await safe_edit_text(callback.message, "❌ Конкурс не найден.", reply_markup=admin_back_kb("adm:list"))
             return
 
         await safe_edit_text(
             callback.message,
             f"❌ Не удалось загрузить конкурс из API.\n\n{e.detail}",
-            reply_markup=admin_back_kb(),
+            reply_markup=admin_back_kb("adm:list"),
         )
         return
 
@@ -400,10 +442,49 @@ async def _render_campaign_card(callback: CallbackQuery, key: str):
     await safe_edit_text(callback.message, text, reply_markup=campaign_manage_kb(key, status))
 
 
+async def _render_promo_card(callback: CallbackQuery, code: str):
+    try:
+        detail = await get_promo_via_api(code)
+    except ApiClientError as e:
+        if e.status_code == 404:
+            await safe_edit_text(callback.message, "❌ Промокод не найден.", reply_markup=admin_back_kb("adm:promo:list"))
+            return
+
+        await safe_edit_text(
+            callback.message,
+            f"❌ Не удалось загрузить промокод из API.\n\n{e.detail}",
+            reply_markup=admin_back_kb("adm:promo:list"),
+        )
+        return
+
+    text, status = _build_promo_card_text(detail)
+    await safe_edit_text(callback.message, text, reply_markup=promo_manage_kb(code, status))
+
+
 @router.callback_query(F.data == "adm:back")
 async def adm_back(callback: CallbackQuery):
     await callback.answer()
     await safe_edit_text(callback.message, "🛠 Админ-панель", reply_markup=admin_menu_kb())
+
+
+@router.callback_query(F.data == "adm:campaigns_menu")
+async def adm_campaigns_menu(callback: CallbackQuery):
+    await callback.answer()
+    await safe_edit_text(
+        callback.message,
+        "🏆 Раздел конкурсов",
+        reply_markup=admin_campaigns_menu_kb(),
+    )
+
+
+@router.callback_query(F.data == "adm:promos_menu")
+async def adm_promos_menu(callback: CallbackQuery):
+    await callback.answer()
+    await safe_edit_text(
+        callback.message,
+        "🎟 Раздел промокодов",
+        reply_markup=admin_promos_menu_kb(),
+    )
 
 
 @router.callback_query(F.data == "adm:list")
@@ -416,16 +497,20 @@ async def adm_list(callback: CallbackQuery):
         await safe_edit_text(
             callback.message,
             f"❌ Не удалось загрузить конкурсы из API.\n\n{e.detail}",
-            reply_markup=admin_back_kb(),
+            reply_markup=admin_back_kb("adm:campaigns_menu"),
         )
         return
 
     rows = result.get("items") or []
     if not rows:
-        await safe_edit_text(callback.message, "Пока нет конкурсов.", reply_markup=admin_back_kb())
+        await safe_edit_text(callback.message, "Пока нет конкурсов.", reply_markup=admin_back_kb("adm:campaigns_menu"))
         return
 
-    await safe_edit_text(callback.message, "📋 Список всех конкурсов:", reply_markup=campaigns_list_kb(rows))
+    await safe_edit_text(
+        callback.message,
+        "📋 Список всех конкурсов:",
+        reply_markup=campaigns_list_kb(rows, back_callback="adm:campaigns_menu"),
+    )
 
 
 @router.callback_query(F.data.startswith("adm:open:"))
@@ -443,12 +528,12 @@ async def adm_on(callback: CallbackQuery):
         detail = await set_campaign_status_via_api(key, status="active")
     except ApiClientError as e:
         if e.status_code == 404:
-            await safe_edit_text(callback.message, "❌ Конкурс не найден.", reply_markup=admin_back_kb())
+            await safe_edit_text(callback.message, "❌ Конкурс не найден.", reply_markup=admin_back_kb("adm:list"))
             return
         await safe_edit_text(
             callback.message,
             f"❌ Не удалось обновить статус конкурса через API.\n\n{e.detail}",
-            reply_markup=admin_back_kb(),
+            reply_markup=admin_back_kb("adm:list"),
         )
         return
 
@@ -464,12 +549,12 @@ async def adm_off(callback: CallbackQuery):
         detail = await set_campaign_status_via_api(key, status="ended")
     except ApiClientError as e:
         if e.status_code == 404:
-            await safe_edit_text(callback.message, "❌ Конкурс не найден.", reply_markup=admin_back_kb())
+            await safe_edit_text(callback.message, "❌ Конкурс не найден.", reply_markup=admin_back_kb("adm:list"))
             return
         await safe_edit_text(
             callback.message,
             f"❌ Не удалось обновить статус конкурса через API.\n\n{e.detail}",
-            reply_markup=admin_back_kb(),
+            reply_markup=admin_back_kb("adm:list"),
         )
         return
 
@@ -489,13 +574,13 @@ async def adm_delete_ask(callback: CallbackQuery):
             await safe_edit_text(
                 callback.message,
                 "❌ Конкурс не найден.",
-                reply_markup=admin_back_kb()
+                reply_markup=admin_back_kb("adm:list")
             )
             return
         await safe_edit_text(
             callback.message,
             f"❌ Не удалось загрузить конкурс из API.\n\n{e.detail}",
-            reply_markup=admin_back_kb(),
+            reply_markup=admin_back_kb("adm:list"),
         )
         return
 
@@ -572,7 +657,7 @@ async def adm_new(callback: CallbackQuery, state: FSMContext):
     await safe_edit_text(
         callback.message,
         "➕ Создание конкурса\n\nВведи KEY (например: march2026):",
-        reply_markup=admin_back_kb(),
+        reply_markup=admin_back_kb("adm:campaigns_menu"),
     )
 
 
@@ -664,13 +749,13 @@ async def adm_stats_menu(callback: CallbackQuery):
         await safe_edit_text(
             callback.message,
             f"❌ Не удалось загрузить статистику конкурсов из API.\n\n{e.detail}",
-            reply_markup=admin_back_kb(),
+            reply_markup=admin_back_kb("adm:campaigns_menu"),
         )
         return
 
     rows = summary.get("latest_items") or []
     if not rows:
-        await safe_edit_text(callback.message, "Нет конкурсов", reply_markup=admin_back_kb())
+        await safe_edit_text(callback.message, "Нет конкурсов", reply_markup=admin_back_kb("adm:campaigns_menu"))
         return
 
     total_assigned_sum = float(summary.get("total_assigned_amount") or 0)
@@ -691,7 +776,7 @@ async def adm_stats_menu(callback: CallbackQuery):
         f"🟢 Активных конкурсов: {active_cnt}\n"
         f"🔴 Завершенных: {ended_cnt}\n\n"
         "Последние 5 конкурсов:",
-        reply_markup=stats_list_kb(rows)
+        reply_markup=stats_list_kb(rows, back_callback="adm:campaigns_menu")
     )
 
 
@@ -707,7 +792,7 @@ async def adm_stats(callback: CallbackQuery):
         await safe_edit_text(
             callback.message,
             f"❌ Не удалось загрузить статистику конкурса из API.\n\n{e.detail}",
-            reply_markup=admin_back_kb(),
+            reply_markup=admin_back_kb("adm:stats_menu"),
         )
         return
 
@@ -729,7 +814,7 @@ async def adm_stats(callback: CallbackQuery):
         f"👥 Клеймов: {claims_count}/{winners_cnt}\n"
         f"⭐ Выплачено всего: {total_paid}\n\n"
         f"✅ Заклеймили:\n{claimed_text}",
-        reply_markup=admin_back_kb()
+        reply_markup=admin_back_kb("adm:stats_menu")
     )
 
 
@@ -771,6 +856,278 @@ async def adm_show_winners(callback: CallbackQuery):
         callback.message,
         f"🏆 Победители конкурса {key}:\n\n{text}",
         reply_markup=back_kb
+    )
+
+
+@router.callback_query(F.data == "adm:promo:list")
+async def adm_promo_list(callback: CallbackQuery):
+    await callback.answer()
+
+    try:
+        result = await list_promos_via_api()
+    except ApiClientError as e:
+        await safe_edit_text(
+            callback.message,
+            f"❌ Не удалось загрузить промокоды из API.\n\n{e.detail}",
+            reply_markup=admin_back_kb("adm:promos_menu"),
+        )
+        return
+
+    rows = result.get("items") or []
+    if not rows:
+        await safe_edit_text(callback.message, "🎟 Промокодов пока нет", reply_markup=admin_back_kb("adm:promos_menu"))
+        return
+
+    await safe_edit_text(
+        callback.message,
+        "🎟 Список всех промокодов:",
+        reply_markup=promos_list_kb(rows, back_callback="adm:promos_menu"),
+    )
+
+
+@router.callback_query(F.data.startswith("adm:promo:open:"))
+async def adm_promo_open(callback: CallbackQuery):
+    await callback.answer()
+    code = callback.data.split(":")[3]
+    await _render_promo_card(callback, code)
+
+
+@router.callback_query(F.data.startswith("adm:promo:on:"))
+async def adm_promo_on(callback: CallbackQuery):
+    await callback.answer()
+    code = callback.data.split(":")[3]
+
+    try:
+        detail = await set_promo_status_via_api(code, status="active")
+    except ApiClientError as e:
+        await callback.answer(f"❌ {e.detail}", show_alert=True)
+        return
+
+    text, status = _build_promo_card_text(detail)
+    await safe_edit_text(callback.message, text, reply_markup=promo_manage_kb(code, status))
+
+
+@router.callback_query(F.data.startswith("adm:promo:off:"))
+async def adm_promo_off(callback: CallbackQuery):
+    await callback.answer()
+    code = callback.data.split(":")[3]
+
+    try:
+        detail = await set_promo_status_via_api(code, status="ended")
+    except ApiClientError as e:
+        await callback.answer(f"❌ {e.detail}", show_alert=True)
+        return
+
+    text, status = _build_promo_card_text(detail)
+    await safe_edit_text(callback.message, text, reply_markup=promo_manage_kb(code, status))
+
+
+@router.callback_query(F.data.startswith("adm:promo:del:ask:"))
+async def adm_promo_delete_ask(callback: CallbackQuery):
+    await callback.answer()
+    code = callback.data.split(":")[4]
+
+    try:
+        detail = await get_promo_via_api(code)
+    except ApiClientError as e:
+        await callback.answer(f"❌ {e.detail}", show_alert=True)
+        return
+
+    text, _ = _build_promo_card_text(detail)
+    await safe_edit_text(
+        callback.message,
+        f"{text}\n\n❓ Удалить этот промокод?",
+        reply_markup=promo_delete_confirm_kb(code),
+    )
+
+
+@router.callback_query(F.data.startswith("adm:promo:del:do:"))
+async def adm_promo_delete_do(callback: CallbackQuery):
+    await callback.answer()
+    code = callback.data.split(":")[4]
+
+    try:
+        await delete_promo_via_api(code)
+    except ApiClientError as e:
+        await callback.answer(f"❌ {e.detail}", show_alert=True)
+        return
+
+    await safe_edit_text(
+        callback.message,
+        f"✅ Промокод {code} удален",
+        reply_markup=admin_back_kb("adm:promos_menu"),
+    )
+
+
+@router.callback_query(F.data == "adm:promo:new")
+async def adm_promo_new(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    await state.set_state(PromoCreate.code)
+    await safe_edit_text(
+        callback.message,
+        "➕ Создание промокода\n\nВведи код промокода, например: WELCOME2026",
+        reply_markup=admin_back_kb("adm:promos_menu"),
+    )
+
+
+@router.message(PromoCreate.code)
+async def adm_promo_new_code(message: Message, state: FSMContext):
+    code = "".join((message.text or "").strip().upper().split())
+    if len(code) < 3:
+        await message.answer("❌ Код без пробелов, минимум 3 символа. Введи снова:")
+        return
+
+    await state.update_data(code=code)
+    await state.set_state(PromoCreate.amount)
+    await message.answer("Теперь введи награду за один клейм, например: 0.5")
+
+
+@router.message(PromoCreate.amount)
+async def adm_promo_new_amount(message: Message, state: FSMContext):
+    try:
+        amount = float((message.text or "").strip().replace(",", "."))
+        if amount <= 0:
+            raise ValueError
+    except ValueError:
+        await message.answer("❌ Нужна награда числом > 0. Пример: 0.5")
+        return
+
+    await state.update_data(amount=amount)
+    await state.set_state(PromoCreate.total_uses)
+    await message.answer("Теперь введи количество активаций, например: 100")
+
+
+@router.message(PromoCreate.total_uses)
+async def adm_promo_new_total_uses(message: Message, state: FSMContext):
+    try:
+        total_uses = int((message.text or "").strip())
+        if total_uses <= 0:
+            raise ValueError
+    except ValueError:
+        await message.answer("❌ Нужна целая цифра > 0. Пример: 100")
+        return
+
+    await state.update_data(total_uses=total_uses)
+    await state.set_state(PromoCreate.title)
+    await message.answer("Теперь введи внутреннее название или комментарий. Если не нужно, отправь -")
+
+
+@router.message(PromoCreate.title)
+async def adm_promo_new_title(message: Message, state: FSMContext):
+    title = (message.text or "").strip()
+    if title == "-":
+        title = ""
+
+    data = await state.get_data()
+    code = data["code"]
+    amount = data["amount"]
+    total_uses = data["total_uses"]
+
+    try:
+        detail = await create_promo_via_api(
+            promo_code=code,
+            title=title or None,
+            amount=amount,
+            total_uses=total_uses,
+        )
+    except ApiClientError as e:
+        await message.answer(f"❌ {e.detail}")
+        return
+
+    await state.clear()
+    final_code = detail["promo_code"]
+    final_amount = float(detail.get("reward_amount") or 0)
+    final_total_uses = int(detail.get("total_uses") or 0)
+    final_title = detail.get("title") or "—"
+
+    await message.answer(
+        f"✅ Промокод создан:\n"
+        f"🏷 {final_code}\n"
+        f"🎁 {final_amount:g}⭐\n"
+        f"📦 Лимит: {final_total_uses}\n"
+        f"📝 {final_title}\n"
+        f"Статус: 🟡 Черновик",
+        reply_markup=promo_created_kb(final_code),
+    )
+
+
+@router.callback_query(F.data == "adm:promo:stats_menu")
+async def adm_promo_stats_menu(callback: CallbackQuery):
+    await callback.answer()
+
+    try:
+        summary = await get_promos_summary_via_api(latest_limit=5)
+    except ApiClientError as e:
+        await safe_edit_text(
+            callback.message,
+            f"❌ Не удалось загрузить статистику промокодов из API.\n\n{e.detail}",
+            reply_markup=admin_back_kb("adm:promos_menu"),
+        )
+        return
+
+    rows = summary.get("latest_items") or []
+    if not rows:
+        await safe_edit_text(callback.message, "Промокодов пока нет", reply_markup=admin_back_kb("adm:promos_menu"))
+        return
+
+    total_assigned_sum = float(summary.get("total_assigned_amount") or 0)
+    claims_count_all = int(summary.get("claims_count") or 0)
+    total_claimed_all = float(summary.get("total_claimed_amount") or 0)
+    active_cnt = int(summary.get("active_count") or 0)
+    ended_cnt = int(summary.get("ended_count") or 0)
+    draft_cnt = int(summary.get("draft_count") or 0)
+    unclaimed_sum = float(summary.get("unclaimed_amount") or 0)
+
+    await safe_edit_text(
+        callback.message,
+        "📊 Статистика промокодов:\n\n"
+        f"🎁 Начислено по лимитам: {total_assigned_sum:.2f}⭐\n"
+        f"📦 Невостребовано: {unclaimed_sum:.2f}⭐\n"
+        f"💰 Всего заклеймили: {total_claimed_all:.2f}⭐\n ({claims_count_all} клеймов)\n"
+        f"🟡 Черновиков: {draft_cnt}\n"
+        f"🟢 Активных промокодов: {active_cnt}\n"
+        f"🔴 Завершенных: {ended_cnt}\n\n"
+        "Последние 5 промокодов:",
+        reply_markup=promo_stats_list_kb(rows, back_callback="adm:promos_menu"),
+    )
+
+
+@router.callback_query(F.data.startswith("adm:promo:stats:"))
+async def adm_promo_stats(callback: CallbackQuery):
+    await callback.answer()
+    code = callback.data.split(":")[3]
+
+    try:
+        stats = await get_promo_stats_via_api(code)
+    except ApiClientError as e:
+        await safe_edit_text(
+            callback.message,
+            f"❌ Не удалось загрузить статистику промокода из API.\n\n{e.detail}",
+            reply_markup=admin_back_kb("adm:promo:stats_menu"),
+        )
+        return
+
+    claims_count = int(stats.get("claims_count") or 0)
+    total_uses = int(stats.get("total_uses") or 0)
+    remaining_uses = int(stats.get("remaining_uses") or 0)
+    total_paid = float(stats.get("total_paid") or 0)
+    claimed = stats.get("claimed_usernames") or []
+
+    if claimed:
+        claimed_text = "\n".join([f"@{u}" for u in claimed[:50]])
+        if len(claimed) > 50:
+            claimed_text += f"\n… и еще {len(claimed) - 50}"
+    else:
+        claimed_text = "—"
+
+    await safe_edit_text(
+        callback.message,
+        f"📊 Статистика промокода {code}\n\n"
+        f"👥 Клеймов: {claims_count}/{total_uses}\n"
+        f"🪫 Осталось: {remaining_uses}\n"
+        f"⭐ Выплачено всего: {total_paid:g}\n\n"
+        f"✅ Активировали:\n{claimed_text}",
+        reply_markup=admin_back_kb("adm:promo:stats_menu"),
     )
 
 
@@ -1323,10 +1680,12 @@ async def adm_audit_balances(callback: CallbackQuery):
     mismatches = audit.get("mismatches") or []
     total_balances_sum = float(audit.get("total_balances") or 0)
     total_claimed_all = float(audit.get("campaign_claimed_total") or 0)
+    total_promo_claimed_all = float(audit.get("promo_claimed_total") or 0)
     admin_adjust_net = float(audit.get("admin_adjust_net") or 0)
     total_withdrawn_sum = float(audit.get("total_withdrawn") or 0)
     pending_withdrawn_sum = float(audit.get("pending_withdrawn") or 0)
     claimed_from_ledger = float(audit.get("campaign_claimed_from_ledger") or 0)
+    promo_claimed_from_ledger = float(audit.get("promo_claimed_from_ledger") or 0)
     referral_bonus = float(audit.get("referral_bonus") or 0)
     view_post_bonus = float(audit.get("view_post_bonus") or 0)
     daily_bonus = float(audit.get("daily_bonus") or 0)
@@ -1336,6 +1695,8 @@ async def adm_audit_balances(callback: CallbackQuery):
         f"Баланс пользователей: {fmt_stars(total_balances_sum)}⭐\n",
         f"Получено в конкурсах (база): {fmt_stars(total_claimed_all)}⭐",
         f"Получено в конкурсах (леджер): {fmt_stars(claimed_from_ledger)}⭐",
+        f"Получено по промокодам (база): {fmt_stars(total_promo_claimed_all)}⭐",
+        f"Получено по промокодам (леджер): {fmt_stars(promo_claimed_from_ledger)}⭐",
         f"Получено за рефералов: {fmt_stars(referral_bonus)}⭐\n"
         f"Получено за просмотры постов: {fmt_stars(view_post_bonus)}⭐\n"
         f"Получено за ежедневный бонус: {fmt_stars(daily_bonus)}⭐\n"

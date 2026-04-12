@@ -361,6 +361,50 @@ class CampaignsAdminApi(ApiSection):
         )
 
 
+class PromosAdminApi(ApiSection):
+    async def list(self) -> JsonDict:
+        return await self._get("/admin/promos")
+
+    async def get(self, promo_code: str) -> JsonDict:
+        return await self._get(f"/admin/promos/{promo_code}")
+
+    async def create(
+            self,
+            *,
+            promo_code: str,
+            title: Optional[str],
+            amount: float,
+            total_uses: int,
+    ) -> JsonDict:
+        return await self._post(
+            "/admin/promos",
+            json={
+                "promo_code": promo_code,
+                "title": title,
+                "amount": float(amount),
+                "total_uses": int(total_uses),
+            },
+        )
+
+    async def set_status(self, promo_code: str, *, status: str) -> JsonDict:
+        return await self._post(
+            f"/admin/promos/{promo_code}/status",
+            json={"status": status},
+        )
+
+    async def delete(self, promo_code: str) -> JsonDict:
+        return await self._post(f"/admin/promos/{promo_code}/delete", json={})
+
+    async def get_summary(self, *, latest_limit: int = 5) -> JsonDict:
+        return await self._get(
+            "/admin/promos/summary",
+            params={"latest_limit": int(latest_limit)},
+        )
+
+    async def get_stats(self, promo_code: str) -> JsonDict:
+        return await self._get(f"/admin/promos/{promo_code}/stats")
+
+
 class TaskChannelsApi(ApiSection):
     async def list(self) -> JsonDict:
         return await self._get("/admin/task-channels")
@@ -476,6 +520,7 @@ class BotApiClient:
         self.users = UsersApi(self)
         self.withdrawals_review = ReviewWithdrawalsApi(self)
         self.admin_campaigns = CampaignsAdminApi(self)
+        self.admin_promos = PromosAdminApi(self)
         self.task_channels = TaskChannelsApi(self)
         self.analytics = AnalyticsApi(self)
 
@@ -666,6 +711,45 @@ async def get_campaign_winners_via_api(campaign_key: str) -> JsonDict:
 
 async def delete_campaign_winner_via_api(campaign_key: str, *, username: str) -> JsonDict:
     return await api_client.admin_campaigns.delete_winner(campaign_key, username=username)
+
+
+async def list_promos_via_api() -> JsonDict:
+    return await api_client.admin_promos.list()
+
+
+async def get_promo_via_api(promo_code: str) -> JsonDict:
+    return await api_client.admin_promos.get(promo_code)
+
+
+async def create_promo_via_api(
+        *,
+        promo_code: str,
+        title: Optional[str],
+        amount: float,
+        total_uses: int,
+) -> JsonDict:
+    return await api_client.admin_promos.create(
+        promo_code=promo_code,
+        title=title,
+        amount=amount,
+        total_uses=total_uses,
+    )
+
+
+async def set_promo_status_via_api(promo_code: str, *, status: str) -> JsonDict:
+    return await api_client.admin_promos.set_status(promo_code, status=status)
+
+
+async def delete_promo_via_api(promo_code: str) -> JsonDict:
+    return await api_client.admin_promos.delete(promo_code)
+
+
+async def get_promos_summary_via_api(*, latest_limit: int = 5) -> JsonDict:
+    return await api_client.admin_promos.get_summary(latest_limit=latest_limit)
+
+
+async def get_promo_stats_via_api(promo_code: str) -> JsonDict:
+    return await api_client.admin_promos.get_stats(promo_code)
 
 
 async def get_top_balances_via_api(*, limit: int = 10) -> JsonDict:
@@ -877,6 +961,13 @@ __all__ = [
     "get_campaign_stats_via_api",
     "get_campaign_winners_via_api",
     "delete_campaign_winner_via_api",
+    "list_promos_via_api",
+    "get_promo_via_api",
+    "create_promo_via_api",
+    "set_promo_status_via_api",
+    "delete_promo_via_api",
+    "get_promos_summary_via_api",
+    "get_promo_stats_via_api",
     "get_top_balances_via_api",
     "get_growth_via_api",
     "get_admin_ledger_page_via_api",

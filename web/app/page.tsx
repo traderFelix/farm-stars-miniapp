@@ -370,7 +370,7 @@ export default function HomePage() {
                 <BottomTabButton
                   tab="campaigns"
                   activeTab={activeTab}
-                  title="Конкурсы"
+                  title="Награды"
                   onSelect={setActiveTab}
                 />
                 <BottomTabButton
