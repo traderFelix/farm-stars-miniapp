@@ -11,12 +11,14 @@ from api.schemas.admin.users import (
     RoleUpdateResponse,
     SuspiciousRequest,
     UserLedgerResponse,
+    UserRiskEventsResponse,
     UserStatsResponse,
 )
 from api.services.admin.users import (
     adjust_balance,
     clear_suspicious,
     get_profile,
+    get_user_risk_history,
     get_stats,
     get_user_ledger,
     lookup_profile,
@@ -63,6 +65,15 @@ async def get_user_ledger_route(user_id: int, page: int = 0, page_size: int = 20
     db = await get_db()
     try:
         return await get_user_ledger(db, user_id, page=page, page_size=page_size)
+    finally:
+        await db.close()
+
+
+@router.get("/{user_id}/risk", response_model=UserRiskEventsResponse)
+async def get_user_risk_route(user_id: int, page: int = 0, page_size: int = 20):
+    db = await get_db()
+    try:
+        return await get_user_risk_history(db, user_id, page=page, page_size=page_size)
     finally:
         await db.close()
 

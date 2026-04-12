@@ -2,16 +2,16 @@ import hashlib
 import hmac
 import json
 import time
-from typing import Any
+from typing import Any, Optional, cast
 from urllib.parse import parse_qsl
 
 import jwt
 from fastapi import HTTPException
 
-from shared.config import JWT_ALG, JWT_EXPIRE_DAYS, JWT_SECRET
+from shared.config import JWT_ALG, JWT_EXPIRE_DAYS, JWT_SECRET, TELEGRAM_INIT_DATA_MAX_AGE_SECONDS
 
 
-def parse_init_data(init_data: str) -> dict[str, Any]:
+def parse_init_data(init_data: str) -> dict[str, str]:
     if not init_data or not init_data.strip():
         raise HTTPException(status_code=400, detail="init_data is empty")
 
@@ -60,20 +60,51 @@ def validate_init_data(init_data: str, bot_token: str) -> dict[str, Any]:
     if not user_raw:
         raise HTTPException(status_code=400, detail="Telegram user is missing in init_data")
 
+    auth_date_raw = parsed.get("auth_date")
+    if not auth_date_raw:
+        raise HTTPException(status_code=400, detail="Telegram auth_date is missing")
+
+    try:
+        auth_date = int(auth_date_raw)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="Telegram auth_date is invalid")
+
+    now = int(time.time())
+    if now - auth_date > int(TELEGRAM_INIT_DATA_MAX_AGE_SECONDS):
+        raise HTTPException(status_code=401, detail="Telegram init_data is too old")
+
     try:
         user_data = json.loads(user_raw)
     except json.JSONDecodeError:
         raise HTTPException(status_code=400, detail="Telegram user payload is invalid")
 
-    user_id = user_data.get("id")
-    if not user_id:
+    if not isinstance(user_data, dict):
+        raise HTTPException(status_code=400, detail="Telegram user payload is invalid")
+
+    user_payload = cast(dict[str, Any], user_data)
+
+    user_id_raw = user_payload.get("id")
+    if user_id_raw is None:
         raise HTTPException(status_code=400, detail="Telegram user id is missing")
 
+    try:
+        user_id = int(user_id_raw)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="Telegram user id is invalid")
+
+    username_raw = user_payload.get("username")
+    first_name_raw = user_payload.get("first_name")
+    last_name_raw = user_payload.get("last_name")
+
+    username: Optional[str] = username_raw if isinstance(username_raw, str) else None
+    first_name: Optional[str] = first_name_raw if isinstance(first_name_raw, str) else None
+    last_name: Optional[str] = last_name_raw if isinstance(last_name_raw, str) else None
+
     return {
-        "user_id": int(user_id),
-        "username": user_data.get("username"),
-        "first_name": user_data.get("first_name"),
-        "last_name": user_data.get("last_name"),
+        "user_id": user_id,
+        "username": username,
+        "first_name": first_name,
+        "last_name": last_name,
     }
 
 

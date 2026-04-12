@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from typing import Optional
 
 from api.db.connection import get_db
+from api.security.request_fingerprint import RequestFingerprint
+from api.services.antiabuse import log_user_action_with_fingerprint
 from api.schemas.withdrawals import (
     WithdrawalCreateRequest,
     WithdrawalCreateResponse,
@@ -15,10 +17,14 @@ from api.schemas.withdrawals import (
     WithdrawalPreviewRequest,
     WithdrawalPreviewResponse,
 )
-from shared.config import REQUIRED_ACCOUNT_AGE_HOURS, MIN_WITHDRAW, MIN_WITHDRAW_PERCENT
+from shared.config import (
+    REQUIRED_ACCOUNT_AGE_HOURS,
+    MIN_WITHDRAW,
+    MIN_WITHDRAW_PERCENT,
+    RISK_SCORE_WITHDRAW_BLOCK_THRESHOLD,
+)
 from shared.db.abuse import (
     count_recent_abuse_events,
-    log_abuse_event,
     sum_recent_abuse_amount,
 )
 from shared.db.ledger import (
@@ -26,7 +32,7 @@ from shared.db.ledger import (
     get_activity_index,
     get_user_earnings_breakdown,
 )
-from shared.db.users import get_balance, get_user_by_id, user_created_hours_ago
+from shared.db.users import add_user_risk_score, get_balance, get_user_by_id, user_created_hours_ago
 from shared.db.withdrawals import (
     create_withdrawal,
     has_pending_withdrawal,
@@ -123,12 +129,29 @@ async def _build_eligibility(user_id: int) -> EligibilityCheckResult:
             )
 
         balance = _safe_float(user["balance"])
+        risk_score = _safe_float(user["risk_score"])
+        is_suspicious = bool(user["is_suspicious"] or 0)
         account_age_hours = _safe_float(await user_created_hours_ago(db, user_id))
         pending = await has_pending_withdrawal(db, user_id)
         activity_index = _safe_float(await get_activity_index(db, user_id))
         breakdown = await get_user_earnings_breakdown(db, user_id)
         task_percent = _extract_task_percent(breakdown)
         first_withdraw = await is_first_withdraw(db, user_id)
+
+        if is_suspicious or risk_score >= RISK_SCORE_WITHDRAW_BLOCK_THRESHOLD:
+            return EligibilityCheckResult(
+                can_withdraw=False,
+                message="Вывод временно недоступен, аккаунт отправлен на проверку",
+                min_withdraw=MIN_WITHDRAW,
+                min_task_percent=MIN_TASK_PERCENT_VALUE,
+                has_pending_withdrawal=False,
+                account_age_hours=round(account_age_hours, 2),
+                required_account_age_hours=REQUIRED_ACCOUNT_AGE_HOURS,
+                activity_index=activity_index,
+                task_earnings_percent=task_percent,
+                available_balance=balance,
+                is_first_withdraw=first_withdraw,
+            )
 
         if pending:
             return EligibilityCheckResult(
@@ -210,6 +233,11 @@ async def _build_eligibility(user_id: int) -> EligibilityCheckResult:
 async def _validate_withdraw_rules(db, user_id: int, amount: float) -> Optional[str]:
     user = await get_user_by_id(db, user_id)
     balance = _safe_float(user["balance"] if user else 0)
+    risk_score = _safe_float(user["risk_score"] if user else 0)
+    is_suspicious = bool(user["is_suspicious"] or 0) if user else False
+
+    if is_suspicious or risk_score >= RISK_SCORE_WITHDRAW_BLOCK_THRESHOLD:
+        return "Вывод временно недоступен, аккаунт отправлен на проверку"
 
     if amount < MIN_WITHDRAW:
         return f"❌ Минимальная сумма вывода: {MIN_WITHDRAW:g}⭐"
@@ -269,6 +297,8 @@ async def get_withdrawal_eligibility_for_user(
 async def preview_withdrawal_for_user(
         user_id: int,
         payload: WithdrawalPreviewRequest,
+        *,
+        fingerprint: Optional[RequestFingerprint] = None,
 ) -> WithdrawalPreviewResponse:
     method = payload.method
     amount = _safe_float(payload.amount)
@@ -276,6 +306,24 @@ async def preview_withdrawal_for_user(
 
     db = await get_db()
     try:
+        await log_user_action_with_fingerprint(
+            db,
+            user_id=int(user_id),
+            action="withdraw_preview",
+            fingerprint=fingerprint,
+            amount=amount,
+            entity_type="withdrawal",
+            entity_id=method,
+        )
+        recent_previews = await count_recent_abuse_events(db, int(user_id), "withdraw_preview", 60)
+        if recent_previews >= 10:
+            await add_user_risk_score(
+                db,
+                int(user_id),
+                10,
+                "Слишком много preview заявок на вывод",
+                source="withdrawals",
+            )
         user = await get_user_by_id(db, user_id)
         available_balance = _safe_float(user["balance"] if user else 0)
 
@@ -284,6 +332,17 @@ async def preview_withdrawal_for_user(
 
         error_text = await _validate_withdraw_rules(db, user_id, amount)
         if error_text:
+            await log_user_action_with_fingerprint(
+                db,
+                user_id=int(user_id),
+                action="withdraw_preview_fail",
+                fingerprint=fingerprint,
+                amount=amount,
+                entity_type="withdrawal",
+                entity_id=method,
+                meta=error_text,
+            )
+            await db.commit()
             raise ValueError(error_text)
 
         if method == "ton":
@@ -292,10 +351,29 @@ async def preview_withdrawal_for_user(
 
             wallet_in_use = await wallet_used_by_another_user(db, user_id, wallet)
             if wallet_in_use:
+                await add_user_risk_score(
+                    db,
+                    int(user_id),
+                    100,
+                    "Общий TON-кошелек с другим аккаунтом",
+                    source="withdrawals",
+                    meta=f"wallet={wallet}",
+                )
+                await log_user_action_with_fingerprint(
+                    db,
+                    user_id=int(user_id),
+                    action="withdraw_wallet_conflict",
+                    fingerprint=fingerprint,
+                    amount=amount,
+                    entity_type="wallet",
+                    entity_id=wallet,
+                )
+                await db.commit()
                 raise ValueError("Этот TON-кошелек уже используется другим пользователем")
 
         first = await is_first_withdraw(db, user_id)
         expected_fee = get_withdraw_fee(amount, first)
+        await db.commit()
 
         return WithdrawalPreviewResponse(
             ok=True,
@@ -313,6 +391,8 @@ async def preview_withdrawal_for_user(
 async def create_withdrawal_for_user(
         user_id: int,
         payload: WithdrawalCreateRequest,
+        *,
+        fingerprint: Optional[RequestFingerprint] = None,
 ) -> WithdrawalCreateResponse:
     method = payload.method
     amount = _safe_float(payload.amount)
@@ -327,8 +407,37 @@ async def create_withdrawal_for_user(
 
     db = await get_db()
     try:
+        await log_user_action_with_fingerprint(
+            db,
+            user_id=int(user_id),
+            action="withdraw_create_attempt",
+            fingerprint=fingerprint,
+            amount=amount,
+            entity_type="withdrawal",
+            entity_id=method,
+        )
         error_text = await _validate_withdraw_rules(db, user_id, amount)
         if error_text:
+            await log_user_action_with_fingerprint(
+                db,
+                user_id=int(user_id),
+                action="withdraw_create_fail",
+                fingerprint=fingerprint,
+                amount=amount,
+                entity_type="withdrawal",
+                entity_id=method,
+                meta=error_text,
+            )
+            recent_create_fails = await count_recent_abuse_events(db, int(user_id), "withdraw_create_fail", 60)
+            if recent_create_fails >= 5:
+                await add_user_risk_score(
+                    db,
+                    int(user_id),
+                    15,
+                    "Слишком много неудачных попыток вывода",
+                    source="withdrawals",
+                )
+            await db.commit()
             raise ValueError(error_text)
 
         if method == "ton":
@@ -337,11 +446,40 @@ async def create_withdrawal_for_user(
 
             wallet_in_use = await wallet_used_by_another_user(db, user_id, wallet)
             if wallet_in_use:
+                await add_user_risk_score(
+                    db,
+                    int(user_id),
+                    100,
+                    "Общий TON-кошелек с другим аккаунтом",
+                    source="withdrawals",
+                    meta=f"wallet={wallet}",
+                )
+                await log_user_action_with_fingerprint(
+                    db,
+                    user_id=int(user_id),
+                    action="withdraw_wallet_conflict",
+                    fingerprint=fingerprint,
+                    amount=amount,
+                    entity_type="wallet",
+                    entity_id=wallet,
+                )
+                await db.commit()
                 raise ValueError("Этот TON-кошелек уже используется другим пользователем")
 
         first = await is_first_withdraw(db, user_id)
         expected_fee = get_withdraw_fee(amount, first)
         if paid_fee != expected_fee:
+            await log_user_action_with_fingerprint(
+                db,
+                user_id=int(user_id),
+                action="withdraw_create_fail",
+                fingerprint=fingerprint,
+                amount=amount,
+                entity_type="withdrawal",
+                entity_id=method,
+                meta="fee_mismatch",
+            )
+            await db.commit()
             raise ValueError("Сумма комиссии не совпадает с ожидаемой")
 
         withdrawal_id = await create_withdrawal(
@@ -373,7 +511,16 @@ async def create_withdrawal_for_user(
                 meta=f"method={method}",
             )
 
-        await log_abuse_event(db, user_id, "withdraw_create", amount=amount)
+        await log_user_action_with_fingerprint(
+            db,
+            user_id=int(user_id),
+            action="withdraw_create",
+            fingerprint=fingerprint,
+            amount=amount,
+            entity_type="withdrawal",
+            entity_id=str(withdrawal_id),
+            meta=f"method={method}",
+        )
 
         ok = await apply_balance_debit_if_enough(
             db=db,

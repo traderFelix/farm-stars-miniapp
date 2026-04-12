@@ -23,6 +23,7 @@ from shared.db.tasks import (
 from shared.db.abuse import count_recent_abuse_events, log_abuse_event
 from shared.db.common import tx
 from shared.config import TELEGRAM_BOT_TOKEN
+from shared.db.users import add_user_risk_score
 
 logger = logging.getLogger(__name__)
 
@@ -227,12 +228,31 @@ def map_task_row_to_item(row) -> TaskListItem:
 
 async def open_view_post_task(db, user_id: int, row) -> TaskOpenResponse:
     hold_seconds = int(row["view_seconds"] or 0)
+    task_post_id = int(row["id"])
 
     recent_clicks = await count_recent_abuse_events(db, user_id, "task_view_click", 1)
     if hold_seconds > 0 and recent_clicks >= 60 / hold_seconds:
+        await log_abuse_event(
+            db,
+            user_id,
+            "task_view_rate_limited",
+            entity_type="task_post",
+            entity_id=str(task_post_id),
+        )
+        recent_rate_limited = await count_recent_abuse_events(db, user_id, "task_view_rate_limited", 10)
+        if recent_rate_limited >= 3:
+            await add_user_risk_score(
+                db,
+                int(user_id),
+                10,
+                "Слишком частые попытки открыть просмотры",
+                source="tasks",
+                meta=f"task_post_id={task_post_id}",
+            )
+            await db.commit()
         return TaskOpenResponse(
             ok=False,
-            task_id=int(row["id"]),
+            task_id=task_post_id,
             message="⏳ Слишком часто.\nПопробуй через минуту.",
             opened_at=0,
             hold_seconds=hold_seconds,
@@ -246,7 +266,7 @@ async def open_view_post_task(db, user_id: int, row) -> TaskOpenResponse:
             session_id=None,
         )
 
-    already_completed = await _is_task_already_completed(db, user_id, int(row["id"]))
+    already_completed = await _is_task_already_completed(db, user_id, task_post_id)
     if already_completed:
         return TaskOpenResponse(
             ok=False,
@@ -265,6 +285,13 @@ async def open_view_post_task(db, user_id: int, row) -> TaskOpenResponse:
         )
 
     await log_abuse_event(db, user_id, "task_view_click")
+    await log_abuse_event(
+        db,
+        user_id,
+        "task_view_open",
+        entity_type="task_post",
+        entity_id=str(task_post_id),
+    )
 
     opened_at = int(time.time())
     can_check_at = opened_at + hold_seconds
@@ -292,6 +319,13 @@ async def check_view_post_task(db, user_id: int, row) -> TaskCheckResponse:
 
     already_completed = await _is_task_already_completed(db, user_id, task_post_id)
     if already_completed:
+        await log_abuse_event(
+            db,
+            user_id,
+            "task_view_duplicate_check",
+            entity_type="task_post",
+            entity_id=str(task_post_id),
+        )
         current_balance = await _get_user_balance_safe(db, user_id)
         await db.rollback()
         return TaskCheckResponse(
@@ -306,6 +340,13 @@ async def check_view_post_task(db, user_id: int, row) -> TaskCheckResponse:
 
     inserted = await add_task_post_view(db, user_id, task_post_id, reward)
     if not inserted:
+        await log_abuse_event(
+            db,
+            user_id,
+            "task_view_duplicate_check",
+            entity_type="task_post",
+            entity_id=str(task_post_id),
+        )
         current_balance = await _get_user_balance_safe(db, user_id)
         await db.rollback()
         return TaskCheckResponse(
@@ -320,6 +361,13 @@ async def check_view_post_task(db, user_id: int, row) -> TaskCheckResponse:
 
     updated_post = await increment_task_post_views(db, task_post_id)
     if not updated_post:
+        await log_abuse_event(
+            db,
+            user_id,
+            "task_view_post_unavailable",
+            entity_type="task_post",
+            entity_id=str(task_post_id),
+        )
         current_balance = await _get_user_balance_safe(db, user_id)
         await db.rollback()
         return TaskCheckResponse(
@@ -344,6 +392,14 @@ async def check_view_post_task(db, user_id: int, row) -> TaskCheckResponse:
         },
     )
 
+    await log_abuse_event(
+        db,
+        user_id,
+        "task_view_completed",
+        amount=reward,
+        entity_type="task_post",
+        entity_id=str(task_post_id),
+    )
     await db.commit()
 
     return TaskCheckResponse(
