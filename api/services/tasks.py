@@ -1,16 +1,25 @@
 import json
 import logging
+import random
 import time
 from html import escape
-from typing import Optional
+from typing import Optional, cast
 from urllib import error as urllib_error
 from urllib import request as urllib_request
 
 from api.db.connection import get_db
 from api.schemas.tasks import (
     TaskCheckResponse,
+    TaskBattleSnapshot,
     TaskListItem,
     TaskOpenResponse,
+)
+from api.services.battles import (
+    BattleRowLike,
+    build_battle_snapshot_for_task,
+    get_active_battle_for_user_db,
+    notify_battle_resolution_by_id,
+    register_battle_view_completion,
 )
 from shared.db.tasks import (
     add_task_post_view,
@@ -22,7 +31,11 @@ from shared.db.tasks import (
 )
 from shared.db.abuse import count_recent_abuse_events, log_abuse_event
 from shared.db.common import tx
-from shared.config import TELEGRAM_BOT_TOKEN
+from shared.config import (
+    TELEGRAM_BOT_TOKEN,
+    VIEW_BATTLE_HOLD_MAX_SECONDS,
+    VIEW_BATTLE_HOLD_MIN_SECONDS,
+)
 from shared.db.users import add_user_risk_score
 
 logger = logging.getLogger(__name__)
@@ -66,8 +79,6 @@ def _build_client_mention(
 
 
 def _build_channel_alert_heading(client_mention: Optional[str]) -> str:
-    if client_mention:
-        return f"⚠️ {client_mention}, внимание по каналу просмотров"
     return "⚠️ Внимание по каналу просмотров"
 
 
@@ -227,8 +238,22 @@ def map_task_row_to_item(row) -> TaskListItem:
 
 
 async def open_view_post_task(db, user_id: int, row) -> TaskOpenResponse:
-    hold_seconds = int(row["view_seconds"] or 0)
+    active_battle = cast(Optional[BattleRowLike], await get_active_battle_for_user_db(db, user_id=user_id))
+    hold_seconds = (
+        VIEW_BATTLE_HOLD_MIN_SECONDS
+        + random.randint(
+            0,
+            max(int((VIEW_BATTLE_HOLD_MAX_SECONDS - VIEW_BATTLE_HOLD_MIN_SECONDS) * 1000), 0),
+        ) / 1000.0
+        if active_battle
+        else float(row["view_seconds"] or 0)
+    )
     task_post_id = int(row["id"])
+    battle_snapshot: Optional[TaskBattleSnapshot] = (
+        build_battle_snapshot_for_task(active_battle, user_id)
+        if active_battle
+        else None
+    )
 
     recent_clicks = await count_recent_abuse_events(db, user_id, "task_view_click", 1)
     if hold_seconds > 0 and recent_clicks >= 60 / hold_seconds:
@@ -264,6 +289,7 @@ async def open_view_post_task(db, user_id: int, row) -> TaskOpenResponse:
                 row["channel_post_id"],
             ),
             session_id=None,
+            battle=battle_snapshot,
         )
 
     already_completed = await _is_task_already_completed(db, user_id, task_post_id)
@@ -282,6 +308,7 @@ async def open_view_post_task(db, user_id: int, row) -> TaskOpenResponse:
                 row["channel_post_id"],
             ),
             session_id=None,
+            battle=battle_snapshot,
         )
 
     await log_abuse_event(db, user_id, "task_view_click")
@@ -293,7 +320,7 @@ async def open_view_post_task(db, user_id: int, row) -> TaskOpenResponse:
         entity_id=str(task_post_id),
     )
 
-    opened_at = int(time.time())
+    opened_at = time.time()
     can_check_at = opened_at + hold_seconds
 
     return TaskOpenResponse(
@@ -310,6 +337,7 @@ async def open_view_post_task(db, user_id: int, row) -> TaskOpenResponse:
             row["channel_post_id"],
         ),
         session_id=None,
+        battle=battle_snapshot,
     )
 
 
@@ -336,6 +364,7 @@ async def check_view_post_task(db, user_id: int, row) -> TaskCheckResponse:
             reward_granted=0,
             new_balance=current_balance,
             task_completed=True,
+            battle=None,
         )
 
     inserted = await add_task_post_view(db, user_id, task_post_id, reward)
@@ -357,6 +386,7 @@ async def check_view_post_task(db, user_id: int, row) -> TaskCheckResponse:
             reward_granted=0,
             new_balance=current_balance,
             task_completed=True,
+            battle=None,
         )
 
     updated_post = await increment_task_post_views(db, task_post_id)
@@ -378,6 +408,7 @@ async def check_view_post_task(db, user_id: int, row) -> TaskCheckResponse:
             reward_granted=0,
             new_balance=current_balance,
             task_completed=False,
+            battle=None,
         )
 
     new_balance = await _apply_task_reward(
@@ -400,7 +431,19 @@ async def check_view_post_task(db, user_id: int, row) -> TaskCheckResponse:
         entity_type="task_post",
         entity_id=str(task_post_id),
     )
+    battle_update = await register_battle_view_completion(
+        db,
+        user_id=int(user_id),
+    )
     await db.commit()
+    try:
+        await notify_battle_resolution_by_id(battle_update.get("resolved_battle_id"))
+    except Exception:
+        logger.exception(
+            "Failed to notify users about resolved battle after task completion task_post_id=%s user_id=%s",
+            task_post_id,
+            user_id,
+        )
 
     return TaskCheckResponse(
         ok=True,
@@ -410,6 +453,7 @@ async def check_view_post_task(db, user_id: int, row) -> TaskCheckResponse:
         reward_granted=reward,
         new_balance=new_balance,
         task_completed=True,
+        battle=battle_update.get("battle"),
     )
 
 
@@ -429,6 +473,7 @@ async def open_task_by_type(db, user_id: int, row) -> TaskOpenResponse:
         channel_post_id=None,
         post_url=None,
         session_id=None,
+        battle=None,
     )
 
 
@@ -448,6 +493,7 @@ async def check_task_by_type(db, user_id: int, row) -> TaskCheckResponse:
         reward_granted=0,
         new_balance=current_balance,
         task_completed=False,
+        battle=None,
     )
 
 
@@ -547,6 +593,7 @@ async def open_task_for_user(user_id: int, task_id: int) -> TaskOpenResponse:
                 channel_post_id=None,
                 post_url=None,
                 session_id=None,
+                battle=None,
             )
 
         response = await open_task_by_type(db, user_id, row)
@@ -573,6 +620,7 @@ async def check_task_for_user(user_id: int, task_id: int) -> TaskCheckResponse:
                 reward_granted=0,
                 new_balance=current_balance,
                 task_completed=False,
+                battle=None,
             )
 
         return await check_task_by_type(db, user_id, row)

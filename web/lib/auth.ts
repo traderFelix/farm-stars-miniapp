@@ -2,9 +2,7 @@
 
 export type MiniAppUser = {
     id: number;
-    username?: string | null;
-    first_name?: string | null;
-    last_name?: string | null;
+    game_nickname?: string | null;
 };
 
 export type AuthResponse = {

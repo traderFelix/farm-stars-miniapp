@@ -1,4 +1,5 @@
 import logging
+import re
 from typing import Any, Optional
 
 import aiosqlite
@@ -9,11 +10,15 @@ from shared.db.users import (
     bind_referrer,
     build_user_profile,
     get_user_by_id,
+    is_game_nickname_taken,
+    normalize_game_nickname,
     register_user,
+    set_user_game_nickname_once,
     update_user_telegram_fields,
 )
 
 logger = logging.getLogger(__name__)
+_GAME_NICKNAME_RE = re.compile(r"^[A-Za-zА-Яа-яЁё0-9][A-Za-zА-Яа-яЁё0-9 _-]{1,22}[A-Za-zА-Яа-яЁё0-9]$")
 
 
 def build_bot_main_menu_payload(profile: dict[str, Any]) -> dict[str, Any]:
@@ -81,6 +86,47 @@ async def get_profile_by_user_id(
     if not profile:
         raise HTTPException(status_code=404, detail="User not found")
     return profile
+
+
+async def change_game_nickname_for_user(
+        db: aiosqlite.Connection,
+        user_id: int,
+        game_nickname: str,
+) -> dict[str, Any]:
+    profile = await get_profile_by_user_id(db, int(user_id))
+    current_nickname = normalize_game_nickname(profile.get("game_nickname"))
+    next_nickname = normalize_game_nickname(game_nickname)
+
+    if len(next_nickname) < 3:
+        raise HTTPException(status_code=400, detail="Игровой ник слишком короткий")
+    if len(next_nickname) > 24:
+        raise HTTPException(status_code=400, detail="Игровой ник слишком длинный")
+    if not _GAME_NICKNAME_RE.fullmatch(next_nickname):
+        raise HTTPException(
+            status_code=400,
+            detail="Ник может содержать буквы, цифры, пробел, дефис и нижнее подчеркивание",
+        )
+
+    if next_nickname.casefold() == current_nickname.casefold():
+        return profile
+
+    if not bool(profile.get("can_change_game_nickname")):
+        raise HTTPException(status_code=400, detail="Игровой ник можно изменить только один раз")
+
+    if await is_game_nickname_taken(db, next_nickname, exclude_user_id=int(user_id)):
+        raise HTTPException(status_code=409, detail="Такой игровой ник уже занят")
+
+    async with tx(db, immediate=True):
+        updated = await set_user_game_nickname_once(
+            db,
+            int(user_id),
+            next_nickname,
+        )
+
+    if not updated:
+        raise HTTPException(status_code=400, detail="Игровой ник уже был изменен")
+
+    return await get_profile_by_user_id(db, int(user_id))
 
 
 async def bootstrap_bot_user(

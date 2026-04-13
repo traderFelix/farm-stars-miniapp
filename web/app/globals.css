@@ -390,6 +390,76 @@ textarea:focus {
   text-transform: uppercase;
 }
 
+.mining-profile-panel__edit,
+.mining-profile-panel__hint {
+  margin-top: 0.55rem;
+  display: inline-flex;
+  align-items: center;
+  min-height: 2rem;
+  border-radius: 999px;
+  padding: 0.38rem 0.82rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.mining-profile-panel__edit {
+  border: 1px solid rgba(99, 240, 255, 0.28);
+  background: rgba(12, 18, 35, 0.82);
+  color: #9eedff;
+  box-shadow: var(--shadow-glow-cyan);
+}
+
+.mining-profile-panel__hint {
+  border: 1px solid rgba(88, 108, 164, 0.28);
+  background: rgba(12, 18, 35, 0.74);
+  color: rgba(216, 226, 255, 0.62);
+}
+
+.mining-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background: rgba(4, 8, 18, 0.72);
+  backdrop-filter: blur(8px);
+}
+
+.mining-modal {
+  width: min(100%, 25rem);
+  border-radius: 30px;
+  border: 1px solid var(--border);
+  background: linear-gradient(180deg, rgba(17, 22, 43, 0.98), rgba(9, 13, 24, 0.98));
+  box-shadow: var(--shadow-soft), var(--shadow-glow-cyan);
+  padding: 1rem;
+}
+
+.mining-modal__title {
+  margin: 0.35rem 0 0;
+  color: #f7fbff;
+  font-size: 1.3rem;
+  line-height: 1.1;
+  font-weight: 700;
+}
+
+.mining-modal__description {
+  margin: 0.7rem 0 1rem;
+  color: #c2d0f1;
+  font-size: 0.96rem;
+  line-height: 1.45;
+}
+
+.mining-modal__actions {
+  margin-top: 1rem;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+}
+
 .mining-bottom-nav {
   position: fixed;
   left: 50%;

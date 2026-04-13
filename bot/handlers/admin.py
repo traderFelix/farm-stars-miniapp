@@ -32,6 +32,7 @@ from bot.api_client import (
     get_task_channel_posts_via_api,
     get_task_channel_via_api,
     get_user_ledger_page,
+    get_user_battle_stats,
     get_user_profile,
     get_user_risk_page,
     get_user_stats,
@@ -305,6 +306,40 @@ def _user_risk_nav_kb(user_id: int, page: int, has_next: bool) -> InlineKeyboard
         )
     ])
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+
+def _format_risk_meta(meta: Optional[str]) -> Optional[str]:
+    normalized = (meta or "").strip()
+    if not normalized:
+        return None
+
+    parts: dict[str, str] = {}
+    for chunk in normalized.split(";"):
+        if "=" not in chunk:
+            continue
+        key, value = chunk.split("=", 1)
+        parts[key.strip()] = value.strip()
+
+    lines: list[str] = []
+    related_users = parts.get("related_users")
+    if related_users:
+        lines.append(f"связанные пользователи: {related_users}")
+
+    cluster_size = parts.get("cluster_size")
+    if cluster_size:
+        lines.append(f"размер кластера: {cluster_size}")
+
+    session_cluster = parts.get("session_cluster")
+    fingerprint_cluster = parts.get("fingerprint_cluster")
+    if session_cluster or fingerprint_cluster:
+        cluster_parts: list[str] = []
+        if session_cluster:
+            cluster_parts.append(f"session={session_cluster}")
+        if fingerprint_cluster:
+            cluster_parts.append(f"fingerprint={fingerprint_cluster}")
+        lines.append("кластер: " + ", ".join(cluster_parts))
+
+    return "\n".join(lines) if lines else normalized
 
 
 async def _get_user_card_text(user_id: int) -> str:
@@ -1689,6 +1724,7 @@ async def adm_audit_balances(callback: CallbackQuery):
     referral_bonus = float(audit.get("referral_bonus") or 0)
     view_post_bonus = float(audit.get("view_post_bonus") or 0)
     daily_bonus = float(audit.get("daily_bonus") or 0)
+    battle_bonus = float(audit.get("battle_bonus") or 0)
 
     lines = [
         "🧮 Сверка балансов\n",
@@ -1700,6 +1736,7 @@ async def adm_audit_balances(callback: CallbackQuery):
         f"Получено за рефералов: {fmt_stars(referral_bonus)}⭐\n"
         f"Получено за просмотры постов: {fmt_stars(view_post_bonus)}⭐\n"
         f"Получено за ежедневный бонус: {fmt_stars(daily_bonus)}⭐\n"
+        f"Получено за батлы: {fmt_stars(battle_bonus)}⭐\n"
         f"Получено от админа: {fmt_stars(admin_adjust_net)}⭐\n",
         f"Выведено: {fmt_stars(total_withdrawn_sum)}⭐",
         f"В обработке: {fmt_stars(pending_withdrawn_sum)}⭐\n",
@@ -1902,6 +1939,42 @@ async def adm_user_stats(callback: CallbackQuery):
     await callback.answer()
 
 
+@router.callback_query(F.data.startswith("adm:user:battles:"))
+async def adm_user_battles(callback: CallbackQuery):
+    try:
+        user_id = int(callback.data.split(":")[-1])
+    except (ValueError, IndexError):
+        await callback.answer("Некорректный user_id", show_alert=True)
+        return
+
+    try:
+        result = await get_user_battle_stats(user_id)
+        text = result.get("text") or "Нет данных"
+    except ApiClientError as e:
+        text = f"❌ Не удалось загрузить статистику батлов из API.\n\n{e.detail}"
+
+    try:
+        await safe_edit_text(
+            callback.message,
+            text,
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        InlineKeyboardButton(
+                            text="⬅ Назад",
+                            callback_data=f"adm:user:details:{user_id}",
+                        )
+                    ]
+                ]
+            ),
+        )
+    except TelegramBadRequest as e:
+        if "message is not modified" not in str(e):
+            raise
+
+    await callback.answer()
+
+
 @router.callback_query(F.data.startswith("adm:user:risk:"))
 async def adm_user_risk(callback: CallbackQuery):
     parts = (callback.data or "").split(":")
@@ -1930,12 +2003,33 @@ async def adm_user_risk(callback: CallbackQuery):
         return
 
     history = result.get("items") or []
+    risk_cases = result.get("risk_cases") or []
+    total_score = float(result.get("total_score") or 0)
+    score_cap = float(result.get("score_cap") or 100)
 
     if not history and page > 0:
         await callback.answer("Дальше записей нет")
         return
 
     has_next = bool(result.get("has_next") or False)
+    summary_lines = []
+    for i, row in enumerate(risk_cases, start=1):
+        source = row.get("source") or "system"
+        reason = row.get("reason") or "-"
+        current_score = float(row.get("current_score") or 0)
+        max_score = float(row.get("max_score") or 0)
+        line = f"{i}. {source}: {reason} — {current_score:g}/{max_score:g}"
+        formatted_meta = _format_risk_meta(row.get("meta"))
+        if formatted_meta:
+            line += f"\n{formatted_meta}"
+        summary_lines.append(line)
+
+    summary_block = (
+        "\n".join(summary_lines)
+        if summary_lines
+        else "кейсы риска не настроены"
+    )
+
     lines = []
     start_n = page * LEDGER_PAGE_SIZE + 1
 
@@ -1951,15 +2045,19 @@ async def adm_user_risk(callback: CallbackQuery):
             f"{i}. {created_at}: {sign}{delta:g} риска → {score_after:g}\n"
             f"{source}: {reason}"
         )
-        if meta:
-            line += f"\nmeta: {meta}"
+        formatted_meta = _format_risk_meta(meta)
+        if formatted_meta:
+            line += f"\n{formatted_meta}"
         lines.append(line)
 
     if not lines:
         lines = ["нет событий риска"]
 
     text = (
-        f"🛡 Риск-история пользователя, страница {page + 1}\n\n"
+        f"🛡 Риск-профиль пользователя\n"
+        f"Текущий риск: {total_score:g}/{score_cap:g}\n\n"
+        f"Все кейсы риска:\n{summary_block}\n\n"
+        f"История изменений, страница {page + 1}\n\n"
         + "\n\n".join(lines)
     )
 

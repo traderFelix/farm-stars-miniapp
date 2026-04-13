@@ -18,8 +18,7 @@ async def get_me(user_id: int = Depends(get_current_user_id)):
     return {
         "user": {
             "id": profile["user_id"],
-            "username": profile.get("username"),
-            "first_name": profile.get("first_name"),
+            "game_nickname": profile.get("game_nickname"),
             "role": profile.get("role"),
             "balance": float(profile.get("balance") or 0),
             "activity_index": float(profile.get("activity_index") or 0),

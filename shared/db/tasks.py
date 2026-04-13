@@ -126,6 +126,22 @@ async def add_task_post_view(db, user_id: int, task_post_id: int, reward: float)
     return cursor.rowcount == 1
 
 
+async def count_completed_task_views_for_user(
+        db: aiosqlite.Connection,
+        user_id: int,
+) -> int:
+    async with db.execute(
+            """
+            SELECT COUNT(*) AS cnt
+            FROM task_post_views
+            WHERE user_id = ?
+            """,
+            (int(user_id),),
+    ) as cur:
+        row = await cur.fetchone()
+    return int(row["cnt"] or 0)
+
+
 async def increment_task_post_views(
         db: aiosqlite.Connection,
         task_post_id: int,

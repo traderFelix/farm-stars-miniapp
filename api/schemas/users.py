@@ -33,8 +33,13 @@ class UserBootstrapResponse(UserMainMenuResponse):
 
 class UserProfileResponse(BaseModel):
     user_id: int
-    username: Optional[str] = None
-    first_name: Optional[str] = None
+    game_nickname: Optional[str] = None
+    game_nickname_change_count: int = 0
+    can_change_game_nickname: bool = False
     balance: float
     role: str
     activity_index: float
+
+
+class UpdateGameNicknameRequest(BaseModel):
+    game_nickname: str

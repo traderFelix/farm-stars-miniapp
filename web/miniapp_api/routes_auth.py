@@ -1,4 +1,5 @@
 import secrets
+from typing import TypedDict
 
 from fastapi import APIRouter, HTTPException
 
@@ -9,7 +10,11 @@ from .telegram_auth import TelegramInitDataError, validate_telegram_init_data
 router = APIRouter()
 
 # Потом вынесешь в нормальное хранилище / redis / db
-SESSIONS: dict[str, dict] = {}
+class MiniAppSessionData(TypedDict):
+    user_id: int
+
+
+SESSIONS: dict[str, MiniAppSessionData] = {}
 
 
 @router.post("/api/miniapp/auth", response_model=MiniAppAuthResponse)
@@ -29,9 +34,6 @@ async def miniapp_auth(payload: MiniAppAuthRequest):
 
     SESSIONS[session_token] = {
         "user_id": tg_user["id"],
-        "username": tg_user.get("username"),
-        "first_name": tg_user.get("first_name"),
-        "last_name": tg_user.get("last_name"),
     }
 
     return MiniAppAuthResponse(
@@ -39,8 +41,5 @@ async def miniapp_auth(payload: MiniAppAuthRequest):
         session_token=session_token,
         user=MiniAppUser(
             id=tg_user["id"],
-            username=tg_user.get("username"),
-            first_name=tg_user.get("first_name"),
-            last_name=tg_user.get("last_name"),
         ),
     )

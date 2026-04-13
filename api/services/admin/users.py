@@ -5,6 +5,7 @@ from fastapi import HTTPException
 
 from shared.config import ROLE_OWNER
 from shared.db.common import tx
+from shared.db.battles import list_battle_opponent_stats
 from shared.db.ledger import list_user_ledger_page
 from shared.db.ledger import apply_balance_delta
 from shared.db.users import (
@@ -15,7 +16,10 @@ from shared.db.users import (
     get_user_by_id,
     get_user_id_by_username,
     get_user_role_level,
+    get_user_risk_score,
+    list_user_risk_case_progress,
     list_user_risk_events,
+    list_user_risk_flags,
     mark_user_suspicious,
     role_title_from_level,
     set_user_role_level,
@@ -143,6 +147,38 @@ async def get_stats(
     }
 
 
+async def get_battle_stats(
+        db: aiosqlite.Connection,
+        user_id: int,
+) -> dict[str, Any]:
+    await _ensure_user_exists(db, int(user_id))
+
+    rows = await list_battle_opponent_stats(db, user_id=int(user_id), limit=50)
+    if not rows:
+        return {
+            "text": "⚔️ Батлы\n\nУ пользователя пока нет завершенных дуэлей",
+        }
+
+    lines = ["⚔️ Батлы\n"]
+    for index, row in enumerate(rows, start=1):
+        opponent_username = (row["opponent_username"] or "").strip()
+        opponent_first_name = (row["opponent_first_name"] or "").strip()
+        opponent_name = f"@{opponent_username}" if opponent_username else opponent_first_name or f"id:{int(row['opponent_user_id'])}"
+        wins = int(row["wins"] or 0)
+        losses = int(row["losses"] or 0)
+        draws = int(row["draws"] or 0)
+        total = int(row["total"] or 0)
+        line = f"{index}. {opponent_name} — счет {wins}:{losses}"
+        if draws:
+            line += f", ничьих {draws}"
+        line += f" · всего {total}"
+        lines.append(line)
+
+    return {
+        "text": "\n".join(lines),
+    }
+
+
 async def get_user_ledger(
         db: aiosqlite.Connection,
         user_id: int,
@@ -196,6 +232,9 @@ async def get_user_risk_history(
     safe_page_size = max(int(page_size), 1)
     offset = safe_page * safe_page_size
 
+    total_score = await get_user_risk_score(db, int(user_id))
+    flags = await list_user_risk_flags(db, int(user_id))
+    risk_cases = await list_user_risk_case_progress(db, int(user_id))
     history = await list_user_risk_events(
         db,
         int(user_id),
@@ -208,9 +247,24 @@ async def get_user_risk_history(
 
     return {
         "user_id": int(user_id),
+        "total_score": float(total_score),
+        "score_cap": 100.0,
         "page": safe_page,
         "page_size": safe_page_size,
         "has_next": has_next,
+        "flags": [
+            {
+                "risk_key": row["risk_key"],
+                "score": float(row["score"] or 0),
+                "reason": row["reason"],
+                "source": row["source"],
+                "meta": row["meta"],
+                "created_at": row["created_at"],
+                "updated_at": row["updated_at"],
+            }
+            for row in flags
+        ],
+        "risk_cases": risk_cases,
         "items": [
             {
                 "id": int(row["id"]),

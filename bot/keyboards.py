@@ -121,6 +121,7 @@ def user_actions_kb(user_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="📊 Статистика ⭐", callback_data=f"adm:user:stats:{user_id}",)],
+            [InlineKeyboardButton(text="⚔️ Батлы", callback_data=f"adm:user:battles:{user_id}",)],
             [InlineKeyboardButton(text="📜 Последние операции", callback_data=f"adm:user:ledger:{user_id}",)],
             [InlineKeyboardButton(text="🛡 Риск-история", callback_data=f"adm:user:risk:{user_id}",)],
             [InlineKeyboardButton(text="🔧 Изменить роль", callback_data=f"adm:user:role:{user_id}")],

@@ -3,7 +3,7 @@ from typing import Optional
 
 import aiosqlite
 
-from shared.config import REFERRAL_PERCENT, SYSTEM_REASONS, GOOD_ACTIVITY_REASONS
+from shared.config import REFERRAL_PERCENT, GOOD_ACTIVITY_REASONS, NON_EARNING_REASONS
 
 from shared.db.users import get_referrer_id
 
@@ -227,8 +227,49 @@ async def apply_balance_debit_if_enough(
     )
     return True
 
+
+async def has_battle_entry_lock(
+        db: aiosqlite.Connection,
+        *,
+        user_id: int,
+        battle_id: int,
+) -> bool:
+    async with db.execute(
+            """
+            SELECT 1
+            FROM ledger
+            WHERE user_id = ?
+              AND reason = 'battle_entry'
+              AND meta = ?
+            LIMIT 1
+            """,
+            (int(user_id), f"battle_id={int(battle_id)}"),
+    ) as cur:
+        return await cur.fetchone() is not None
+
+
+async def has_battle_refund_record(
+        db: aiosqlite.Connection,
+        *,
+        user_id: int,
+        battle_id: int,
+) -> bool:
+    battle_meta_prefix = f"battle_id={int(battle_id)}"
+    async with db.execute(
+            """
+            SELECT 1
+            FROM ledger
+            WHERE user_id = ?
+              AND reason = 'battle_refund'
+              AND (meta = ? OR meta LIKE ?)
+            LIMIT 1
+            """,
+            (int(user_id), battle_meta_prefix, f"{battle_meta_prefix};%"),
+    ) as cur:
+        return await cur.fetchone() is not None
+
 async def get_user_earnings_breakdown(db: aiosqlite.Connection, user_id: int) -> dict[str, float]:
-    system_placeholders = ",".join("?" for _ in SYSTEM_REASONS)
+    non_earning_placeholders = ",".join("?" for _ in NON_EARNING_REASONS)
 
     query = f"""
         SELECT
@@ -237,11 +278,12 @@ async def get_user_earnings_breakdown(db: aiosqlite.Connection, user_id: int) ->
             COALESCE(SUM(CASE WHEN reason = 'contest_bonus' THEN delta ELSE 0 END), 0) AS contest_bonus,
             COALESCE(SUM(CASE WHEN reason = 'promo_bonus' THEN delta ELSE 0 END), 0) AS promo_bonus,
             COALESCE(SUM(CASE WHEN reason = 'referral_bonus' THEN delta ELSE 0 END), 0) AS referral_bonus,
+            COALESCE(SUM(CASE WHEN reason = 'battle_bonus' THEN delta ELSE 0 END), 0) AS battle_bonus,
             COALESCE(SUM(CASE WHEN reason = 'admin_adjust' THEN delta ELSE 0 END), 0) AS admin_adjust,
             COALESCE(
                 SUM(
                     CASE
-                        WHEN reason NOT IN ({system_placeholders})
+                        WHEN reason NOT IN ({non_earning_placeholders})
                         THEN delta ELSE 0
                     END
                 ),
@@ -251,7 +293,7 @@ async def get_user_earnings_breakdown(db: aiosqlite.Connection, user_id: int) ->
         WHERE user_id = ?
     """
 
-    params = (*SYSTEM_REASONS, int(user_id))
+    params = (*NON_EARNING_REASONS, int(user_id))
     async with db.execute(query, params) as cursor:
         row = await cursor.fetchone()
 
@@ -260,6 +302,7 @@ async def get_user_earnings_breakdown(db: aiosqlite.Connection, user_id: int) ->
     contest_bonus = float(row["contest_bonus"] or 0)
     promo_bonus = float(row["promo_bonus"] or 0)
     referral_bonus = float(row["referral_bonus"] or 0)
+    battle_bonus = float(row["battle_bonus"] or 0)
     admin_adjust = float(row["admin_adjust"] or 0)
     total = float(row["total_earned"] or 0)
 
@@ -280,12 +323,14 @@ async def get_user_earnings_breakdown(db: aiosqlite.Connection, user_id: int) ->
         "promo_bonus_pct": pct(promo_bonus, total),
         "referral_bonus": referral_bonus,
         "referral_bonus_pct": pct(referral_bonus, total),
+        "battle_bonus": battle_bonus,
+        "battle_bonus_pct": pct(battle_bonus, total),
         "admin_adjust": admin_adjust,
         "admin_adjust_pct": pct(admin_adjust, total),
     }
 
 async def get_activity_index(db, user_id: int) -> float:
-    system_placeholders = ",".join("?" for _ in SYSTEM_REASONS)
+    non_earning_placeholders = ",".join("?" for _ in NON_EARNING_REASONS)
     good_placeholders = ",".join("?" for _ in GOOD_ACTIVITY_REASONS)
 
     sql = f"""
@@ -297,10 +342,10 @@ async def get_activity_index(db, user_id: int) -> float:
         COALESCE(SUM(delta), 0) AS total_earned
     FROM ledger
     WHERE user_id = ?
-      AND reason NOT IN ({system_placeholders})
+      AND reason NOT IN ({non_earning_placeholders})
     """
 
-    params = [*GOOD_ACTIVITY_REASONS, int(user_id), *SYSTEM_REASONS]
+    params = [*GOOD_ACTIVITY_REASONS, int(user_id), *NON_EARNING_REASONS]
 
     async with db.execute(sql, params) as cur:
         row = await cur.fetchone()

@@ -64,17 +64,28 @@ MIN_WITHDRAW_PERCENT = 0.5
 LEDGER_PAGE_SIZE = 20
 REFERRAL_PERCENT = 0.10
 REQUIRED_ACCOUNT_AGE_HOURS = 24.0
+VIEW_BATTLE_ENTRY_FEE = float(os.getenv("VIEW_BATTLE_ENTRY_FEE", "1"))
+VIEW_BATTLE_TARGET_VIEWS = int(os.getenv("VIEW_BATTLE_TARGET_VIEWS", "20"))
+VIEW_BATTLE_DURATION_SECONDS = int(os.getenv("VIEW_BATTLE_DURATION_SECONDS", "300"))
+VIEW_BATTLE_WAITING_EXPIRE_SECONDS = int(os.getenv("VIEW_BATTLE_WAITING_EXPIRE_SECONDS", "600"))
+VIEW_BATTLE_HOLD_MIN_SECONDS = int(os.getenv("VIEW_BATTLE_HOLD_MIN_SECONDS", "5"))
+VIEW_BATTLE_HOLD_MAX_SECONDS = int(os.getenv("VIEW_BATTLE_HOLD_MAX_SECONDS", "8"))
 
 SYSTEM_REASONS = {
     "withdraw_hold",
     "withdraw_paid",
     "withdraw_release",
 }
+NON_EARNING_REASONS = SYSTEM_REASONS.union({
+    "battle_entry",
+    "battle_refund",
+})
 GOOD_ACTIVITY_REASONS = {
     "view_post_bonus",
     "daily_bonus",
     "referral_bonus",
     "task_bonus",
+    "battle_bonus",
 }
 BAD_ACTIVITY_REASONS = {
     "admin_adjust",
