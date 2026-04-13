@@ -62,10 +62,12 @@ export default function HomePage() {
   const [battleStatus, setBattleStatus] = useState<BattleStatusResponse | null>(null);
   const [battleLoadState, setBattleLoadState] = useState<BattleLoadState>("idle");
   const [battleErrorMessage, setBattleErrorMessage] = useState("");
+  const [battleDisplaySeconds, setBattleDisplaySeconds] = useState(0);
   const [nicknameModalOpen, setNicknameModalOpen] = useState(false);
   const [nicknameDraft, setNicknameDraft] = useState("");
   const [nicknameSaveState, setNicknameSaveState] = useState<NicknameSaveState>("idle");
   const [nicknameErrorMessage, setNicknameErrorMessage] = useState("");
+  const battleSyncInFlightRef = useRef(false);
 
   const [debugMessage, setDebugMessage] = useState<string>("Шаг 1: запуск");
   const [errorMessage, setErrorMessage] = useState<string>("");
@@ -89,14 +91,23 @@ export default function HomePage() {
     }
   }
 
-  async function loadBattleStatus() {
-    setBattleLoadState("loading");
-    setBattleErrorMessage("");
+  async function loadBattleStatus(options?: { silent?: boolean }) {
+    if (battleSyncInFlightRef.current) {
+      return battleStatus;
+    }
+
+    battleSyncInFlightRef.current = true;
+
+    if (!options?.silent) {
+      setBattleLoadState("loading");
+      setBattleErrorMessage("");
+    }
 
     try {
       const status = await getMyBattleStatus();
       setBattleStatus(status);
       setBattleLoadState("ready");
+      setBattleErrorMessage("");
       setProfile((prev) =>
         prev
           ? {
@@ -108,10 +119,15 @@ export default function HomePage() {
       return status;
     } catch (error) {
       const message = error instanceof Error ? error.message : "Не удалось загрузить статус дуэли";
-      setBattleStatus(null);
-      setBattleLoadState("error");
-      setBattleErrorMessage(message);
-      return null;
+      if (!options?.silent) {
+        setBattleStatus(null);
+        setBattleLoadState("error");
+        setBattleErrorMessage(message);
+        setBattleDisplaySeconds(0);
+      }
+      return battleStatus;
+    } finally {
+      battleSyncInFlightRef.current = false;
     }
   }
 
@@ -308,15 +324,34 @@ export default function HomePage() {
   }, [activeTab, bootstrapState]);
 
   useEffect(() => {
+    if (battleStatus?.state === "active") {
+      setBattleDisplaySeconds(Math.max(Number(battleStatus.seconds_left) || 0, 0));
+      return;
+    }
+
+    setBattleDisplaySeconds(0);
+  }, [battleStatus?.battle_id, battleStatus?.seconds_left, battleStatus?.state]);
+
+  useEffect(() => {
+    if (battleStatus?.state !== "active") return;
+
+    const timer = window.setInterval(() => {
+      setBattleDisplaySeconds((prev) => Math.max(prev - 1, 0));
+    }, 1000);
+
+    return () => window.clearInterval(timer);
+  }, [battleStatus?.battle_id, battleStatus?.state]);
+
+  useEffect(() => {
     if (bootstrapState !== "ready" || activeTab !== "mining") return;
     if (!battleStatus || !["waiting", "active"].includes(battleStatus.state)) return;
 
     const timer = window.setInterval(() => {
-      void loadBattleStatus();
-    }, 12000);
+      void loadBattleStatus({ silent: true });
+    }, 8000);
 
     return () => window.clearInterval(timer);
-  }, [activeTab, battleStatus, bootstrapState]);
+  }, [activeTab, battleStatus?.battle_id, battleStatus?.state, bootstrapState]);
 
   return (
     <main className="mining-app">
@@ -346,9 +381,6 @@ export default function HomePage() {
                 <h2 id="game-nickname-modal-title" className="mining-modal__title">
                   Сменить ник можно только один раз
                 </h2>
-                <p className="mining-modal__description">
-                  Другие игроки будут видеть этот ник в дуэлях вместо Telegram-данных
-                </p>
 
                 <input
                   type="text"
@@ -434,9 +466,7 @@ export default function HomePage() {
                     >
                       Сменить ник
                     </button>
-                  ) : (
-                    <div className="mining-profile-panel__hint">Игровой ник уже зафиксирован</div>
-                  )}
+                  ) : null}
                 </section>
 
                 <section className="grid grid-cols-2 gap-3">
@@ -526,12 +556,12 @@ export default function HomePage() {
 
                   <BattlePanel
                     status={battleStatus}
+                    displaySeconds={battleDisplaySeconds}
                     loadState={battleLoadState}
                     errorMessage={battleErrorMessage}
                     botTasksOpening={botTasksOpening}
                     onJoin={() => void handleJoinBattle()}
                     onCancel={() => void handleCancelBattle()}
-                    onRefresh={() => void loadBattleStatus()}
                     onOpenTasks={() => void handleOpenBotTasks()}
                   />
                 </section>
@@ -956,21 +986,21 @@ function RewardInline({
 
 function BattlePanel({
   status,
+  displaySeconds,
   loadState,
   errorMessage,
   botTasksOpening,
   onJoin,
   onCancel,
-  onRefresh,
   onOpenTasks,
 }: {
   status: BattleStatusResponse | null;
+  displaySeconds: number;
   loadState: BattleLoadState;
   errorMessage: string;
   botTasksOpening: boolean;
   onJoin: () => void;
   onCancel: () => void;
-  onRefresh: () => void;
   onOpenTasks: () => void;
 }) {
   const state = status?.state ?? "idle";
@@ -980,39 +1010,61 @@ function BattlePanel({
     return <StatusNote>Поднимаю очередь дуэлей и синхронизирую твой матч...</StatusNote>;
   }
 
-  const leftPrimaryLabel =
-    state === "active"
-      ? `${status?.my_progress ?? 0}/${status?.target_views ?? 20}`
-      : `${status?.total_completed_views ?? 0}`;
-  const leftPrimaryTitle =
-    state === "active" ? "Твой счет" : "Всего просмотров";
-  const rightPrimaryLabel =
-    state === "active"
-      ? `${status?.opponent_progress ?? 0}/${status?.target_views ?? 20}`
-      : `${formatCompactBalance(status?.entry_fee ?? 1)} ⭐`;
+  const entryFee = status?.entry_fee ?? 1;
+  const targetViews = Math.max(status?.target_views ?? 20, 1);
+  const myProgress = Math.max(status?.my_progress ?? 0, 0);
+  const opponentProgress = Math.max(status?.opponent_progress ?? 0, 0);
+  const leftPrimaryLabel = state === "active" ? `${myProgress}/${targetViews}` : `${status?.total_completed_views ?? 0}`;
+  const leftPrimaryTitle = state === "active" ? "Твой прогресс" : "Всего просмотров";
+  const rightPrimaryLabel = state === "active" ? `${opponentProgress}/${targetViews}` : `${formatCompactBalance(entryFee)} ⭐`;
   const rightPrimaryTitle =
     state === "active"
-      ? (status?.opponent_name ? `Соперник ${status.opponent_name}` : "Соперник")
-      : "Вход";
-  const leftSecondaryLabel = formatBattleCountdown(status?.seconds_left ?? 0);
-  const leftSecondaryTitle = "Осталось";
-  const rightSecondaryLabel = `${(status?.entry_fee ?? 1) * 2} ⭐`;
-  const rightSecondaryTitle = "Банк";
+      ? status?.opponent_name
+        ? `Соперник ${status.opponent_name}`
+        : "Соперник"
+      : "Плата за участие";
 
   return (
     <div className="mt-4 space-y-4">
-      <section className="grid grid-cols-2 gap-3">
-        <OverviewCard label={leftPrimaryTitle} value={leftPrimaryLabel} tone="gold" />
-        <OverviewCard label={rightPrimaryTitle} value={rightPrimaryLabel} tone="cyan" />
-        {state === "active" ? (
-          <>
-            <OverviewCard label={leftSecondaryTitle} value={leftSecondaryLabel} tone="slate" />
-            <OverviewCard label={rightSecondaryTitle} value={rightSecondaryLabel} tone="slate" />
-          </>
-        ) : null}
-      </section>
+      {state === "active" ? (
+        <section className="mining-battle-race">
+          <BattleProgressLane
+            label={leftPrimaryTitle}
+            value={leftPrimaryLabel}
+            hint={buildBattleProgressHint(myProgress, targetViews)}
+            progress={myProgress}
+            total={targetViews}
+            tone="gold"
+          />
+          <BattleProgressLane
+            label={rightPrimaryTitle}
+            value={rightPrimaryLabel}
+            hint={buildBattleProgressHint(opponentProgress, targetViews)}
+            progress={opponentProgress}
+            total={targetViews}
+            tone="cyan"
+          />
+          <div className="mining-battle-meta">
+            <div className="mining-battle-meta__item" data-tone="slate">
+              <div className="mining-battle-meta__label">Осталось</div>
+              <div className="mining-battle-meta__value">{formatBattleCountdown(displaySeconds)}</div>
+            </div>
+            <div className="mining-battle-meta__item" data-tone="slate">
+              <div className="mining-battle-meta__label">Банк</div>
+              <div className="mining-battle-meta__value">{`${entryFee * 2} ⭐`}</div>
+            </div>
+          </div>
+        </section>
+      ) : (
+        <section className="grid grid-cols-2 gap-3">
+          <OverviewCard label={leftPrimaryTitle} value={leftPrimaryLabel} tone="gold" />
+          <OverviewCard label={rightPrimaryTitle} value={rightPrimaryLabel} tone="cyan" />
+        </section>
+      )}
 
-      {state === "waiting" && status?.message ? <StatusNote>{status.message}</StatusNote> : null}
+      {state === "waiting" ? (
+        <BattleSearchStatus message={status?.message || "Ищу соперника для дуэли"} />
+      ) : null}
 
       {status?.last_result ? (
         <StatusNote tone={status.last_result.result === "won" ? "success" : status.last_result.result === "lost" ? "error" : "default"}>
@@ -1038,15 +1090,7 @@ function BattlePanel({
       )}
 
       {state === "waiting" && (
-        <div className="grid grid-cols-2 gap-3">
-          <button
-            type="button"
-            onClick={onRefresh}
-            disabled={isBusy}
-            className="mining-secondary-button w-full"
-          >
-            {isBusy ? "Обновляю..." : "Обновить поиск"}
-          </button>
+        <div>
           <button
             type="button"
             onClick={onCancel}
@@ -1059,7 +1103,7 @@ function BattlePanel({
       )}
 
       {state === "active" && (
-        <div className="grid grid-cols-2 gap-3">
+        <div>
           <button
             type="button"
             onClick={onOpenTasks}
@@ -1068,18 +1112,73 @@ function BattlePanel({
           >
             {botTasksOpening ? "Открываю..." : "Перейти к просмотру постов"}
           </button>
-          <button
-            type="button"
-            onClick={onRefresh}
-            disabled={isBusy}
-            className="mining-secondary-button w-full"
-          >
-            {isBusy ? "Обновляю..." : "Обновить"}
-          </button>
         </div>
       )}
     </div>
   );
+}
+
+function BattleProgressLane({
+  label,
+  value,
+  hint,
+  progress,
+  total,
+  tone,
+}: {
+  label: string;
+  value: string;
+  hint: string;
+  progress: number;
+  total: number;
+  tone: "gold" | "cyan";
+}) {
+  const safeTotal = Math.max(total, 1);
+  const percent = Math.min((Math.max(progress, 0) / safeTotal) * 100, 100);
+
+  return (
+    <div className="mining-battle-lane" data-tone={tone}>
+      <div className="mining-battle-lane__top">
+        <div className="mining-battle-lane__label">{label}</div>
+        <div className="mining-battle-lane__value">{value}</div>
+      </div>
+      <div className="mining-battle-lane__track" aria-hidden="true">
+        <div className="mining-battle-lane__fill" style={{ width: `${percent}%` }} />
+      </div>
+      <div className="mining-battle-lane__hint">{hint}</div>
+    </div>
+  );
+}
+
+function BattleSearchStatus({ message }: { message: string }) {
+  return (
+    <div className="mining-battle-search" role="status" aria-live="polite">
+      <div className="mining-battle-search__header">
+        <div className="mining-battle-search__title">{message}</div>
+        <div className="mining-battle-search__dots" aria-hidden="true">
+          <span />
+          <span />
+          <span />
+        </div>
+      </div>
+      <div className="mining-battle-search__track" aria-hidden="true">
+        <span className="mining-battle-search__beam" />
+      </div>
+      <div className="mining-battle-search__meta">
+        <span>Сканирую арену</span>
+        <span>Подбираю соперника</span>
+      </div>
+    </div>
+  );
+}
+
+function buildBattleProgressHint(progress: number, total: number): string {
+  const remaining = Math.max(total - progress, 0);
+  if (remaining === 0) {
+    return "Финиш достигнут";
+  }
+
+  return `До финиша ${remaining}`;
 }
 
 function formatBattleCountdown(seconds: number): string {
