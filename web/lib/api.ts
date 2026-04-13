@@ -70,6 +70,16 @@ export type CampaignClaimResponse = {
     code?: string | null;
 };
 
+export type PromoRedeemResponse = {
+    ok: boolean;
+    message: string;
+    new_balance: number;
+    reward_amount: number;
+    promo_code?: string | null;
+    title?: string | null;
+    code?: string | null;
+};
+
 export type ReferralMeResponse = {
     user_id: number;
     invited_count: number;
@@ -325,6 +335,14 @@ export async function claimCampaign(
 ): Promise<CampaignClaimResponse> {
     return apiRequest<CampaignClaimResponse>(`/campaigns/${campaignKey}/claim`, {
         method: "POST",
+        auth: true,
+    });
+}
+
+export async function redeemPromo(code: string): Promise<PromoRedeemResponse> {
+    return apiRequest<PromoRedeemResponse>("/promos/redeem", {
+        method: "POST",
+        body: { code },
         auth: true,
     });
 }

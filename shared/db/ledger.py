@@ -235,6 +235,7 @@ async def get_user_earnings_breakdown(db: aiosqlite.Connection, user_id: int) ->
             COALESCE(SUM(CASE WHEN reason = 'view_post_bonus' THEN delta ELSE 0 END), 0) AS view_post_bonus,
             COALESCE(SUM(CASE WHEN reason = 'daily_bonus' THEN delta ELSE 0 END), 0) AS daily_bonus,
             COALESCE(SUM(CASE WHEN reason = 'contest_bonus' THEN delta ELSE 0 END), 0) AS contest_bonus,
+            COALESCE(SUM(CASE WHEN reason = 'promo_bonus' THEN delta ELSE 0 END), 0) AS promo_bonus,
             COALESCE(SUM(CASE WHEN reason = 'referral_bonus' THEN delta ELSE 0 END), 0) AS referral_bonus,
             COALESCE(SUM(CASE WHEN reason = 'admin_adjust' THEN delta ELSE 0 END), 0) AS admin_adjust,
             COALESCE(
@@ -257,6 +258,7 @@ async def get_user_earnings_breakdown(db: aiosqlite.Connection, user_id: int) ->
     view_post_bonus = float(row["view_post_bonus"] or 0)
     daily_bonus = float(row["daily_bonus"] or 0)
     contest_bonus = float(row["contest_bonus"] or 0)
+    promo_bonus = float(row["promo_bonus"] or 0)
     referral_bonus = float(row["referral_bonus"] or 0)
     admin_adjust = float(row["admin_adjust"] or 0)
     total = float(row["total_earned"] or 0)
@@ -274,6 +276,8 @@ async def get_user_earnings_breakdown(db: aiosqlite.Connection, user_id: int) ->
         "daily_bonus_pct": pct(daily_bonus, total),
         "contest_bonus": contest_bonus,
         "contest_bonus_pct": pct(contest_bonus, total),
+        "promo_bonus": promo_bonus,
+        "promo_bonus_pct": pct(promo_bonus, total),
         "referral_bonus": referral_bonus,
         "referral_bonus_pct": pct(referral_bonus, total),
         "admin_adjust": admin_adjust,

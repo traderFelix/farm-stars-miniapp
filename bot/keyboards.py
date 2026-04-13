@@ -54,9 +54,8 @@ def task_after_view_kb() -> InlineKeyboardMarkup:
 def admin_menu_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="📋 Все конкурсы", callback_data="adm:list")],
-            [InlineKeyboardButton(text="➕ Создать конкурс", callback_data="adm:new")],
-            [InlineKeyboardButton(text="📊 Статистика конкурсов", callback_data="adm:stats_menu")],
+            [InlineKeyboardButton(text="🏆 Конкурсы", callback_data="adm:campaigns_menu")],
+            [InlineKeyboardButton(text="🎟 Промокоды", callback_data="adm:promos_menu")],
             [InlineKeyboardButton(text="📺 Каналы просмотров", callback_data="adm:tch:list")],
             [InlineKeyboardButton(text="📈 Рост пользователей", callback_data="adm:growth_png")],
             [InlineKeyboardButton(text="📜 Леджер (последние)", callback_data="adm:ledger_last")],
@@ -66,6 +65,28 @@ def admin_menu_kb() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="↩️ Возврат комсы", callback_data="adm:fee_refund_menu")],
             [InlineKeyboardButton(text="🧮 Сверка балансов", callback_data="adm:audit")],
             [InlineKeyboardButton(text="⬅ Назад", callback_data="back")],
+        ]
+    )
+
+
+def admin_campaigns_menu_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="📋 Все конкурсы", callback_data="adm:list")],
+            [InlineKeyboardButton(text="➕ Создать конкурс", callback_data="adm:new")],
+            [InlineKeyboardButton(text="📊 Статистика конкурсов", callback_data="adm:stats_menu")],
+            [InlineKeyboardButton(text="⬅ Назад", callback_data="adm:back")],
+        ]
+    )
+
+
+def admin_promos_menu_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🎟 Все промокоды", callback_data="adm:promo:list")],
+            [InlineKeyboardButton(text="➕ Создать промокод", callback_data="adm:promo:new")],
+            [InlineKeyboardButton(text="📊 Статистика промокодов", callback_data="adm:promo:stats_menu")],
+            [InlineKeyboardButton(text="⬅ Назад", callback_data="adm:back")],
         ]
     )
 
@@ -109,10 +130,10 @@ def user_actions_kb(user_id: int) -> InlineKeyboardMarkup:
         ]
     )
 
-def admin_back_kb() -> InlineKeyboardMarkup:
+def admin_back_kb(callback_data: str = "adm:back") -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="⬅ Назад", callback_data="adm:back")]
+            [InlineKeyboardButton(text="⬅ Назад", callback_data=callback_data)]
         ]
     )
 
@@ -126,7 +147,7 @@ def _status_icon(status: str) -> str:
         return "🟡"
     return "⚪"
 
-def campaigns_list_kb(rows) -> InlineKeyboardMarkup:
+def campaigns_list_kb(rows, back_callback: str = "adm:back") -> InlineKeyboardMarkup:
     keyboard = []
     for row in rows[:50]:
         if isinstance(row, dict):
@@ -143,10 +164,10 @@ def campaigns_list_kb(rows) -> InlineKeyboardMarkup:
             )
         ])
 
-    keyboard.append([InlineKeyboardButton(text="⬅ Назад", callback_data="adm:back")])
+    keyboard.append([InlineKeyboardButton(text="⬅ Назад", callback_data=back_callback)])
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
-def stats_list_kb(rows) -> InlineKeyboardMarkup:
+def stats_list_kb(rows, back_callback: str = "adm:back") -> InlineKeyboardMarkup:
     keyboard = []
     for row in rows:
         if isinstance(row, dict):
@@ -162,7 +183,7 @@ def stats_list_kb(rows) -> InlineKeyboardMarkup:
             )
         ])
 
-    keyboard.append([InlineKeyboardButton(text="⬅ Назад", callback_data="adm:back")])
+    keyboard.append([InlineKeyboardButton(text="⬅ Назад", callback_data=back_callback)])
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 def campaign_manage_kb(key: str, status: str) -> InlineKeyboardMarkup:
@@ -204,6 +225,73 @@ def campaign_created_kb(key: str) -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="📋 Все конкурсы", callback_data="adm:list")],
         ]
     )
+
+
+def promos_list_kb(rows, back_callback: str = "adm:back") -> InlineKeyboardMarkup:
+    keyboard = []
+    for row in rows[:50]:
+        icon = _status_icon(str(row.get("status") or "draft"))
+        code = row["promo_code"]
+        amount = float(row.get("reward_amount") or 0)
+        uses = int(row.get("remaining_uses") or 0)
+        keyboard.append([
+            InlineKeyboardButton(
+                text=f"{icon} {code} — {amount:g}⭐ × {uses}",
+                callback_data=f"adm:promo:open:{code}",
+            )
+        ])
+
+    keyboard.append([InlineKeyboardButton(text="⬅ Назад", callback_data=back_callback)])
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+
+def promo_manage_kb(code: str, status: str) -> InlineKeyboardMarkup:
+    keyboard = []
+
+    if status == "active":
+        keyboard.append([InlineKeyboardButton(text="🔴 Выключить", callback_data=f"adm:promo:off:{code}")])
+    else:
+        keyboard.append([InlineKeyboardButton(text="🟢 Включить", callback_data=f"adm:promo:on:{code}")])
+
+    keyboard.append([InlineKeyboardButton(text="📊 Статистика", callback_data=f"adm:promo:stats:{code}")])
+    keyboard.append([InlineKeyboardButton(text="🗑 Удалить промокод", callback_data=f"adm:promo:del:ask:{code}")])
+    keyboard.append([InlineKeyboardButton(text="⬅ Назад", callback_data="adm:promo:list")])
+
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+
+def promo_delete_confirm_kb(code: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Да, удалить", callback_data=f"adm:promo:del:do:{code}")],
+            [InlineKeyboardButton(text="⬅ Назад", callback_data=f"adm:promo:open:{code}")],
+        ]
+    )
+
+
+def promo_created_kb(code: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="📂 Открыть промокод", callback_data=f"adm:promo:open:{code}")],
+            [InlineKeyboardButton(text="🎟 Все промокоды", callback_data="adm:promo:list")],
+        ]
+    )
+
+
+def promo_stats_list_kb(rows, back_callback: str = "adm:back") -> InlineKeyboardMarkup:
+    keyboard = []
+    for row in rows[:50]:
+        icon = _status_icon(str(row.get("status") or "draft"))
+        code = row["promo_code"]
+        keyboard.append([
+            InlineKeyboardButton(
+                text=f"{icon} {code}",
+                callback_data=f"adm:promo:stats:{code}",
+            )
+        ])
+
+    keyboard.append([InlineKeyboardButton(text="⬅ Назад", callback_data=back_callback)])
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 def user_details_kb(user_id: int) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()

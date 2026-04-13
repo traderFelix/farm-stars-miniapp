@@ -6,6 +6,13 @@ class CampaignCreate(StatesGroup):
     title = State()
     post_url = State()
 
+
+class PromoCreate(StatesGroup):
+    code = State()
+    amount = State()
+    total_uses = State()
+    title = State()
+
 class AddWinners(StatesGroup):
     usernames = State()
 
