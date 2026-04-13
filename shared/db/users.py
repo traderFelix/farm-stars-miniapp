@@ -183,8 +183,7 @@ def _risk_flag_key(source: Optional[str], reason: Optional[str]) -> str:
 
 
 _RISK_CASE_WEIGHTS = (
-    {"source": "auth", "reason": "Один browser session используется на нескольких аккаунтах", "weight": 45.0},
-    {"source": "auth", "reason": "Зафиксирован кластер аккаунтов с одинаковым устройством/сетью", "weight": 20.0},
+    {"source": "auth", "reason": "Зафиксирован кластер аккаунтов с одинаковым устройством/сетью", "weight": 45.0},
     {"source": "auth", "reason": "Подозрительный реферальный кластер по fingerprint", "weight": 30.0},
     {"source": "withdrawals", "reason": "Общий TON-кошелек с другим аккаунтом", "weight": 100.0},
     {"source": "withdrawals", "reason": "Слишком много неудачных попыток вывода", "weight": 15.0},
@@ -720,6 +719,31 @@ async def get_referrer_id(db: aiosqlite.Connection, user_id: int) -> Optional[in
         return None
 
     return int(row["referred_by"])
+
+
+async def list_related_referral_users(
+        db: aiosqlite.Connection,
+        *,
+        user_id: int,
+        candidate_user_ids: list[int],
+        limit: int = 10,
+):
+    normalized_ids = sorted({int(item) for item in candidate_user_ids if int(item) != int(user_id)})
+    if not normalized_ids:
+        return []
+
+    placeholders = ",".join("?" for _ in normalized_ids)
+    query = f"""
+        SELECT user_id, username, tg_first_name
+        FROM users
+        WHERE user_id IN ({placeholders})
+          AND referred_by = ?
+        ORDER BY user_id ASC
+        LIMIT ?
+    """
+    params: list[Any] = [*normalized_ids, int(user_id), int(limit)]
+    async with db.execute(query, tuple(params)) as cur:
+        return await cur.fetchall()
 
 
 async def total_balances(db: aiosqlite.Connection) -> float:

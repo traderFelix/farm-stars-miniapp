@@ -325,13 +325,17 @@ def _format_risk_meta(meta: Optional[str]) -> Optional[str]:
     if related_users:
         lines.append(f"связанные пользователи: {related_users}")
 
+    related_referrals = parts.get("related_referrals")
+    if related_referrals:
+        lines.append(f"подозрительные рефералы: {related_referrals}")
+
     cluster_size = parts.get("cluster_size")
     if cluster_size:
         lines.append(f"размер кластера: {cluster_size}")
 
     session_cluster = parts.get("session_cluster")
     fingerprint_cluster = parts.get("fingerprint_cluster")
-    if session_cluster or fingerprint_cluster:
+    if (session_cluster or fingerprint_cluster) and not related_referrals:
         cluster_parts: list[str] = []
         if session_cluster:
             cluster_parts.append(f"session={session_cluster}")
