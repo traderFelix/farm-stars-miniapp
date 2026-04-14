@@ -476,10 +476,10 @@ export default function HomePage() {
                     tone="gold"
                   />
                   <OverviewCard
-                    label="Индекс активности"
-                    value={formatActivity(profile.activity_index)}
+                    label="Доступность вывода"
+                    value={formatActivity(profile.withdrawal_ability)}
                     tone="cyan"
-                    infoText="Индекс активности растет от просмотра постов, ежедневных бонусов, победах в батлах и за рефералов"
+                    infoText="Доступность вывода растет от просмотра постов, ежедневных бонусов, побед в батлах и рефералов"
                   />
                 </section>
 
@@ -778,7 +778,7 @@ function InfoHint({ text }: { text: string }) {
       <button
         type="button"
         className="mining-info-hint__button mining-info-hint__button--card"
-        aria-label="Подробнее об индексе активности"
+        aria-label="Подробнее о доступности вывода"
         aria-expanded={open}
         ref={buttonRef}
         onClick={() => setOpen((prev) => !prev)}

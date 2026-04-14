@@ -680,7 +680,7 @@ async def build_user_stats_text(db: aiosqlite.Connection, user_id: int) -> str:
 
 
 async def build_user_profile(db: aiosqlite.Connection, user_id: int) -> Optional[dict[str, Any]]:
-    from shared.db.ledger import get_activity_index
+    from shared.db.ledger import get_withdrawal_ability
 
     row = await get_user_by_id(db, user_id)
     if not row:
@@ -700,7 +700,7 @@ async def build_user_profile(db: aiosqlite.Connection, user_id: int) -> Optional
         "risk_score": float(row["risk_score"] or 0),
         "role_level": int(role_level),
         "role": role_title_from_level(role_level),
-        "activity_index": await get_activity_index(db, user_id),
+        "withdrawal_ability": await get_withdrawal_ability(db, user_id),
         "is_suspicious": bool(row["is_suspicious"]) if "is_suspicious" in row.keys() else False,
         "suspicious_reason": row["suspicious_reason"] if "suspicious_reason" in row.keys() else None,
         "created_at": row["created_at"] if "created_at" in row.keys() else None,

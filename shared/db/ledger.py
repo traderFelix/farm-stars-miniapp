@@ -350,7 +350,7 @@ async def get_user_earnings_breakdown(db: aiosqlite.Connection, user_id: int) ->
         "admin_adjust_pct": pct(admin_adjust, total),
     }
 
-async def get_activity_index(db, user_id: int) -> float:
+async def get_withdrawal_ability(db, user_id: int) -> float:
     system_placeholders = ",".join("?" for _ in SYSTEM_REASONS)
     positive_good_reasons = tuple(
         reason for reason in GOOD_ACTIVITY_REASONS if reason != "battle_bonus"

@@ -24,7 +24,7 @@ class UserMainMenuResponse(BaseModel):
     balance: float
     role: str
     role_level: int
-    activity_index: float
+    withdrawal_ability: float
 
 
 class UserBootstrapResponse(UserMainMenuResponse):
@@ -38,7 +38,7 @@ class UserProfileResponse(BaseModel):
     can_change_game_nickname: bool = False
     balance: float
     role: str
-    activity_index: float
+    withdrawal_ability: float
 
 
 class UpdateGameNicknameRequest(BaseModel):

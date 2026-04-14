@@ -23,7 +23,7 @@ async def get_my_profile(user_id: int = Depends(get_current_user_id)):
         can_change_game_nickname=bool(profile.get("can_change_game_nickname")),
         balance=float(profile.get("balance") or 0),
         role=profile.get("role") or "пользователь",
-        activity_index=float(profile.get("activity_index") or 0),
+        withdrawal_ability=float(profile.get("withdrawal_ability") or 0),
     )
 
 
@@ -49,5 +49,5 @@ async def update_my_game_nickname(
         can_change_game_nickname=bool(profile.get("can_change_game_nickname")),
         balance=float(profile.get("balance") or 0),
         role=profile.get("role") or "пользователь",
-        activity_index=float(profile.get("activity_index") or 0),
+        withdrawal_ability=float(profile.get("withdrawal_ability") or 0),
     )

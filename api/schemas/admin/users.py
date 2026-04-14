@@ -12,7 +12,7 @@ class ProfileResponse(BaseModel):
     risk_score: float = 0
     role_level: int
     role: str
-    activity_index: float
+    withdrawal_ability: float
     is_suspicious: bool = False
     suspicious_reason: Optional[str] = None
     created_at: Optional[str] = None

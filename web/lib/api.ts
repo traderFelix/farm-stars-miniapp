@@ -17,7 +17,7 @@ export type Profile = {
     can_change_game_nickname: boolean;
     balance: number;
     role: string;
-    activity_index: number;
+    withdrawal_ability: number;
 };
 
 export type CheckinStatus = {
@@ -118,7 +118,7 @@ export type WithdrawalEligibilityResponse = {
     has_pending_withdrawal: boolean;
     account_age_hours: number;
     required_account_age_hours: number;
-    activity_index: number;
+    withdrawal_ability: number;
     task_earnings_percent: number;
     available_balance: number;
     message: string;

@@ -28,6 +28,6 @@ async def get_me(authorization: Optional[str] = Header(default=None)):
             id=int(row["user_id"]),
             balance=float(row["balance"] or 0),
             role="user",
-            activity_index=0.0,
+            withdrawal_ability=0.0,
         ),
     )

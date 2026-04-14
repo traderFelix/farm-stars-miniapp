@@ -22,7 +22,7 @@ class MiniAppMeUser(BaseModel):
     game_nickname: Optional[str] = None
     balance: float
     role: str
-    activity_index: float
+    withdrawal_ability: float
 
 
 class MiniAppMeResponse(BaseModel):

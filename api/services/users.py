@@ -27,7 +27,7 @@ def build_bot_main_menu_payload(profile: dict[str, Any]) -> dict[str, Any]:
         "balance": float(profile.get("balance") or 0),
         "role": profile.get("role") or "пользователь",
         "role_level": int(profile.get("role_level") or 0),
-        "activity_index": float(profile.get("activity_index") or 0),
+        "withdrawal_ability": float(profile.get("withdrawal_ability") or 0),
     }
 
 

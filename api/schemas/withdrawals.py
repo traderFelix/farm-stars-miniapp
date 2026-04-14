@@ -13,7 +13,7 @@ class WithdrawalEligibilityResponse(BaseModel):
     has_pending_withdrawal: bool
     account_age_hours: float
     required_account_age_hours: float
-    activity_index: float
+    withdrawal_ability: float
     task_earnings_percent: float
     available_balance: float
     message: str

@@ -29,7 +29,7 @@ from shared.db.abuse import (
 )
 from shared.db.ledger import (
     apply_balance_debit_if_enough,
-    get_activity_index,
+    get_withdrawal_ability,
     get_user_earnings_breakdown,
 )
 from shared.db.users import add_user_risk_score, get_balance, get_user_by_id, user_created_hours_ago
@@ -55,7 +55,7 @@ class EligibilityCheckResult:
     has_pending_withdrawal: bool
     account_age_hours: float
     required_account_age_hours: float
-    activity_index: float
+    withdrawal_ability: float
     task_earnings_percent: float
     available_balance: float
     is_first_withdraw: bool
@@ -122,7 +122,7 @@ async def _build_eligibility(user_id: int) -> EligibilityCheckResult:
                 has_pending_withdrawal=False,
                 account_age_hours=0.0,
                 required_account_age_hours=REQUIRED_ACCOUNT_AGE_HOURS,
-                activity_index=0.0,
+                withdrawal_ability=0.0,
                 task_earnings_percent=0.0,
                 available_balance=0.0,
                 is_first_withdraw=True,
@@ -133,7 +133,7 @@ async def _build_eligibility(user_id: int) -> EligibilityCheckResult:
         is_suspicious = bool(user["is_suspicious"] or 0)
         account_age_hours = _safe_float(await user_created_hours_ago(db, user_id))
         pending = await has_pending_withdrawal(db, user_id)
-        activity_index = _safe_float(await get_activity_index(db, user_id))
+        withdrawal_ability = _safe_float(await get_withdrawal_ability(db, user_id))
         breakdown = await get_user_earnings_breakdown(db, user_id)
         task_percent = _extract_task_percent(breakdown)
         first_withdraw = await is_first_withdraw(db, user_id)
@@ -147,7 +147,7 @@ async def _build_eligibility(user_id: int) -> EligibilityCheckResult:
                 has_pending_withdrawal=False,
                 account_age_hours=round(account_age_hours, 2),
                 required_account_age_hours=REQUIRED_ACCOUNT_AGE_HOURS,
-                activity_index=activity_index,
+                withdrawal_ability=withdrawal_ability,
                 task_earnings_percent=task_percent,
                 available_balance=balance,
                 is_first_withdraw=first_withdraw,
@@ -162,7 +162,7 @@ async def _build_eligibility(user_id: int) -> EligibilityCheckResult:
                 has_pending_withdrawal=True,
                 account_age_hours=round(account_age_hours, 2),
                 required_account_age_hours=REQUIRED_ACCOUNT_AGE_HOURS,
-                activity_index=activity_index,
+                withdrawal_ability=withdrawal_ability,
                 task_earnings_percent=task_percent,
                 available_balance=balance,
                 is_first_withdraw=first_withdraw,
@@ -177,7 +177,7 @@ async def _build_eligibility(user_id: int) -> EligibilityCheckResult:
                 has_pending_withdrawal=False,
                 account_age_hours=round(account_age_hours, 2),
                 required_account_age_hours=REQUIRED_ACCOUNT_AGE_HOURS,
-                activity_index=activity_index,
+                withdrawal_ability=withdrawal_ability,
                 task_earnings_percent=task_percent,
                 available_balance=balance,
                 is_first_withdraw=first_withdraw,
@@ -192,22 +192,22 @@ async def _build_eligibility(user_id: int) -> EligibilityCheckResult:
                 has_pending_withdrawal=False,
                 account_age_hours=round(account_age_hours, 2),
                 required_account_age_hours=REQUIRED_ACCOUNT_AGE_HOURS,
-                activity_index=activity_index,
+                withdrawal_ability=withdrawal_ability,
                 task_earnings_percent=task_percent,
                 available_balance=balance,
                 is_first_withdraw=first_withdraw,
             )
 
-        if activity_index <= MIN_TASK_PERCENT_VALUE:
+        if withdrawal_ability <= MIN_TASK_PERCENT_VALUE:
             return EligibilityCheckResult(
                 can_withdraw=False,
-                message=f"Для вывода нужен индекс активности выше {MIN_TASK_PERCENT_VALUE:.0f}%",
+                message=f"Для вывода нужна доступность вывода выше {MIN_TASK_PERCENT_VALUE:.0f}%",
                 min_withdraw=MIN_WITHDRAW,
                 min_task_percent=MIN_TASK_PERCENT_VALUE,
                 has_pending_withdrawal=False,
                 account_age_hours=round(account_age_hours, 2),
                 required_account_age_hours=REQUIRED_ACCOUNT_AGE_HOURS,
-                activity_index=activity_index,
+                withdrawal_ability=withdrawal_ability,
                 task_earnings_percent=task_percent,
                 available_balance=balance,
                 is_first_withdraw=first_withdraw,
@@ -221,7 +221,7 @@ async def _build_eligibility(user_id: int) -> EligibilityCheckResult:
             has_pending_withdrawal=False,
             account_age_hours=round(account_age_hours, 2),
             required_account_age_hours=REQUIRED_ACCOUNT_AGE_HOURS,
-            activity_index=activity_index,
+            withdrawal_ability=withdrawal_ability,
             task_earnings_percent=task_percent,
             available_balance=balance,
             is_first_withdraw=first_withdraw,
@@ -260,15 +260,15 @@ async def _validate_withdraw_rules(db, user_id: int, amount: float) -> Optional[
     if recent_withdraw_sum + amount > 1000:
         return "Суточный лимит вывода превышен"
 
-    activity_index = await get_activity_index(db, user_id)
-    if activity_index <= 0:
+    withdrawal_ability = await get_withdrawal_ability(db, user_id)
+    if withdrawal_ability <= 0:
         return "❌ Вывод пока недоступен"
 
-    if activity_index <= MIN_WITHDRAW_PERCENT * 100:
+    if withdrawal_ability <= MIN_WITHDRAW_PERCENT * 100:
         return (
             "❌ Вывод пока недоступен\n\n"
-            f"Для вывода нужен Индекс Активности выше {MIN_WITHDRAW_PERCENT * 100:.0f}%\n\n"
-            f"• Индекс Активности: {activity_index:.2f}%"
+            f"Для вывода нужна Доступность вывода выше {MIN_WITHDRAW_PERCENT * 100:.0f}%\n\n"
+            f"• Доступность вывода: {withdrawal_ability:.2f}%"
         )
 
     return None
@@ -286,7 +286,7 @@ async def get_withdrawal_eligibility_for_user(
         has_pending_withdrawal=result.has_pending_withdrawal,
         account_age_hours=result.account_age_hours,
         required_account_age_hours=result.required_account_age_hours,
-        activity_index=result.activity_index,
+        withdrawal_ability=result.withdrawal_ability,
         task_earnings_percent=result.task_earnings_percent,
         available_balance=result.available_balance,
         message=result.message,

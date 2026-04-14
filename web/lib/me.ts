@@ -5,6 +5,6 @@ export type MeResponse = {
         game_nickname?: string | null;
         balance: number;
         role: string;
-        activity_index: number;
+        withdrawal_ability: number;
     };
 };
