@@ -268,7 +268,7 @@ async def _validate_withdraw_rules(db, user_id: int, amount: float) -> Optional[
         return (
             "❌ Вывод пока недоступен\n\n"
             f"Для вывода нужен Индекс Активности выше {MIN_WITHDRAW_PERCENT * 100:.0f}%\n\n"
-            f"• Индекс Активности: {activity_index:.1f}%"
+            f"• Индекс Активности: {activity_index:.2f}%"
         )
 
     return None

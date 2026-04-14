@@ -1740,7 +1740,7 @@ async def adm_audit_balances(callback: CallbackQuery):
         f"Получено за рефералов: {fmt_stars(referral_bonus)}⭐\n"
         f"Получено за просмотры постов: {fmt_stars(view_post_bonus)}⭐\n"
         f"Получено за ежедневный бонус: {fmt_stars(daily_bonus)}⭐\n"
-        f"Получено за батлы: {fmt_stars(battle_bonus)}⭐\n"
+        f"Результат батлов: {fmt_stars(battle_bonus)}⭐\n"
         f"Получено от админа: {fmt_stars(admin_adjust_net)}⭐\n",
         f"Выведено: {fmt_stars(total_withdrawn_sum)}⭐",
         f"В обработке: {fmt_stars(pending_withdrawn_sum)}⭐\n",

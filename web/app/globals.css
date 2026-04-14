@@ -1241,19 +1241,6 @@ textarea:focus {
   animation: mining-battle-scan 1.9s infinite ease-in-out;
 }
 
-.mining-battle-search__meta {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
-  margin-top: 0.7rem;
-  color: #9db2df;
-  font-size: 0.78rem;
-  font-weight: 600;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-}
-
 .mining-battle-race {
   display: grid;
   gap: 0.85rem;
@@ -1418,8 +1405,7 @@ textarea:focus {
 }
 
 @media (max-width: 420px) {
-  .mining-battle-search__header,
-  .mining-battle-search__meta {
+  .mining-battle-search__header {
     align-items: flex-start;
     flex-direction: column;
   }

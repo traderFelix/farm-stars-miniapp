@@ -479,7 +479,7 @@ export default function HomePage() {
                     label="Индекс активности"
                     value={formatActivity(profile.activity_index)}
                     tone="cyan"
-                    infoText="Индекс активности растет от просмотра постов, ежедневных бонусов и рефералов"
+                    infoText="Индекс активности растет от просмотра постов, ежедневных бонусов, победах в батлах и за рефералов"
                   />
                 </section>
 
@@ -1023,6 +1023,10 @@ function BattlePanel({
         ? `Соперник ${status.opponent_name}`
         : "Соперник"
       : "Плата за участие";
+  const idleMessage = state === "idle" ? (status?.message || "").trim() : "";
+  const idleMessageTone: "default" | "error" = idleMessage.toLowerCase().includes("слишком част")
+    ? "error"
+    : "default";
 
   return (
     <div className="mt-4 space-y-4">
@@ -1086,6 +1090,7 @@ function BattlePanel({
           >
             {status?.can_join ? "Найти соперника" : "Нужна 1⭐"}
           </button>
+          {idleMessage ? <StatusNote tone={idleMessageTone}>{idleMessage}</StatusNote> : null}
         </div>
       )}
 
@@ -1163,10 +1168,6 @@ function BattleSearchStatus({ message }: { message: string }) {
       </div>
       <div className="mining-battle-search__track" aria-hidden="true">
         <span className="mining-battle-search__beam" />
-      </div>
-      <div className="mining-battle-search__meta">
-        <span>Сканирую арену</span>
-        <span>Подбираю соперника</span>
       </div>
     </div>
   );

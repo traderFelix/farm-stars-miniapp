@@ -668,13 +668,13 @@ async def build_user_stats_text(db: aiosqlite.Connection, user_id: int) -> str:
     stats = await get_user_earnings_breakdown(db, user_id)
 
     return (
-        f"⭐ Всего заработано: {fmt_stars(stats['total'])}⭐\n"
+        f"⭐ Всего заработано: {fmt_stars(stats['total'])}⭐\n\n"
         f"{fmt_stars(stats['view_post_bonus'])} ({stats['view_post_bonus_pct']:.1f}%) — просмотр постов\n"
         f"{fmt_stars(stats['daily_bonus'])} ({stats['daily_bonus_pct']:.1f}%) — ежедневный бонус\n"
-        f"{fmt_stars(stats['battle_bonus'])} ({stats['battle_bonus_pct']:.1f}%) — батлы\n"
+        f"{fmt_stars(stats['battle_net'])} ({stats['battle_net_pct']:.1f}%) — батлы\n"
+        f"{fmt_stars(stats['referral_bonus'])} ({stats['referral_bonus_pct']:.1f}%) — рефералы\n\n"
         f"{fmt_stars(stats['contest_bonus'])} ({stats['contest_bonus_pct']:.1f}%) — конкурсы\n"
         f"{fmt_stars(stats['promo_bonus'])} ({stats['promo_bonus_pct']:.1f}%) — промокоды\n"
-        f"{fmt_stars(stats['referral_bonus'])} ({stats['referral_bonus_pct']:.1f}%) — рефералы\n"
         f"{fmt_stars(stats['admin_adjust'])} ({stats['admin_adjust_pct']:.1f}%) — начисления от админа"
     )
 

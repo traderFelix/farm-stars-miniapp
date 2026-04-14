@@ -22,6 +22,7 @@ from shared.config import (
     VIEW_BATTLE_TARGET_VIEWS,
     VIEW_BATTLE_WAITING_EXPIRE_SECONDS,
 )
+from shared.db.abuse import count_recent_abuse_events_for_actions
 from shared.db.battles import (
     activate_battle,
     cancel_waiting_battle,
@@ -50,6 +51,7 @@ from shared.db.users import add_user_risk_score, default_game_nickname_for_user_
 logger = logging.getLogger(__name__)
 
 _SQLITE_DT_FORMAT = "%Y-%m-%d %H:%M:%S"
+_BATTLE_JOIN_CANCEL_MAX_CYCLES_PER_MINUTE = 3
 
 
 class BattleRowLike(Protocol):
@@ -259,7 +261,7 @@ def _build_status_response(
         can_open_tasks=False,
         hold_seconds_min=VIEW_BATTLE_HOLD_MIN_SECONDS,
         hold_seconds_max=VIEW_BATTLE_HOLD_MAX_SECONDS,
-        message=message or "Вступай в дуэль: первым набей 20 просмотров за 5 минут",
+        message=message or "",
         last_result=_battle_recent_result_from_row(latest_finished_battle, user_id),
     )
 
@@ -688,9 +690,27 @@ async def join_battle_for_user(
                 fingerprint=fingerprint,
             )
 
+            recent_cancel_count = await count_recent_abuse_events_for_actions(
+                db,
+                user_id=int(user_id),
+                actions=["battle_cancel_success"],
+                minutes=1,
+            )
+            if recent_cancel_count >= _BATTLE_JOIN_CANCEL_MAX_CYCLES_PER_MINUTE:
+                current_balance = await get_balance(db, user_id)
+                total_completed_views = await count_completed_task_views_for_user(db, user_id)
+                response = _build_status_response(
+                    user_id=user_id,
+                    current_balance=current_balance,
+                    total_completed_views=total_completed_views,
+                    open_battle=None,
+                    latest_finished_battle=cast(Optional[BattleRowLike], await get_user_latest_finished_battle(db, user_id)),
+                    message="Слишком частые перезапуски поиска, попробуй через минуту",
+                )
+
             resolution_to_notify = await _sync_user_battle_resolution(db, user_id=user_id)
             open_battle = cast(Optional[BattleRowLike], await get_user_open_battle(db, user_id))
-            if open_battle:
+            if response is None and open_battle:
                 current_balance = await get_balance(db, user_id)
                 total_completed_views = await count_completed_task_views_for_user(db, user_id)
                 response = _build_status_response(
@@ -896,6 +916,14 @@ async def cancel_battle_for_user(
                     user_id=user_id,
                 )
                 if cancelled:
+                    await log_user_action_with_fingerprint(
+                        db,
+                        user_id=user_id,
+                        action="battle_cancel_success",
+                        fingerprint=fingerprint,
+                        entity_type="battle",
+                        entity_id=str(_row_int(open_battle, "id")),
+                    )
                     await _refund_waiting_battle_stake_if_locked(
                         db,
                         battle_id=_row_int(open_battle, "id"),
@@ -910,8 +938,8 @@ async def cancel_battle_for_user(
                     current_balance=current_balance,
                     total_completed_views=total_completed_views,
                     open_battle=None,
-                        latest_finished_battle=cast(Optional[BattleRowLike], await get_user_latest_finished_battle(db, user_id)),
-                    message="Поиск соперника отменен",
+                    latest_finished_battle=cast(Optional[BattleRowLike], await get_user_latest_finished_battle(db, user_id)),
+                    message=None,
                 )
     finally:
         await db.close()
