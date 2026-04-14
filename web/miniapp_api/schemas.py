@@ -8,9 +8,7 @@ class MiniAppAuthRequest(BaseModel):
 
 class MiniAppUser(BaseModel):
     id: int
-    username: Optional[str] = None
-    first_name: Optional[str] = None
-    last_name: Optional[str] = None
+    game_nickname: Optional[str] = None
 
 
 class MiniAppAuthResponse(BaseModel):
@@ -21,9 +19,7 @@ class MiniAppAuthResponse(BaseModel):
 
 class MiniAppMeUser(BaseModel):
     id: int
-    username: Optional[str] = None
-    first_name: Optional[str] = None
-    last_name: Optional[str] = None
+    game_nickname: Optional[str] = None
     balance: float
     role: str
     activity_index: float

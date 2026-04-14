@@ -20,6 +20,7 @@ from api.schemas.tasks import (
     TaskOpenRequest,
     TaskOpenResponse,
 )
+from api.services.battles import get_battle_status_for_user
 from api.services.tasks import (
     check_task_for_user,
     get_next_task_for_user,
@@ -71,6 +72,7 @@ async def _build_tasks_screen_text(user_id: int) -> str:
 
     balance = float(menu_payload.get("balance") or 0)
     tasks_status_text = "Сейчас доступных постов нет."
+    battle_status_text = ""
 
     try:
         next_task = await get_next_task_for_user(user_id)
@@ -81,12 +83,42 @@ async def _build_tasks_screen_text(user_id: int) -> str:
         if next_task:
             tasks_status_text = "Сейчас есть доступные посты для просмотра."
 
+    try:
+        battle_status = await get_battle_status_for_user(user_id)
+        battle_status_text = _format_battle_status_line(battle_status.model_dump())
+    except Exception:
+        battle_status_text = ""
+
     return (
         "👁 Просмотр постов\n\n"
         "За каждый просмотр начисляется награда.\n"
-        f"{tasks_status_text}\n\n"
+        f"{tasks_status_text}\n"
+        f"{battle_status_text + chr(10) if battle_status_text else ''}\n"
         f"Баланс: {balance:.2f}".replace(".00", "") + "⭐"
     )
+
+
+def _format_battle_seconds(seconds: int) -> str:
+    minutes, rest = divmod(max(int(seconds), 0), 60)
+    return f"{minutes}:{rest:02d}"
+
+
+def _format_battle_status_line(status: dict[str, Any]) -> str:
+    state = str(status.get("state") or "").strip()
+    if state == "waiting":
+        return "⚔️ Дуэль: идет поиск соперника"
+
+    if state == "active":
+        my_progress = int(status.get("my_progress") or 0)
+        opponent_progress = int(status.get("opponent_progress") or 0)
+        target_views = int(status.get("target_views") or 20)
+        seconds_left = int(status.get("seconds_left") or 0)
+        return (
+            f"⚔️ Дуэль: {my_progress}/{target_views} против {opponent_progress}/{target_views}"
+            f" · {_format_battle_seconds(seconds_left)}"
+        )
+
+    return ""
 
 
 def _build_tasks_reply_markup() -> dict[str, Any]:

@@ -52,6 +52,10 @@ class UserStatsResponse(BaseModel):
     text: str
 
 
+class UserBattleStatsResponse(BaseModel):
+    text: str
+
+
 class UserLedgerEntry(BaseModel):
     created_at: str
     delta: float
@@ -77,9 +81,34 @@ class UserRiskEventEntry(BaseModel):
     meta: Optional[str] = None
 
 
+class UserRiskFlagEntry(BaseModel):
+    risk_key: str
+    score: float
+    reason: Optional[str] = None
+    source: Optional[str] = None
+    meta: Optional[str] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+
+
+class UserRiskCaseProgressEntry(BaseModel):
+    risk_key: str
+    source: Optional[str] = None
+    reason: Optional[str] = None
+    current_score: float
+    max_score: float
+    meta: Optional[str] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+
+
 class UserRiskEventsResponse(BaseModel):
     user_id: int
+    total_score: float
+    score_cap: float
     page: int
     page_size: int
     has_next: bool
+    flags: list[UserRiskFlagEntry]
+    risk_cases: list[UserRiskCaseProgressEntry]
     items: list[UserRiskEventEntry]

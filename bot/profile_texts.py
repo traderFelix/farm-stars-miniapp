@@ -21,10 +21,7 @@ def format_user_profile_card(profile: dict[str, Any]) -> str:
     else:
         suspicious_block = "✅ Не подозрительный"
 
-    if activity_index <= 1:
-        activity_text = f"{activity_index * 100:.1f}%"
-    else:
-        activity_text = f"{activity_index:.1f}%"
+    activity_text = f"{activity_index:.2f}%"
 
     return (
         f"👤 Пользователь: {user_id}\n"

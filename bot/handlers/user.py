@@ -21,6 +21,7 @@ from aiogram.types import (
 from bot.api_client import (
     ApiClientError,
     bootstrap_bot_user_via_api,
+    get_battle_status,
     check_task,
     get_bot_main_menu_for_user_context_via_api,
     get_bot_main_menu_via_api,
@@ -191,6 +192,7 @@ async def _build_tasks_screen_text(user_id: int) -> str:
     menu_payload = await get_bot_main_menu_via_api(user_id)
     balance = float(menu_payload.get("balance") or 0)
     tasks_status_text: Optional[str] = None
+    battle_status_text: Optional[str] = None
 
     try:
         next_task = await get_next_task(user_id)
@@ -206,11 +208,71 @@ async def _build_tasks_screen_text(user_id: int) -> str:
     elif tasks_status_text is None:
         tasks_status_text = "Сейчас доступных постов нет."
 
+    try:
+        battle_status = await get_battle_status(user_id)
+    except ApiClientError as e:
+        _log_user_api_error("tasks_screen.battle_status", e)
+        battle_status = None
+    except Exception:
+        battle_status = None
+
+    if battle_status:
+        battle_status_text = _format_battle_status_line(battle_status)
+
     return (
         "👁 Просмотр постов\n\n"
         "За каждый просмотр начисляется награда.\n"
-        f"{tasks_status_text}\n\n"
+        f"{tasks_status_text}\n"
+        f"{battle_status_text + chr(10) if battle_status_text else ''}\n"
         f"Баланс: {fmt_stars(balance)}⭐️"
+    )
+
+
+def _format_battle_seconds(seconds: int) -> str:
+    minutes, rest = divmod(max(int(seconds), 0), 60)
+    return f"{minutes}:{rest:02d}"
+
+
+def _format_battle_status_line(status: dict[str, Any]) -> Optional[str]:
+    state = str(status.get("state") or "").strip()
+    if state == "waiting":
+        return "⚔️ Дуэль: идет поиск соперника"
+
+    if state == "active":
+        my_progress = int(status.get("my_progress") or 0)
+        opponent_progress = int(status.get("opponent_progress") or 0)
+        target_views = int(status.get("target_views") or 20)
+        seconds_left = int(status.get("seconds_left") or 0)
+        return (
+            f"⚔️ Дуэль: {my_progress}/{target_views} против {opponent_progress}/{target_views}"
+            f" · { _format_battle_seconds(seconds_left) }"
+        )
+
+    return None
+
+
+def _format_task_battle_progress(status: Optional[dict[str, Any]]) -> Optional[str]:
+    if not status:
+        return None
+
+    state = str(status.get("state") or "").strip()
+    my_progress = int(status.get("my_progress") or 0)
+    opponent_progress = int(status.get("opponent_progress") or 0)
+    target_views = int(status.get("target_views") or 20)
+
+    if state == "finished":
+        result = str(status.get("result") or "").strip()
+        if result == "won":
+            return f"⚔️ Дуэль выиграна: {my_progress}/{target_views}"
+        if result == "draw":
+            return "⚔️ Дуэль завершилась вничью"
+        if result == "lost":
+            return f"⚔️ Дуэль проиграна: {my_progress}/{target_views}"
+
+    seconds_left = int(status.get("seconds_left") or 0)
+    return (
+        f"⚔️ Дуэль: {my_progress}/{target_views} против {opponent_progress}/{target_views}\n"
+        f"До конца: {_format_battle_seconds(seconds_left)}"
     )
 
 
@@ -394,7 +456,7 @@ async def task_view_post(callback: CallbackQuery, bot: Bot, state: FSMContext):
         return
 
     reward = float(task.get("reward") or 0)
-    view_seconds = int(open_result.get("hold_seconds") or task.get("hold_seconds") or 0)
+    view_seconds = float(open_result.get("hold_seconds") or task.get("hold_seconds") or 0)
 
     await callback.answer(open_result.get("message") or "Показываю пост...")
     await _delete_last_task_post(bot, user_id, state)
@@ -437,7 +499,7 @@ async def task_view_post(callback: CallbackQuery, bot: Bot, state: FSMContext):
         }
     )
 
-    await asyncio.sleep(view_seconds)
+    await asyncio.sleep(max(view_seconds, 0.0))
 
     try:
         result = await check_task(user_id, task_id)
@@ -481,6 +543,8 @@ async def task_view_post(callback: CallbackQuery, bot: Bot, state: FSMContext):
         )
 
     if status_value == "completed":
+        battle_progress_text = _format_task_battle_progress(result.get("battle"))
+        battle_block = f"\n\n{battle_progress_text}" if battle_progress_text else ""
         await bot.send_message(
             chat_id=user_id,
             text=(
@@ -488,6 +552,7 @@ async def task_view_post(callback: CallbackQuery, bot: Bot, state: FSMContext):
                 f"Начислено: {fmt_stars(reward)}⭐\n"
                 f"{remaining_text}\n"
                 f"Баланс: {fmt_stars(new_balance)}⭐️"
+                f"{battle_block}"
             ),
             reply_markup=task_after_view_kb(),
         )

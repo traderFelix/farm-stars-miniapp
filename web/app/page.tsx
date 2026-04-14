@@ -9,11 +9,17 @@ import ReferralsPanel from "@/components/referrals/ReferralsPanel";
 import WithdrawalPanel from "@/components/withdrawal/WithdrawalPanel";
 import {
   authTelegram,
+  cancelBattle,
   claimCheckin,
   clearAccessToken,
+  type BattleRecentResult,
+  getMyBattleStatus,
   getCheckinStatus,
   getMyProfile,
+  joinBattle,
   openBotTasks,
+  updateMyGameNickname,
+  type BattleStatusResponse,
   type CheckinStatus,
   type Profile,
 } from "@/lib/api";
@@ -29,6 +35,8 @@ type BootstrapState = "idle" | "loading" | "ready" | "error";
 type AppTab = "profile" | "mining" | "referrals" | "campaigns" | "withdrawal";
 
 type CheckinState = "idle" | "loading" | "ready" | "claiming" | "error";
+type BattleLoadState = "idle" | "loading" | "ready" | "working" | "error";
+type NicknameSaveState = "idle" | "saving";
 
 const HERO_BANNER_URL = ["/hero", "mining-hero-banner.png"].join("/");
 const BOT_USERNAME = process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME || "felix_farm_stars_bot";
@@ -51,10 +59,19 @@ export default function HomePage() {
     nextReward: number;
   } | null>(null);
   const [botTasksOpening, setBotTasksOpening] = useState(false);
+  const [battleStatus, setBattleStatus] = useState<BattleStatusResponse | null>(null);
+  const [battleLoadState, setBattleLoadState] = useState<BattleLoadState>("idle");
+  const [battleErrorMessage, setBattleErrorMessage] = useState("");
+  const [battleDisplaySeconds, setBattleDisplaySeconds] = useState(0);
+  const [nicknameModalOpen, setNicknameModalOpen] = useState(false);
+  const [nicknameDraft, setNicknameDraft] = useState("");
+  const [nicknameSaveState, setNicknameSaveState] = useState<NicknameSaveState>("idle");
+  const [nicknameErrorMessage, setNicknameErrorMessage] = useState("");
+  const battleSyncInFlightRef = useRef(false);
 
   const [debugMessage, setDebugMessage] = useState<string>("Шаг 1: запуск");
   const [errorMessage, setErrorMessage] = useState<string>("");
-  const operatorName = profile?.first_name || profile?.username || "Felix";
+  const operatorName = profile?.game_nickname || "Шахтер";
 
   async function loadCheckinStatus(options?: { preserveMessage?: boolean }) {
     setCheckinState("loading");
@@ -71,6 +88,94 @@ export default function HomePage() {
       setCheckin(null);
       setCheckinState("error");
       setCheckinMessage(message);
+    }
+  }
+
+  async function loadBattleStatus(options?: { silent?: boolean }) {
+    if (battleSyncInFlightRef.current) {
+      return battleStatus;
+    }
+
+    battleSyncInFlightRef.current = true;
+
+    if (!options?.silent) {
+      setBattleLoadState("loading");
+      setBattleErrorMessage("");
+    }
+
+    try {
+      const status = await getMyBattleStatus();
+      setBattleStatus(status);
+      setBattleLoadState("ready");
+      setBattleErrorMessage("");
+      setProfile((prev) =>
+        prev
+          ? {
+              ...prev,
+              balance: Number(status.current_balance ?? prev.balance),
+            }
+          : prev,
+      );
+      return status;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Не удалось загрузить статус дуэли";
+      if (!options?.silent) {
+        setBattleStatus(null);
+        setBattleLoadState("error");
+        setBattleErrorMessage(message);
+        setBattleDisplaySeconds(0);
+      }
+      return battleStatus;
+    } finally {
+      battleSyncInFlightRef.current = false;
+    }
+  }
+
+  async function handleJoinBattle() {
+    if (battleLoadState === "working") return;
+
+    try {
+      setBattleLoadState("working");
+      setBattleErrorMessage("");
+      const status = await joinBattle();
+      setBattleStatus(status);
+      setBattleLoadState("ready");
+      setProfile((prev) =>
+        prev
+          ? {
+              ...prev,
+              balance: Number(status.current_balance ?? prev.balance),
+            }
+          : prev,
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Не удалось вступить в дуэль";
+      setBattleLoadState("error");
+      setBattleErrorMessage(message);
+    }
+  }
+
+  async function handleCancelBattle() {
+    if (battleLoadState === "working") return;
+
+    try {
+      setBattleLoadState("working");
+      setBattleErrorMessage("");
+      const status = await cancelBattle();
+      setBattleStatus(status);
+      setBattleLoadState("ready");
+      setProfile((prev) =>
+        prev
+          ? {
+              ...prev,
+              balance: Number(status.current_balance ?? prev.balance),
+            }
+          : prev,
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Не удалось отменить поиск соперника";
+      setBattleLoadState("error");
+      setBattleErrorMessage(message);
     }
   }
 
@@ -131,6 +236,29 @@ export default function HomePage() {
     }
   }
 
+  function openNicknameModal() {
+    setNicknameDraft(profile?.game_nickname || "");
+    setNicknameErrorMessage("");
+    setNicknameModalOpen(true);
+  }
+
+  async function handleSaveNickname() {
+    if (!profile || nicknameSaveState === "saving") return;
+
+    try {
+      setNicknameSaveState("saving");
+      setNicknameErrorMessage("");
+      const nextProfile = await updateMyGameNickname(nicknameDraft);
+      setProfile(nextProfile);
+      setNicknameModalOpen(false);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Не удалось изменить игровой ник";
+      setNicknameErrorMessage(message);
+    } finally {
+      setNicknameSaveState("idle");
+    }
+  }
+
   useEffect(() => {
     let cancelled = false;
 
@@ -167,8 +295,12 @@ export default function HomePage() {
         await loadCheckinStatus({ preserveMessage: true });
         if (cancelled) return;
 
+        setDebugMessage("Шаг 6: загрузка дуэли");
+        await loadBattleStatus();
+        if (cancelled) return;
+
         setBootstrapState("ready");
-        setDebugMessage("Шаг 6: готово");
+        setDebugMessage("Шаг 7: готово");
       } catch (error) {
         if (cancelled) return;
         clearAccessToken();
@@ -186,6 +318,41 @@ export default function HomePage() {
     };
   }, []);
 
+  useEffect(() => {
+    if (bootstrapState !== "ready" || activeTab !== "mining") return;
+    void loadBattleStatus();
+  }, [activeTab, bootstrapState]);
+
+  useEffect(() => {
+    if (battleStatus?.state === "active") {
+      setBattleDisplaySeconds(Math.max(Number(battleStatus.seconds_left) || 0, 0));
+      return;
+    }
+
+    setBattleDisplaySeconds(0);
+  }, [battleStatus?.battle_id, battleStatus?.seconds_left, battleStatus?.state]);
+
+  useEffect(() => {
+    if (battleStatus?.state !== "active") return;
+
+    const timer = window.setInterval(() => {
+      setBattleDisplaySeconds((prev) => Math.max(prev - 1, 0));
+    }, 1000);
+
+    return () => window.clearInterval(timer);
+  }, [battleStatus?.battle_id, battleStatus?.state]);
+
+  useEffect(() => {
+    if (bootstrapState !== "ready" || activeTab !== "mining") return;
+    if (!battleStatus || !["waiting", "active"].includes(battleStatus.state)) return;
+
+    const timer = window.setInterval(() => {
+      void loadBattleStatus({ silent: true });
+    }, 8000);
+
+    return () => window.clearInterval(timer);
+  }, [activeTab, battleStatus?.battle_id, battleStatus?.state, bootstrapState]);
+
   return (
     <main className="mining-app">
       {checkinRewardPopup ? (
@@ -199,6 +366,55 @@ export default function HomePage() {
           onClose={() => setCheckinRewardPopup(null)}
         />
       ) : null}
+
+      {nicknameModalOpen && typeof document !== "undefined"
+        ? createPortal(
+            <div className="mining-modal-backdrop" role="presentation" onClick={() => setNicknameModalOpen(false)}>
+              <div
+                className="mining-modal"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="game-nickname-modal-title"
+                onClick={(event) => event.stopPropagation()}
+              >
+                <div className="mining-kicker">Игровой ник</div>
+                <h2 id="game-nickname-modal-title" className="mining-modal__title">
+                  Сменить ник можно только один раз
+                </h2>
+
+                <input
+                  type="text"
+                  value={nicknameDraft}
+                  maxLength={24}
+                  placeholder="Новый игровой ник"
+                  onChange={(event) => setNicknameDraft(event.target.value)}
+                />
+
+                {nicknameErrorMessage ? <StatusNote tone="error">{nicknameErrorMessage}</StatusNote> : null}
+
+                <div className="mining-modal__actions">
+                  <button
+                    type="button"
+                    className="mining-ghost-button"
+                    onClick={() => setNicknameModalOpen(false)}
+                    disabled={nicknameSaveState === "saving"}
+                  >
+                    Отмена
+                  </button>
+                  <button
+                    type="button"
+                    className="mining-primary-button"
+                    onClick={() => void handleSaveNickname()}
+                    disabled={nicknameSaveState === "saving"}
+                  >
+                    {nicknameSaveState === "saving" ? "Сохраняю..." : "Сохранить"}
+                  </button>
+                </div>
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
 
       <div className="mining-app__mesh" aria-hidden="true" />
       <div className="mining-app__orb mining-app__orb--gold" aria-hidden="true" />
@@ -242,6 +458,15 @@ export default function HomePage() {
                   <span className="mining-profile-panel__role">
                     {profile.role || "пользователь"}
                   </span>
+                  {profile.can_change_game_nickname ? (
+                    <button
+                      type="button"
+                      className="mining-profile-panel__edit"
+                      onClick={openNicknameModal}
+                    >
+                      Сменить ник
+                    </button>
+                  ) : null}
                 </section>
 
                 <section className="grid grid-cols-2 gap-3">
@@ -254,7 +479,7 @@ export default function HomePage() {
                     label="Индекс активности"
                     value={formatActivity(profile.activity_index)}
                     tone="cyan"
-                    infoText="Индекс активности растет от просмотра постов, ежедневных бонусов и рефералов"
+                    infoText="Индекс активности растет от просмотра постов, ежедневных бонусов, победах в батлах и за рефералов"
                   />
                 </section>
 
@@ -306,22 +531,41 @@ export default function HomePage() {
             )}
 
             {activeTab === "mining" && (
-              <section className="mining-panel">
-                <SectionHeader
-                  eyebrow=""
-                  title="Просмотр постов"
-                  description="Этот сценарий перенесен в бота, чтобы просмотры и начисления работали корректно"
-                />
+              <>
+                <section className="mining-panel">
+                  <SectionHeader
+                    title="Просмотр постов"
+                    description="Открывай основной поток просмотров в боте"
+                  />
 
-                <button
-                  type="button"
-                  onClick={() => void handleOpenBotTasks()}
-                  disabled={botTasksOpening}
-                  className="mining-primary-button mt-4 w-full"
-                >
-                  {botTasksOpening ? "Открываю просмотр постов..." : "Открыть просмотр постов"}
-                </button>
-              </section>
+                  <button
+                    type="button"
+                    onClick={() => void handleOpenBotTasks()}
+                    disabled={botTasksOpening || battleLoadState === "working" || battleLoadState === "loading"}
+                    className="mining-primary-button mt-4 w-full"
+                  >
+                    {botTasksOpening ? "Открываю..." : "Открыть просмотр постов"}
+                  </button>
+                </section>
+
+                <section className="mining-panel">
+                  <SectionHeader
+                    title="Дуэль шахтеров"
+                    description="Кто первым добьет 20 просмотров за 5 минут, тот победил"
+                  />
+
+                  <BattlePanel
+                    status={battleStatus}
+                    displaySeconds={battleDisplaySeconds}
+                    loadState={battleLoadState}
+                    errorMessage={battleErrorMessage}
+                    botTasksOpening={botTasksOpening}
+                    onJoin={() => void handleJoinBattle()}
+                    onCancel={() => void handleCancelBattle()}
+                    onOpenTasks={() => void handleOpenBotTasks()}
+                  />
+                </section>
+              </>
             )}
 
             {activeTab === "withdrawal" && (
@@ -400,7 +644,7 @@ function SectionHeader({
   description,
   action,
 }: {
-  eyebrow: string;
+  eyebrow?: string;
   title: string;
   description: string;
   action?: React.ReactNode;
@@ -408,8 +652,10 @@ function SectionHeader({
   return (
     <div className="flex items-start justify-between gap-3">
       <div>
-        <div className="mining-kicker">{eyebrow}</div>
-        <h2 className="mt-1 text-xl font-semibold text-white">{title}</h2>
+        {eyebrow ? <div className="mining-kicker">{eyebrow}</div> : null}
+        <h2 className={eyebrow ? "mt-1 text-xl font-semibold text-white" : "text-xl font-semibold text-white"}>
+          {title}
+        </h2>
         <p className="mt-1 text-sm text-slate-300">{description}</p>
       </div>
       {action}
@@ -736,4 +982,221 @@ function RewardInline({
       <span className="mining-inline-reward__star">⭐</span>
     </span>
   );
+}
+
+function BattlePanel({
+  status,
+  displaySeconds,
+  loadState,
+  errorMessage,
+  botTasksOpening,
+  onJoin,
+  onCancel,
+  onOpenTasks,
+}: {
+  status: BattleStatusResponse | null;
+  displaySeconds: number;
+  loadState: BattleLoadState;
+  errorMessage: string;
+  botTasksOpening: boolean;
+  onJoin: () => void;
+  onCancel: () => void;
+  onOpenTasks: () => void;
+}) {
+  const state = status?.state ?? "idle";
+  const isBusy = loadState === "loading" || loadState === "working";
+
+  if (loadState === "loading" && !status) {
+    return <StatusNote>Поднимаю очередь дуэлей и синхронизирую твой матч...</StatusNote>;
+  }
+
+  const entryFee = status?.entry_fee ?? 1;
+  const targetViews = Math.max(status?.target_views ?? 20, 1);
+  const myProgress = Math.max(status?.my_progress ?? 0, 0);
+  const opponentProgress = Math.max(status?.opponent_progress ?? 0, 0);
+  const leftPrimaryLabel = state === "active" ? `${myProgress}/${targetViews}` : `${status?.total_completed_views ?? 0}`;
+  const leftPrimaryTitle = state === "active" ? "Твой прогресс" : "Всего просмотров";
+  const rightPrimaryLabel = state === "active" ? `${opponentProgress}/${targetViews}` : `${formatCompactBalance(entryFee)} ⭐`;
+  const rightPrimaryTitle =
+    state === "active"
+      ? status?.opponent_name
+        ? `Соперник ${status.opponent_name}`
+        : "Соперник"
+      : "Плата за участие";
+  const idleMessage = state === "idle" ? (status?.message || "").trim() : "";
+  const idleMessageTone: "default" | "error" = idleMessage.toLowerCase().includes("слишком част")
+    ? "error"
+    : "default";
+
+  return (
+    <div className="mt-4 space-y-4">
+      {state === "active" ? (
+        <section className="mining-battle-race">
+          <BattleProgressLane
+            label={leftPrimaryTitle}
+            value={leftPrimaryLabel}
+            hint={buildBattleProgressHint(myProgress, targetViews)}
+            progress={myProgress}
+            total={targetViews}
+            tone="gold"
+          />
+          <BattleProgressLane
+            label={rightPrimaryTitle}
+            value={rightPrimaryLabel}
+            hint={buildBattleProgressHint(opponentProgress, targetViews)}
+            progress={opponentProgress}
+            total={targetViews}
+            tone="cyan"
+          />
+          <div className="mining-battle-meta">
+            <div className="mining-battle-meta__item" data-tone="slate">
+              <div className="mining-battle-meta__label">Осталось</div>
+              <div className="mining-battle-meta__value">{formatBattleCountdown(displaySeconds)}</div>
+            </div>
+            <div className="mining-battle-meta__item" data-tone="slate">
+              <div className="mining-battle-meta__label">Банк</div>
+              <div className="mining-battle-meta__value">{`${entryFee * 2} ⭐`}</div>
+            </div>
+          </div>
+        </section>
+      ) : (
+        <section className="grid grid-cols-2 gap-3">
+          <OverviewCard label={leftPrimaryTitle} value={leftPrimaryLabel} tone="gold" />
+          <OverviewCard label={rightPrimaryTitle} value={rightPrimaryLabel} tone="cyan" />
+        </section>
+      )}
+
+      {state === "waiting" ? (
+        <BattleSearchStatus message={status?.message || "Ищу соперника для дуэли"} />
+      ) : null}
+
+      {status?.last_result ? (
+        <StatusNote tone={status.last_result.result === "won" ? "success" : status.last_result.result === "lost" ? "error" : "default"}>
+          {formatBattleRecentResult(status.last_result)}
+        </StatusNote>
+      ) : null}
+
+      {loadState === "error" && errorMessage ? (
+        <StatusNote tone="error">{errorMessage}</StatusNote>
+      ) : null}
+
+      {state === "idle" && (
+        <div>
+          <button
+            type="button"
+            onClick={onJoin}
+            disabled={isBusy || !status?.can_join}
+            className="mining-primary-button w-full"
+          >
+            {status?.can_join ? "Найти соперника" : "Нужна 1⭐"}
+          </button>
+          {idleMessage ? <StatusNote tone={idleMessageTone}>{idleMessage}</StatusNote> : null}
+        </div>
+      )}
+
+      {state === "waiting" && (
+        <div>
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={isBusy}
+            className="mining-ghost-button w-full"
+          >
+            Отменить поиск
+          </button>
+        </div>
+      )}
+
+      {state === "active" && (
+        <div>
+          <button
+            type="button"
+            onClick={onOpenTasks}
+            disabled={botTasksOpening || isBusy}
+            className="mining-primary-button w-full"
+          >
+            {botTasksOpening ? "Открываю..." : "Перейти к просмотру постов"}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function BattleProgressLane({
+  label,
+  value,
+  hint,
+  progress,
+  total,
+  tone,
+}: {
+  label: string;
+  value: string;
+  hint: string;
+  progress: number;
+  total: number;
+  tone: "gold" | "cyan";
+}) {
+  const safeTotal = Math.max(total, 1);
+  const percent = Math.min((Math.max(progress, 0) / safeTotal) * 100, 100);
+
+  return (
+    <div className="mining-battle-lane" data-tone={tone}>
+      <div className="mining-battle-lane__top">
+        <div className="mining-battle-lane__label">{label}</div>
+        <div className="mining-battle-lane__value">{value}</div>
+      </div>
+      <div className="mining-battle-lane__track" aria-hidden="true">
+        <div className="mining-battle-lane__fill" style={{ width: `${percent}%` }} />
+      </div>
+      <div className="mining-battle-lane__hint">{hint}</div>
+    </div>
+  );
+}
+
+function BattleSearchStatus({ message }: { message: string }) {
+  return (
+    <div className="mining-battle-search" role="status" aria-live="polite">
+      <div className="mining-battle-search__header">
+        <div className="mining-battle-search__title">{message}</div>
+        <div className="mining-battle-search__dots" aria-hidden="true">
+          <span />
+          <span />
+          <span />
+        </div>
+      </div>
+      <div className="mining-battle-search__track" aria-hidden="true">
+        <span className="mining-battle-search__beam" />
+      </div>
+    </div>
+  );
+}
+
+function buildBattleProgressHint(progress: number, total: number): string {
+  const remaining = Math.max(total - progress, 0);
+  if (remaining === 0) {
+    return "Финиш достигнут";
+  }
+
+  return `До финиша ${remaining}`;
+}
+
+function formatBattleCountdown(seconds: number): string {
+  const safeSeconds = Math.max(Number(seconds) || 0, 0);
+  const minutes = Math.floor(safeSeconds / 60);
+  const restSeconds = safeSeconds % 60;
+  return `${minutes}:${String(restSeconds).padStart(2, "0")}`;
+}
+
+function formatBattleRecentResult(result: BattleRecentResult): string {
+  if (result.result === "won") {
+    return `Последняя дуэль выиграна +${formatCompactBalance(result.delta)} ⭐`;
+  }
+
+  if (result.result === "lost") {
+    return `Последняя дуэль проиграна ${formatCompactBalance(result.delta)} ⭐`;
+  }
+
+  return "Последняя дуэль завершилась вничью, ставка возвращена";
 }

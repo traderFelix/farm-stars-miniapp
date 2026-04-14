@@ -12,11 +12,13 @@ from api.schemas.admin.users import (
     SuspiciousRequest,
     UserLedgerResponse,
     UserRiskEventsResponse,
+    UserBattleStatsResponse,
     UserStatsResponse,
 )
 from api.services.admin.users import (
     adjust_balance,
     clear_suspicious,
+    get_battle_stats,
     get_profile,
     get_user_risk_history,
     get_stats,
@@ -56,6 +58,15 @@ async def get_user_stats(user_id: int):
     db = await get_db()
     try:
         return await get_stats(db, user_id)
+    finally:
+        await db.close()
+
+
+@router.get("/{user_id}/battle-stats", response_model=UserBattleStatsResponse)
+async def get_user_battle_stats(user_id: int):
+    db = await get_db()
+    try:
+        return await get_battle_stats(db, user_id)
     finally:
         await db.close()
 

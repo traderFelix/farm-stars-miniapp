@@ -6,6 +6,18 @@ from pydantic import BaseModel, Field
 TaskType = Literal["view_post"]
 TaskStatus = Literal["available", "in_progress", "completed", "blocked"]
 TaskCheckStatus = Literal["completed", "already_completed", "too_early", "rejected"]
+TaskBattleState = Literal["active", "finished"]
+TaskBattleResult = Literal["won", "lost", "draw"]
+
+
+class TaskBattleSnapshot(BaseModel):
+    state: TaskBattleState
+    result: Optional[TaskBattleResult] = None
+    my_progress: int = 0
+    opponent_progress: int = 0
+    target_views: int = 20
+    seconds_left: int = 0
+    opponent_name: Optional[str] = None
 
 
 class TaskListItem(BaseModel):
@@ -34,15 +46,16 @@ class TaskOpenResponse(BaseModel):
     ok: bool
     task_id: int
     message: Optional[str] = None
-    opened_at: int
-    hold_seconds: int = 0
-    can_check_at: int = 0
+    opened_at: float
+    hold_seconds: float = 0
+    can_check_at: float = 0
 
     chat_id: Optional[str] = None
     channel_post_id: Optional[int] = None
     post_url: Optional[str] = None
 
     session_id: Optional[str] = None
+    battle: Optional[TaskBattleSnapshot] = None
 
 
 class TaskCheckRequest(BaseModel):
@@ -58,6 +71,7 @@ class TaskCheckResponse(BaseModel):
     reward_granted: float = 0
     new_balance: float = 0
     task_completed: bool = False
+    battle: Optional[TaskBattleSnapshot] = None
 
 
 class TaskChannelPostIngestRequest(BaseModel):

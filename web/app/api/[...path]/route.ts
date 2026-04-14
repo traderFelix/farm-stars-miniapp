@@ -13,6 +13,11 @@ async function proxyRequest(
     const headers = new Headers();
     const contentType = request.headers.get("content-type");
     const authorization = request.headers.get("authorization");
+    const userAgent = request.headers.get("user-agent");
+    const clientSession = request.headers.get("x-client-session");
+    const forwardedFor = request.headers.get("x-forwarded-for");
+    const realIp = request.headers.get("x-real-ip");
+    const cfConnectingIp = request.headers.get("cf-connecting-ip");
 
     if (contentType) {
         headers.set("content-type", contentType);
@@ -20,6 +25,28 @@ async function proxyRequest(
 
     if (authorization) {
         headers.set("authorization", authorization);
+    }
+
+    if (userAgent) {
+        headers.set("user-agent", userAgent);
+    }
+
+    if (clientSession) {
+        headers.set("x-client-session", clientSession);
+    }
+
+    if (forwardedFor) {
+        headers.set("x-forwarded-for", forwardedFor);
+    } else if (cfConnectingIp) {
+        headers.set("x-forwarded-for", cfConnectingIp);
+    } else if (realIp) {
+        headers.set("x-forwarded-for", realIp);
+    }
+
+    if (realIp) {
+        headers.set("x-real-ip", realIp);
+    } else if (cfConnectingIp) {
+        headers.set("x-real-ip", cfConnectingIp);
     }
 
     let body: BodyInit | undefined = undefined;

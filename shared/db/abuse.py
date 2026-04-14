@@ -100,6 +100,53 @@ async def count_recent_abuse_events(
     return int(row[0] or 0)
 
 
+async def count_recent_abuse_events_for_actions(
+        db: aiosqlite.Connection,
+        user_id: int,
+        actions: list[str],
+        minutes: int,
+) -> int:
+    await ensure_abuse_events_schema(db)
+    if not actions:
+        return 0
+
+    action_placeholders = ",".join("?" for _ in actions)
+    async with db.execute(
+            f"""
+        SELECT COUNT(*)
+        FROM abuse_events
+        WHERE user_id = ?
+          AND action IN ({action_placeholders})
+          AND datetime(created_at) >= datetime('now', ?)
+        """,
+            (int(user_id), *actions, f"-{int(minutes)} minutes"),
+    ) as cur:
+        row = await cur.fetchone()
+    return int(row[0] or 0)
+
+
+async def seconds_since_last_abuse_event(
+        db: aiosqlite.Connection,
+        user_id: int,
+        action: str,
+) -> Optional[int]:
+    await ensure_abuse_events_schema(db)
+    async with db.execute(
+            """
+        SELECT CAST((julianday('now') - julianday(MAX(created_at))) * 86400 AS INTEGER)
+        FROM abuse_events
+        WHERE user_id = ?
+          AND action = ?
+        """,
+            (int(user_id), action),
+    ) as cur:
+        row = await cur.fetchone()
+
+    if row is None or row[0] is None:
+        return None
+    return max(int(row[0]), 0)
+
+
 async def sum_recent_abuse_amount(
         db: aiosqlite.Connection,
         user_id: int,
@@ -143,6 +190,36 @@ async def count_distinct_users_for_session(
     return int(row[0] or 0)
 
 
+async def list_related_users_for_session(
+        db: aiosqlite.Connection,
+        *,
+        user_id: int,
+        session_id: str,
+        hours: int,
+        limit: int = 10,
+):
+    await ensure_abuse_events_schema(db)
+    async with db.execute(
+            """
+        SELECT
+            ae.user_id,
+            u.username,
+            u.tg_first_name,
+            MAX(datetime(ae.created_at)) AS last_seen_at
+        FROM abuse_events ae
+        LEFT JOIN users u ON u.user_id = ae.user_id
+        WHERE ae.session_id = ?
+          AND ae.user_id != ?
+          AND datetime(ae.created_at) >= datetime('now', ?)
+        GROUP BY ae.user_id, u.username, u.tg_first_name
+        ORDER BY datetime(last_seen_at) DESC, ae.user_id ASC
+        LIMIT ?
+        """,
+            (session_id, int(user_id), f"-{int(hours)} hours", int(limit)),
+    ) as cur:
+        return await cur.fetchall()
+
+
 async def count_distinct_users_for_fingerprint(
         db: aiosqlite.Connection,
         *,
@@ -165,3 +242,35 @@ async def count_distinct_users_for_fingerprint(
     ) as cur:
         row = await cur.fetchone()
     return int(row[0] or 0)
+
+
+async def list_related_users_for_fingerprint(
+        db: aiosqlite.Connection,
+        *,
+        user_id: int,
+        ip_hash: str,
+        ua_hash: str,
+        hours: int,
+        limit: int = 10,
+):
+    await ensure_abuse_events_schema(db)
+    async with db.execute(
+            """
+        SELECT
+            ae.user_id,
+            u.username,
+            u.tg_first_name,
+            MAX(datetime(ae.created_at)) AS last_seen_at
+        FROM abuse_events ae
+        LEFT JOIN users u ON u.user_id = ae.user_id
+        WHERE ae.ip_hash = ?
+          AND ae.ua_hash = ?
+          AND ae.user_id != ?
+          AND datetime(ae.created_at) >= datetime('now', ?)
+        GROUP BY ae.user_id, u.username, u.tg_first_name
+        ORDER BY datetime(last_seen_at) DESC, ae.user_id ASC
+        LIMIT ?
+        """,
+            (ip_hash, ua_hash, int(user_id), f"-{int(hours)} hours", int(limit)),
+    ) as cur:
+        return await cur.fetchall()

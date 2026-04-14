@@ -6,15 +6,15 @@ export type TelegramAuthResponse = {
     token: string;
     session: {
         user_id: number;
-        username?: string | null;
-        first_name?: string | null;
+        game_nickname?: string | null;
     };
 };
 
 export type Profile = {
     user_id: number;
-    username?: string | null;
-    first_name?: string | null;
+    game_nickname?: string | null;
+    game_nickname_change_count: number;
+    can_change_game_nickname: boolean;
     balance: number;
     role: string;
     activity_index: number;
@@ -161,6 +161,38 @@ export type OpenBotTasksResponse = {
     ok: boolean;
 };
 
+export type BattleResult = "won" | "lost" | "draw";
+export type BattleState = "idle" | "waiting" | "active";
+
+export type BattleRecentResult = {
+    result: BattleResult;
+    finished_at: string;
+    delta: number;
+    stake_amount: number;
+    opponent_name?: string | null;
+};
+
+export type BattleStatusResponse = {
+    state: BattleState;
+    battle_id?: number | null;
+    target_views: number;
+    entry_fee: number;
+    duration_seconds: number;
+    seconds_left: number;
+    my_progress: number;
+    opponent_progress: number;
+    opponent_name?: string | null;
+    current_balance: number;
+    total_completed_views: number;
+    can_join: boolean;
+    can_cancel: boolean;
+    can_open_tasks: boolean;
+    hold_seconds_min: number;
+    hold_seconds_max: number;
+    message: string;
+    last_result?: BattleRecentResult | null;
+};
+
 type RequestOptions = {
     method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
     body?: unknown;
@@ -302,8 +334,39 @@ export async function getMyProfile(): Promise<Profile> {
     });
 }
 
+export async function updateMyGameNickname(gameNickname: string): Promise<Profile> {
+    return apiRequest<Profile>("/profile/me/game-nickname", {
+        method: "PATCH",
+        body: {
+            game_nickname: gameNickname,
+        },
+        auth: true,
+    });
+}
+
 export async function openBotTasks(): Promise<OpenBotTasksResponse> {
     return apiRequest<OpenBotTasksResponse>("/tasks/open-in-bot", {
+        method: "POST",
+        auth: true,
+    });
+}
+
+export async function getMyBattleStatus(): Promise<BattleStatusResponse> {
+    return apiRequest<BattleStatusResponse>("/battles/me", {
+        method: "GET",
+        auth: true,
+    });
+}
+
+export async function joinBattle(): Promise<BattleStatusResponse> {
+    return apiRequest<BattleStatusResponse>("/battles/join", {
+        method: "POST",
+        auth: true,
+    });
+}
+
+export async function cancelBattle(): Promise<BattleStatusResponse> {
+    return apiRequest<BattleStatusResponse>("/battles/cancel", {
         method: "POST",
         auth: true,
     });

@@ -45,7 +45,6 @@ async def telegram_auth(payload: TelegramAuthRequest, request: Request):
         token=token,
         session={
             "user_id": profile["user_id"],
-            "username": profile.get("username"),
-            "first_name": profile.get("first_name"),
+            "game_nickname": profile.get("game_nickname"),
         },
     )

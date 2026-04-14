@@ -168,6 +168,11 @@ class TasksApi(ApiSection):
         )
 
 
+class BattlesApi(ApiSection):
+    async def get_status(self, user_id: int) -> JsonDict:
+        return await self._get(f"/battles/bot/me/{int(user_id)}")
+
+
 class UsersApi(ApiSection):
     async def lookup(self, query: str) -> JsonDict:
         return await self._post(
@@ -180,6 +185,9 @@ class UsersApi(ApiSection):
 
     async def get_stats(self, user_id: int) -> JsonDict:
         return await self._get(f"/admin/users/{int(user_id)}/stats")
+
+    async def get_battle_stats(self, user_id: int) -> JsonDict:
+        return await self._get(f"/admin/users/{int(user_id)}/battle-stats")
 
     async def get_ledger(
             self,
@@ -517,6 +525,7 @@ class BotApiClient:
 
         self.profile = ProfileApi(self)
         self.tasks = TasksApi(self)
+        self.battles = BattlesApi(self)
         self.users = UsersApi(self)
         self.withdrawals_review = ReviewWithdrawalsApi(self)
         self.admin_campaigns = CampaignsAdminApi(self)
@@ -605,6 +614,10 @@ async def get_user_profile(user_id: int) -> JsonDict:
 
 async def get_user_stats(user_id: int) -> JsonDict:
     return await api_client.users.get_stats(user_id)
+
+
+async def get_user_battle_stats(user_id: int) -> JsonDict:
+    return await api_client.users.get_battle_stats(user_id)
 
 
 async def get_user_ledger_page(
@@ -915,6 +928,10 @@ async def get_next_task(user_id: int) -> Optional[JsonDict]:
     return await api_client.tasks.get_next(user_id)
 
 
+async def get_battle_status(user_id: int) -> JsonDict:
+    return await api_client.battles.get_status(user_id)
+
+
 async def ingest_task_channel_post_via_api(
         *,
         chat_id: str,
@@ -944,6 +961,7 @@ __all__ = [
     "api_client",
     "get_user_profile",
     "get_user_stats",
+    "get_user_battle_stats",
     "get_user_ledger_page",
     "get_user_risk_page",
     "lookup_user",
@@ -990,6 +1008,7 @@ __all__ = [
     "get_bot_main_menu_for_user_context_via_api",
     "get_bot_main_menu_via_api",
     "get_next_task",
+    "get_battle_status",
     "ingest_task_channel_post_via_api",
     "open_task",
     "check_task",

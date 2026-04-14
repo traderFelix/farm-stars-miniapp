@@ -1,4 +1,4 @@
-import aiosqlite, json
+import aiosqlite, json, re, secrets
 from typing import Optional, Any
 from datetime import datetime, timedelta, timezone
 
@@ -14,6 +14,97 @@ from shared.config import (
     OWNER_ID, ADMIN_IDS, ROLE_USER, ROLE_CLIENT, ROLE_PARTNER, ROLE_ADMIN, ROLE_OWNER,
     RISK_SCORE_SUSPICIOUS_THRESHOLD,
 )
+
+_RISK_SCORE_CAP = 100.0
+_GAME_NICKNAME_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+_LEGACY_AUTO_GAME_NICKNAME_RE = re.compile(r"^Шахтер [0-9A-F]{6}$")
+
+
+def default_game_nickname_for_user_id(user_id: int) -> str:
+    return f"Шахтер {int(user_id) % 100000:05d}"
+
+
+def normalize_game_nickname(value: Optional[str]) -> str:
+    return " ".join((value or "").strip().split())
+
+
+def _is_legacy_auto_game_nickname(value: Optional[str]) -> bool:
+    normalized = normalize_game_nickname(value)
+    return bool(_LEGACY_AUTO_GAME_NICKNAME_RE.fullmatch(normalized))
+
+
+async def _is_game_nickname_taken(
+        db: aiosqlite.Connection,
+        nickname: str,
+        *,
+        exclude_user_id: Optional[int] = None,
+) -> bool:
+    normalized_nickname = normalize_game_nickname(nickname)
+    if not normalized_nickname:
+        return False
+
+    query = """
+        SELECT 1
+        FROM users
+        WHERE game_nickname = ? COLLATE NOCASE
+    """
+    params: list[Any] = [normalized_nickname]
+    if exclude_user_id is not None:
+        query += " AND user_id != ?"
+        params.append(int(exclude_user_id))
+    query += " LIMIT 1"
+
+    async with db.execute(query, tuple(params)) as cur:
+        row = await cur.fetchone()
+    return row is not None
+
+
+async def _generate_unique_game_nickname(db: aiosqlite.Connection) -> str:
+    for _ in range(128):
+        suffix = "".join(secrets.choice(_GAME_NICKNAME_ALPHABET) for _ in range(5))
+        candidate = f"Шахтер {suffix}"
+        if not await _is_game_nickname_taken(db, candidate):
+            return candidate
+
+    raise RuntimeError("Не удалось сгенерировать уникальный игровой ник")
+
+
+async def _backfill_game_nicknames(db: aiosqlite.Connection) -> None:
+    async with db.execute(
+            """
+        SELECT user_id, game_nickname
+        FROM users
+        WHERE game_nickname IS NULL
+           OR TRIM(game_nickname) = ''
+           OR game_nickname GLOB 'Шахтер [0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F]'
+        ORDER BY user_id ASC
+        """
+    ) as cur:
+        rows = await cur.fetchall()
+
+    for row in rows:
+        current_nickname = row["game_nickname"] if "game_nickname" in row.keys() else None
+        if current_nickname and not _is_legacy_auto_game_nickname(current_nickname):
+            continue
+
+        next_nickname = await _generate_unique_game_nickname(db)
+        await db.execute(
+            """
+            UPDATE users
+            SET game_nickname = COALESCE(NULLIF(TRIM(game_nickname), ''), ?)
+            WHERE user_id = ?
+            """,
+            (next_nickname, int(row["user_id"])),
+        )
+        if current_nickname and _is_legacy_auto_game_nickname(current_nickname):
+            await db.execute(
+                """
+                UPDATE users
+                SET game_nickname = ?
+                WHERE user_id = ?
+                """,
+                (next_nickname, int(row["user_id"])),
+            )
 
 
 async def _column_exists(db: aiosqlite.Connection, table_name: str, column_name: str) -> bool:
@@ -44,6 +135,257 @@ async def ensure_users_risk_schema(db: aiosqlite.Connection) -> None:
             created_at TEXT NOT NULL DEFAULT (datetime('now'))
         )
         """
+    )
+    await db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS risk_flags (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            risk_key TEXT NOT NULL,
+            score REAL NOT NULL DEFAULT 0,
+            reason TEXT,
+            source TEXT,
+            meta TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(user_id, risk_key)
+        )
+        """
+    )
+
+
+async def ensure_users_profile_schema(db: aiosqlite.Connection) -> None:
+    if not await _column_exists(db, "users", "game_nickname"):
+        await db.execute("ALTER TABLE users ADD COLUMN game_nickname TEXT")
+    if not await _column_exists(db, "users", "game_nickname_change_count"):
+        await db.execute("ALTER TABLE users ADD COLUMN game_nickname_change_count INTEGER NOT NULL DEFAULT 0")
+
+    await db.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_users_game_nickname_unique
+        ON users(game_nickname COLLATE NOCASE)
+        WHERE game_nickname IS NOT NULL AND TRIM(game_nickname) != ''
+        """
+    )
+    await db.execute(
+        """
+        UPDATE users
+        SET game_nickname_change_count = COALESCE(game_nickname_change_count, 0)
+        """
+    )
+    await _backfill_game_nicknames(db)
+
+
+def _risk_flag_key(source: Optional[str], reason: Optional[str]) -> str:
+    normalized_source = (source or "system").strip().lower() or "system"
+    normalized_reason = " ".join((reason or "unknown").strip().lower().split()) or "unknown"
+    return f"{normalized_source}::{normalized_reason}"
+
+
+_RISK_CASE_WEIGHTS = (
+    {"source": "auth", "reason": "Зафиксирован кластер аккаунтов с одинаковым устройством/сетью", "weight": 45.0},
+    {"source": "auth", "reason": "Подозрительный реферальный кластер по fingerprint", "weight": 30.0},
+    {"source": "withdrawals", "reason": "Общий TON-кошелек с другим аккаунтом", "weight": 100.0},
+    {"source": "withdrawals", "reason": "Слишком много неудачных попыток вывода", "weight": 15.0},
+    {"source": "withdrawals", "reason": "Слишком много preview заявок на вывод", "weight": 10.0},
+    {"source": "battles", "reason": "Подозрительная серия побед над одним и тем же соперником", "weight": 35.0},
+    {"source": "battles", "reason": "Подозрительная серия поражений от одного и того же соперника", "weight": 35.0},
+    {"source": "battles", "reason": "Слишком частые батлы против одного и того же соперника", "weight": 20.0},
+    {"source": "campaigns", "reason": "Много неудачных попыток клейма конкурсов", "weight": 12.0},
+    {"source": "tasks", "reason": "Слишком частые попытки открыть просмотры", "weight": 10.0},
+    {"source": "promos", "reason": "Много неудачных попыток активации промокодов", "weight": 8.0},
+    {"source": "checkin", "reason": "Подозрительно частые попытки ежедневного бонуса", "weight": 8.0},
+)
+
+
+def _build_known_risk_cases(weights: tuple[dict[str, Any], ...]) -> tuple[dict[str, Any], ...]:
+    total_weight = sum(float(item["weight"]) for item in weights)
+    if total_weight <= 0:
+        return tuple()
+
+    ranked_cases: list[dict[str, Any]] = []
+    assigned_score = 0
+    for index, item in enumerate(weights):
+        exact_score = float(item["weight"]) * _RISK_SCORE_CAP / total_weight
+        base_score = int(exact_score)
+        assigned_score += base_score
+        ranked_cases.append(
+            {
+                **item,
+                "max_score": float(base_score),
+                "_remainder": exact_score - base_score,
+                "_index": index,
+            }
+        )
+
+    remaining = int(_RISK_SCORE_CAP - assigned_score)
+    if remaining > 0:
+        ranked_cases.sort(
+            key=lambda item: (float(item["_remainder"]), -int(item["_index"])),
+            reverse=True,
+        )
+        for item in ranked_cases[:remaining]:
+            item["max_score"] += 1.0
+
+    ranked_cases.sort(key=lambda item: int(item["_index"]))
+    for item in ranked_cases:
+        item.pop("_remainder", None)
+        item.pop("_index", None)
+
+    return tuple(ranked_cases)
+
+
+_KNOWN_RISK_CASES = _build_known_risk_cases(_RISK_CASE_WEIGHTS)
+
+_KNOWN_RISK_CASES_BY_KEY = {
+    _risk_flag_key(item["source"], item["reason"]): item
+    for item in _KNOWN_RISK_CASES
+}
+
+
+def _get_known_risk_case(source: Optional[str], reason: Optional[str]) -> Optional[dict[str, Any]]:
+    return _KNOWN_RISK_CASES_BY_KEY.get(_risk_flag_key(source, reason))
+
+
+def _get_risk_case_weight(source: Optional[str], reason: Optional[str], fallback: float) -> float:
+    known_case = _get_known_risk_case(source, reason)
+    if known_case:
+        return float(known_case["weight"])
+    return float(fallback)
+
+
+def _risk_flag_score_to_percent(
+        source: Optional[str],
+        reason: Optional[str],
+        raw_score: float,
+) -> float:
+    known_case = _get_known_risk_case(source, reason)
+    normalized_raw_score = max(float(raw_score or 0), 0.0)
+    if not known_case:
+        return min(normalized_raw_score, _RISK_SCORE_CAP)
+
+    weight = float(known_case["weight"] or 0)
+    max_score = float(known_case["max_score"] or 0)
+    if weight <= 0 or max_score <= 0:
+        return 0.0
+
+    score_ratio = min(normalized_raw_score, weight) / weight
+    return min(max_score, score_ratio * max_score)
+
+
+async def _recalculate_user_risk_score(
+        db: aiosqlite.Connection,
+        user_id: int,
+        *,
+        suspicious_threshold: float = RISK_SCORE_SUSPICIOUS_THRESHOLD,
+) -> float:
+    async with db.execute(
+            """
+        SELECT score, source, reason
+        FROM risk_flags
+        WHERE user_id = ?
+        """,
+            (int(user_id),),
+    ) as cur:
+        rows = await cur.fetchall()
+
+    total_score = 0.0
+    for row in rows:
+        total_score += _risk_flag_score_to_percent(
+            row["source"],
+            row["reason"],
+            float(row["score"] or 0),
+        )
+
+    total_score = min(max(float(total_score), 0.0), _RISK_SCORE_CAP)
+    await db.execute(
+        """
+        UPDATE users
+        SET risk_score = ?
+        WHERE user_id = ?
+        """,
+        (float(total_score), int(user_id)),
+    )
+
+    if total_score >= float(suspicious_threshold):
+        await _mark_user_suspicious(
+            db,
+            int(user_id),
+            "Автофлаг риска",
+            commit=False,
+        )
+
+    return float(total_score)
+
+
+async def _ensure_user_risk_state(
+        db: aiosqlite.Connection,
+        user_id: int,
+        *,
+        suspicious_threshold: float = RISK_SCORE_SUSPICIOUS_THRESHOLD,
+) -> None:
+    await ensure_users_risk_schema(db)
+
+    async with db.execute(
+            "SELECT 1 FROM users WHERE user_id = ? LIMIT 1",
+            (int(user_id),),
+    ) as cur:
+        user_exists = await cur.fetchone()
+
+    if not user_exists:
+        return
+
+    async with db.execute(
+            "SELECT 1 FROM risk_flags WHERE user_id = ? LIMIT 1",
+            (int(user_id),),
+    ) as cur:
+        has_flags = await cur.fetchone()
+
+    if not has_flags:
+        async with db.execute(
+                """
+            SELECT
+                COALESCE(source, 'system') AS source,
+                COALESCE(reason, 'unknown') AS reason,
+                COALESCE(MAX(CASE WHEN delta > 0 THEN delta ELSE 0 END), 0) AS score,
+                MAX(meta) AS meta
+            FROM risk_events
+            WHERE user_id = ?
+            GROUP BY COALESCE(source, 'system'), COALESCE(reason, 'unknown')
+            HAVING score > 0
+            """,
+                (int(user_id),),
+        ) as cur:
+            grouped_rows = await cur.fetchall()
+
+        for row in grouped_rows:
+            source = row["source"]
+            reason = row["reason"]
+            score = min(
+                max(float(row["score"] or 0), 0.0),
+                _get_risk_case_weight(source, reason, _RISK_SCORE_CAP),
+            )
+            await db.execute(
+                """
+                INSERT OR IGNORE INTO risk_flags (
+                    user_id, risk_key, score, reason, source, meta
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    int(user_id),
+                    _risk_flag_key(source, reason),
+                    score,
+                    reason,
+                    source,
+                    row["meta"],
+                ),
+            )
+
+    await _recalculate_user_risk_score(
+        db,
+        int(user_id),
+        suspicious_threshold=suspicious_threshold,
     )
 
 def normalize_role_level(role_level: int) -> int:
@@ -84,10 +426,13 @@ def has_role_level(current_level: int, required_level: int) -> bool:
 
 
 async def get_user_by_id(db: aiosqlite.Connection, user_id: int):
-    await ensure_users_risk_schema(db)
+    await ensure_users_profile_schema(db)
+    await _ensure_user_risk_state(db, int(user_id))
     async with db.execute(
             """
-        SELECT user_id, username, tg_first_name, tg_last_name, balance, role_level,
+        SELECT user_id, username, tg_first_name, tg_last_name, game_nickname,
+               COALESCE(game_nickname_change_count, 0) AS game_nickname_change_count,
+               balance, role_level,
                is_suspicious, suspicious_reason, COALESCE(risk_score, 0) AS risk_score,
                created_at, last_seen_at
         FROM users
@@ -125,31 +470,43 @@ async def register_user(
         first_name: Optional[str] = None,
         last_name: Optional[str] = None,
 ) -> None:
+    await ensure_users_profile_schema(db)
     await ensure_users_risk_schema(db)
     u = (username or "").strip().lstrip("@") or None
     fn = (first_name or "").strip() or None
     ln = (last_name or "").strip() or None
+    game_nickname = default_game_nickname_for_user_id(user_id)
 
     bootstrap_level = bootstrap_role_level_for_user_id(user_id)
 
     async with db.execute(
-            "SELECT user_id FROM users WHERE user_id = ?",
+            """
+            SELECT user_id, game_nickname
+            FROM users
+            WHERE user_id = ?
+            """,
             (int(user_id),),
     ) as cur:
-        exists = await cur.fetchone() is not None
+        existing_row = await cur.fetchone()
 
-    if not exists:
+    if not existing_row:
+        game_nickname = await _generate_unique_game_nickname(db)
         await db.execute(
             """
             INSERT INTO users (
-                user_id, username, tg_first_name, tg_last_name,
-                balance, role_level, created_at, last_seen_at
+                user_id, username, tg_first_name, tg_last_name, game_nickname,
+                game_nickname_change_count, balance, role_level, created_at, last_seen_at
             )
-            VALUES (?, ?, ?, ?, 0, ?, datetime('now'), datetime('now'))
+            VALUES (?, ?, ?, ?, ?, 0, 0, ?, datetime('now'), datetime('now'))
             """,
-            (int(user_id), u, fn, ln, bootstrap_level),
+            (int(user_id), u, fn, ln, game_nickname, bootstrap_level),
         )
         return
+
+    replacement_game_nickname: Optional[str] = None
+    current_game_nickname = existing_row["game_nickname"] if "game_nickname" in existing_row.keys() else None
+    if not normalize_game_nickname(current_game_nickname):
+        replacement_game_nickname = await _generate_unique_game_nickname(db)
 
     await db.execute(
         """
@@ -157,6 +514,7 @@ async def register_user(
         SET username = COALESCE(?, username),
             tg_first_name = COALESCE(?, tg_first_name),
             tg_last_name = COALESCE(?, tg_last_name),
+            game_nickname = COALESCE(game_nickname, ?),
             role_level = CASE
                 WHEN COALESCE(role_level, 0) < ? THEN ?
                 ELSE role_level
@@ -164,7 +522,7 @@ async def register_user(
             last_seen_at = datetime('now')
         WHERE user_id = ?
         """,
-        (u, fn, ln, bootstrap_level, bootstrap_level, int(user_id)),
+        (u, fn, ln, replacement_game_nickname, bootstrap_level, bootstrap_level, int(user_id)),
     )
 
 
@@ -258,7 +616,41 @@ async def get_balance(db: aiosqlite.Connection, user_id: int) -> float:
     return float(row["balance"]) if row else 0.0
 
 
+async def is_game_nickname_taken(
+        db: aiosqlite.Connection,
+        nickname: str,
+        *,
+        exclude_user_id: Optional[int] = None,
+) -> bool:
+    return await _is_game_nickname_taken(
+        db,
+        nickname,
+        exclude_user_id=exclude_user_id,
+    )
+
+
+async def set_user_game_nickname_once(
+        db: aiosqlite.Connection,
+        user_id: int,
+        nickname: str,
+) -> bool:
+    normalized_nickname = normalize_game_nickname(nickname)
+    cur = await db.execute(
+        """
+        UPDATE users
+        SET
+            game_nickname = ?,
+            game_nickname_change_count = COALESCE(game_nickname_change_count, 0) + 1
+        WHERE user_id = ?
+          AND COALESCE(game_nickname_change_count, 0) < 1
+        """,
+        (normalized_nickname, int(user_id)),
+    )
+    return cur.rowcount == 1
+
+
 async def get_user_admin_details(db: aiosqlite.Connection, user_id: int):
+    await ensure_users_profile_schema(db)
     await ensure_users_risk_schema(db)
     async with db.execute(
             """
@@ -276,12 +668,13 @@ async def build_user_stats_text(db: aiosqlite.Connection, user_id: int) -> str:
     stats = await get_user_earnings_breakdown(db, user_id)
 
     return (
-        f"⭐ Всего заработано: {fmt_stars(stats['total'])}⭐\n"
+        f"⭐ Всего заработано: {fmt_stars(stats['total'])}⭐\n\n"
         f"{fmt_stars(stats['view_post_bonus'])} ({stats['view_post_bonus_pct']:.1f}%) — просмотр постов\n"
         f"{fmt_stars(stats['daily_bonus'])} ({stats['daily_bonus_pct']:.1f}%) — ежедневный бонус\n"
+        f"{fmt_stars(stats['battle_net'])} ({stats['battle_net_pct']:.1f}%) — батлы\n"
+        f"{fmt_stars(stats['referral_bonus'])} ({stats['referral_bonus_pct']:.1f}%) — рефералы\n\n"
         f"{fmt_stars(stats['contest_bonus'])} ({stats['contest_bonus_pct']:.1f}%) — конкурсы\n"
         f"{fmt_stars(stats['promo_bonus'])} ({stats['promo_bonus_pct']:.1f}%) — промокоды\n"
-        f"{fmt_stars(stats['referral_bonus'])} ({stats['referral_bonus_pct']:.1f}%) — рефералы\n"
         f"{fmt_stars(stats['admin_adjust'])} ({stats['admin_adjust_pct']:.1f}%) — начисления от админа"
     )
 
@@ -300,6 +693,9 @@ async def build_user_profile(db: aiosqlite.Connection, user_id: int) -> Optional
         "username": row["username"],
         "first_name": row["tg_first_name"],
         "last_name": row["tg_last_name"],
+        "game_nickname": row["game_nickname"] or default_game_nickname_for_user_id(int(row["user_id"])),
+        "game_nickname_change_count": int(row["game_nickname_change_count"] or 0),
+        "can_change_game_nickname": int(row["game_nickname_change_count"] or 0) < 1,
         "balance": float(row["balance"] or 0),
         "risk_score": float(row["risk_score"] or 0),
         "role_level": int(role_level),
@@ -323,6 +719,31 @@ async def get_referrer_id(db: aiosqlite.Connection, user_id: int) -> Optional[in
         return None
 
     return int(row["referred_by"])
+
+
+async def list_related_referral_users(
+        db: aiosqlite.Connection,
+        *,
+        user_id: int,
+        candidate_user_ids: list[int],
+        limit: int = 10,
+):
+    normalized_ids = sorted({int(item) for item in candidate_user_ids if int(item) != int(user_id)})
+    if not normalized_ids:
+        return []
+
+    placeholders = ",".join("?" for _ in normalized_ids)
+    query = f"""
+        SELECT user_id, username, tg_first_name
+        FROM users
+        WHERE user_id IN ({placeholders})
+          AND referred_by = ?
+        ORDER BY user_id ASC
+        LIMIT ?
+    """
+    params: list[Any] = [*normalized_ids, int(user_id), int(limit)]
+    async with db.execute(query, tuple(params)) as cur:
+        return await cur.fetchall()
 
 
 async def total_balances(db: aiosqlite.Connection) -> float:
@@ -507,7 +928,7 @@ async def clear_user_suspicious(db, user_id: int):
 
 
 async def get_user_risk_score(db: aiosqlite.Connection, user_id: int) -> float:
-    await ensure_users_risk_schema(db)
+    await _ensure_user_risk_state(db, int(user_id))
     async with db.execute(
             "SELECT COALESCE(risk_score, 0) AS risk_score FROM users WHERE user_id = ?",
             (int(user_id),),
@@ -526,23 +947,111 @@ async def add_user_risk_score(
         meta: Optional[str] = None,
         suspicious_threshold: float = RISK_SCORE_SUSPICIOUS_THRESHOLD,
 ) -> float:
-    await ensure_users_risk_schema(db)
+    await _ensure_user_risk_state(
+        db,
+        int(user_id),
+        suspicious_threshold=suspicious_threshold,
+    )
     delta_value = float(delta)
-    if delta_value == 0:
+    if delta_value <= 0:
         return await get_user_risk_score(db, int(user_id))
 
-    cur = await db.execute(
-        """
-        UPDATE users
-        SET risk_score = MAX(COALESCE(risk_score, 0) + ?, 0)
-        WHERE user_id = ?
-        """,
-        (delta_value, int(user_id)),
-    )
-    if cur.rowcount != 1:
-        return 0.0
+    previous_total = await get_user_risk_score(db, int(user_id))
+    risk_key = _risk_flag_key(source, reason)
 
-    current_score = await get_user_risk_score(db, int(user_id))
+    async with db.execute(
+            """
+        SELECT score, reason, source, meta
+        FROM risk_flags
+        WHERE user_id = ? AND risk_key = ?
+        LIMIT 1
+        """,
+            (int(user_id), risk_key),
+    ) as cur:
+        existing_row = await cur.fetchone()
+
+    previous_flag_score = float(existing_row["score"] or 0) if existing_row else 0.0
+    max_flag_score = _get_risk_case_weight(source, reason, _RISK_SCORE_CAP)
+    next_flag_score = max(previous_flag_score, min(delta_value, max_flag_score))
+
+    if next_flag_score <= previous_flag_score:
+        if existing_row:
+            existing_reason = existing_row["reason"]
+            existing_source = existing_row["source"]
+            existing_meta = existing_row["meta"]
+            next_meta = meta if meta is not None else existing_meta
+            if (
+                existing_reason != reason
+                or existing_source != source
+                or existing_meta != next_meta
+            ):
+                await db.execute(
+                    """
+                    UPDATE risk_flags
+                    SET reason = ?,
+                        source = ?,
+                        meta = ?,
+                        updated_at = datetime('now')
+                    WHERE user_id = ? AND risk_key = ?
+                    """,
+                    (
+                        reason,
+                        source,
+                        next_meta,
+                        int(user_id),
+                        risk_key,
+                    ),
+                )
+        return previous_total
+
+    if existing_row:
+        cur = await db.execute(
+            """
+            UPDATE risk_flags
+            SET score = ?,
+                reason = ?,
+                source = ?,
+                meta = ?,
+                updated_at = datetime('now')
+            WHERE user_id = ? AND risk_key = ?
+            """,
+            (
+                float(next_flag_score),
+                reason,
+                source,
+                meta,
+                int(user_id),
+                risk_key,
+            ),
+        )
+    else:
+        cur = await db.execute(
+            """
+            INSERT INTO risk_flags (user_id, risk_key, score, reason, source, meta)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                int(user_id),
+                risk_key,
+                float(next_flag_score),
+                reason,
+                source,
+                meta,
+            ),
+        )
+
+    if cur.rowcount != 1:
+        return previous_total
+
+    current_score = await _recalculate_user_risk_score(
+        db,
+        int(user_id),
+        suspicious_threshold=suspicious_threshold,
+    )
+    effective_delta = float(current_score) - float(previous_total)
+    if effective_delta <= 0:
+        return current_score
+
     await db.execute(
         """
         INSERT INTO risk_events (user_id, delta, score_after, reason, source, meta)
@@ -550,20 +1059,13 @@ async def add_user_risk_score(
         """,
         (
             int(user_id),
-            delta_value,
+            effective_delta,
             float(current_score),
             reason,
             source,
             meta,
         ),
     )
-    if current_score >= float(suspicious_threshold):
-        await _mark_user_suspicious(
-            db,
-            int(user_id),
-            f"Автофлаг риска: {reason}",
-            commit=False,
-        )
 
     return current_score
 
@@ -575,7 +1077,7 @@ async def list_user_risk_events(
         limit: int,
         offset: int,
 ):
-    await ensure_users_risk_schema(db)
+    await _ensure_user_risk_state(db, int(user_id))
     async with db.execute(
             """
         SELECT id, delta, score_after, reason, source, meta, created_at
@@ -587,6 +1089,83 @@ async def list_user_risk_events(
             (int(user_id), int(limit), int(offset)),
     ) as cur:
         return await cur.fetchall()
+
+
+async def list_user_risk_flags(
+        db: aiosqlite.Connection,
+        user_id: int,
+):
+    await _ensure_user_risk_state(db, int(user_id))
+    async with db.execute(
+            """
+        SELECT risk_key, score, reason, source, meta, created_at, updated_at
+        FROM risk_flags
+        WHERE user_id = ?
+          AND score > 0
+        ORDER BY score DESC, datetime(updated_at) DESC, id DESC
+        """,
+            (int(user_id),),
+    ) as cur:
+        return await cur.fetchall()
+
+
+async def list_user_risk_case_progress(
+        db: aiosqlite.Connection,
+        user_id: int,
+):
+    await _ensure_user_risk_state(db, int(user_id))
+    flags = await list_user_risk_flags(db, int(user_id))
+    flags_by_key = {
+        row["risk_key"]: row
+        for row in flags
+    }
+
+    items: list[dict[str, Any]] = []
+    known_keys = set()
+    for case in _KNOWN_RISK_CASES:
+        risk_key = _risk_flag_key(case["source"], case["reason"])
+        known_keys.add(risk_key)
+        current_flag = flags_by_key.get(risk_key)
+        items.append(
+            {
+                "risk_key": risk_key,
+                "source": case["source"],
+                "reason": case["reason"],
+                "current_score": (
+                    _risk_flag_score_to_percent(
+                        case["source"],
+                        case["reason"],
+                        float(current_flag["score"] or 0),
+                    )
+                    if current_flag
+                    else 0.0
+                ),
+                "max_score": float(case["max_score"]),
+                "meta": current_flag["meta"] if current_flag else None,
+                "created_at": current_flag["created_at"] if current_flag else None,
+                "updated_at": current_flag["updated_at"] if current_flag else None,
+            }
+        )
+
+    for row in flags:
+        risk_key = row["risk_key"]
+        if risk_key in known_keys:
+            continue
+        score = float(row["score"] or 0)
+        items.append(
+            {
+                "risk_key": risk_key,
+                "source": row["source"],
+                "reason": row["reason"],
+                "current_score": score,
+                "max_score": score,
+                "meta": row["meta"],
+                "created_at": row["created_at"],
+                "updated_at": row["updated_at"],
+            }
+        )
+
+    return items
 
 
 def _build_daily_checkin_state(
