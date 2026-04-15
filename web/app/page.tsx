@@ -458,10 +458,20 @@ export default function HomePage() {
             {activeTab === "profile" && (
               <>
                 <section className="mining-panel mining-profile-panel">
-                  <div className="mining-profile-panel__name">{operatorName}</div>
-                  <span className="mining-profile-panel__role">
-                    {profile.role || "пользователь"}
-                  </span>
+                  <div className="mining-profile-panel__header">
+                    <div className="mining-profile-panel__name">{operatorName}</div>
+                    <span className="mining-profile-panel__role">
+                      {profile.role || "пользователь"}
+                    </span>
+                  </div>
+
+                  <div className="mining-profile-panel__balance">
+                    <div className="mining-profile-panel__balanceLabel">Баланс</div>
+                    <div className="mining-profile-panel__balanceValue">
+                      {formatBalance(profile.balance)} <span>⭐</span>
+                    </div>
+                  </div>
+
                   {profile.can_change_game_nickname ? (
                     <button
                       type="button"
@@ -471,14 +481,6 @@ export default function HomePage() {
                       Сменить ник
                     </button>
                   ) : null}
-                </section>
-
-                <section className="grid grid-cols-1 gap-3">
-                  <OverviewCard
-                    label="Баланс"
-                    value={`${formatBalance(profile.balance)} ⭐`}
-                    tone="gold"
-                  />
                 </section>
 
                 <section className="mining-panel">

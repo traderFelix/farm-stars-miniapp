@@ -762,38 +762,87 @@ textarea:focus {
 }
 
 .mining-profile-panel {
-  padding: 0.95rem 1rem 0.85rem;
+  padding: 0.95rem 1rem 0.9rem;
   min-height: 0;
 }
 
+.mining-profile-panel__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
 .mining-profile-panel__name {
-  padding-right: 6.5rem;
+  flex: 1 1 auto;
   color: #f7fbff;
-  font-size: 1.7rem;
-  line-height: 1.05;
+  font-size: 1.72rem;
+  line-height: 1;
   font-weight: 700;
   letter-spacing: -0.04em;
   font-variant-numeric: lining-nums tabular-nums;
 }
 
 .mining-profile-panel__role {
-  position: absolute;
-  top: 0.85rem;
-  right: 1rem;
-  max-width: 6.25rem;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  max-width: 7.4rem;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: rgba(216, 226, 255, 0.62);
+  border: 1px solid rgba(115, 136, 192, 0.24);
+  border-radius: 999px;
+  padding: 0.32rem 0.68rem;
+  background: rgba(12, 18, 35, 0.82);
+  color: rgba(216, 226, 255, 0.78);
   font-size: 0.66rem;
   font-weight: 700;
   letter-spacing: 0.14em;
   text-transform: uppercase;
 }
 
+.mining-profile-panel__balance {
+  position: relative;
+  overflow: hidden;
+  margin-top: 0.85rem;
+  border-radius: 22px;
+  border: 1px solid rgba(255, 184, 77, 0.18);
+  padding: 0.82rem 0.92rem 0.78rem;
+  background:
+    radial-gradient(circle at top right, rgba(255, 176, 75, 0.18), transparent 28%),
+    radial-gradient(circle at bottom left, rgba(99, 240, 255, 0.1), transparent 30%),
+    linear-gradient(180deg, rgba(20, 24, 42, 0.98), rgba(11, 14, 24, 0.98));
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.02),
+    var(--shadow-glow-gold);
+}
+
+.mining-profile-panel__balanceLabel {
+  color: #9badd7;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.mining-profile-panel__balanceValue {
+  margin-top: 0.28rem;
+  color: #fff5e2;
+  font-size: 1.9rem;
+  line-height: 1;
+  font-weight: 800;
+  letter-spacing: -0.045em;
+  font-variant-numeric: lining-nums tabular-nums;
+}
+
+.mining-profile-panel__balanceValue span {
+  color: #ffd56d;
+}
+
 .mining-profile-panel__edit,
 .mining-profile-panel__hint {
-  margin-top: 0.55rem;
+  margin-top: 0.7rem;
   display: inline-flex;
   align-items: center;
   min-height: 2rem;
