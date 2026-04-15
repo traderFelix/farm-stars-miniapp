@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import {
     createWithdrawal,
@@ -12,13 +12,13 @@ import {
     type WithdrawalMethod,
 } from "@/lib/api";
 import { formatWithdrawalAbility, formatBalance } from "@/lib/format";
-import { openExternalLink } from "@/lib/telegram";
 
 export default function WithdrawalPanel() {
     const [loading, setLoading] = useState(true);
     const [eligibility, setEligibility] =
         useState<WithdrawalEligibilityResponse | null>(null);
     const [withdrawals, setWithdrawals] = useState<WithdrawalItem[]>([]);
+    const [feesExpanded, setFeesExpanded] = useState(false);
 
     const [method, setMethod] = useState<WithdrawalMethod>("stars");
     const [amount, setAmount] = useState<string>("");
@@ -26,12 +26,15 @@ export default function WithdrawalPanel() {
 
     const [submitting, setSubmitting] = useState(false);
     const [message, setMessage] = useState<string>("");
+    const [messageTone, setMessageTone] = useState<"warning" | "error" | "success">("warning");
+
     async function loadPanelData(options?: { preserveMessage?: boolean }) {
         try {
             setLoading(true);
 
             if (!options?.preserveMessage) {
                 setMessage("");
+                setMessageTone("warning");
             }
 
             const [eligibilityData, myWithdrawalsData] = await Promise.all([
@@ -43,6 +46,7 @@ export default function WithdrawalPanel() {
             setWithdrawals(myWithdrawalsData.items || []);
         } catch (e) {
             setMessage(toUserErrorMessage(e, "Не удалось загрузить вывод"));
+            setMessageTone("error");
         } finally {
             setLoading(false);
         }
@@ -52,32 +56,46 @@ export default function WithdrawalPanel() {
         void loadPanelData();
     }, []);
 
-    function handleRateSourceClick(event: ReactMouseEvent<HTMLAnchorElement>, url: string) {
-        event.preventDefault();
-
-        if (!openExternalLink(url)) {
-            setMessage("Не удалось открыть ссылку");
-        }
-    }
-
     async function handleSubmit() {
-        if (!eligibility?.can_withdraw) return;
+        const currentEligibility = eligibility;
+        if (!currentEligibility) return;
 
         const amountNum = Number(amount);
 
         if (!amount || Number.isNaN(amountNum) || amountNum <= 0) {
             setMessage("Введите корректную сумму вывода");
+            setMessageTone("warning");
+            return;
+        }
+
+        if (amountNum < currentEligibility.min_withdraw) {
+            setMessage(`Минимальная сумма вывода — ${formatBalance(currentEligibility.min_withdraw)}⭐️`);
+            setMessageTone("warning");
+            return;
+        }
+
+        if (amountNum > currentEligibility.available_balance) {
+            setMessage("На балансе не хватает звезд для вывода");
+            setMessageTone("warning");
             return;
         }
 
         if (method === "ton" && !wallet.trim()) {
             setMessage("Введите TON-кошелек");
+            setMessageTone("warning");
+            return;
+        }
+
+        if (!currentEligibility.can_withdraw) {
+            setMessage(currentEligibility.message);
+            setMessageTone("warning");
             return;
         }
 
         try {
             setSubmitting(true);
             setMessage("");
+            setMessageTone("warning");
 
             const res = await createWithdrawal({
                 method,
@@ -86,6 +104,7 @@ export default function WithdrawalPanel() {
             });
 
             setMessage(res.message);
+            setMessageTone("success");
 
             await loadPanelData({ preserveMessage: true });
 
@@ -93,6 +112,7 @@ export default function WithdrawalPanel() {
             setWallet("");
         } catch (e) {
             setMessage(toUserErrorMessage(e, "Не удалось создать заявку"));
+            setMessageTone("error");
         } finally {
             setSubmitting(false);
         }
@@ -110,13 +130,15 @@ export default function WithdrawalPanel() {
         );
     }
 
+    const feeTiers = [...eligibility.policy.fee_tiers].sort((left, right) => right.min_amount - left.min_amount);
+
     return (
         <div>
             <div className="flex items-center justify-between gap-3">
                 <div>
                     <h2 className="mt-1 text-xl font-semibold text-white">Центр вывода</h2>
                     <p className="mt-1 text-sm text-slate-300">
-                        Выводи звезды или TON и следи за историей своих заявок.
+                        Выводи звезды или TON и следи за историей своих заявок
                     </p>
                 </div>
 
@@ -130,79 +152,126 @@ export default function WithdrawalPanel() {
                 </button>
             </div>
 
-            <div className="mining-status-note mt-4 text-sm" data-tone="warning">
-                {eligibility.message}
-            </div>
-
             <div className="mt-4">
                 <WithdrawalAbilityMeter value={eligibility.withdrawal_ability} />
             </div>
 
             <div className="mining-surface-card">
-                <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-                    Условия вывода
+                <div className="mining-overview-card__labelRow">
+                    <button
+                        type="button"
+                        className="mining-surface-card__toggle"
+                        aria-expanded={feesExpanded}
+                        aria-controls="withdrawal-fees-panel"
+                        onClick={() => setFeesExpanded((current) => !current)}
+                    >
+                        <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                            Комиссии
+                        </span>
+                        <span className="mining-surface-card__toggleIcon" aria-hidden="true">
+                            <svg viewBox="0 0 20 20" fill="none">
+                                <path
+                                    d="M5 7.5 10 12.5 15 7.5"
+                                    stroke="currentColor"
+                                    strokeWidth="1.9"
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                />
+                            </svg>
+                        </span>
+                    </button>
                 </div>
 
-                <div className="mt-2 grid gap-1 text-sm text-slate-300">
-                    <div>
-                        • Нужно набить {formatBalance(eligibility.min_task_percent)}% доступности вывода
-                    </div>
-                    <div>
-                        • Курс обмена в TON определяется по рынку{" "}
-                        <a
-                            href={eligibility.policy.rate_source_url}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="mining-link"
-                            onClick={(event) => handleRateSourceClick(event, eligibility.policy.rate_source_url)}
-                        >
-                            {eligibility.policy.rate_source_name}
-                        </a>
-                    </div>
-                    <div>
-                        •{" "}
-                        {eligibility.policy.is_first_withdraw
-                            ? "Первый вывод без комиссии"
-                            : "Первый вывод уже был бесплатным, дальше действует шкала комиссий ниже"}
-                    </div>
-                    {eligibility.policy.fee_tiers.map((tier) => (
-                        <div key={tier.min_amount}>
-                            • От {formatBalance(tier.min_amount)} ⭐:{" "}
-                            {tier.fee_xtr > 0
-                                ? `${tier.fee_xtr} ${eligibility.policy.fee_currency}`
-                                : "без комиссии"}
+                <div
+                    id="withdrawal-fees-panel"
+                    className={`mining-surface-card__collapse${feesExpanded ? " is-open" : ""}`}
+                    aria-hidden={!feesExpanded}
+                >
+                    <div className="mining-surface-card__collapseInner">
+                        <div className="mining-withdraw-rules">
+                            <div className="mining-withdraw-rules__card">
+                                <div className="mining-withdraw-rules__cardLabel">Первый вывод</div>
+                                <div className="mining-withdraw-rules__cardValue">
+                                    {eligibility.policy.is_first_withdraw ? "Без комиссии" : "Льгота уже использована"}
+                                </div>
+                                <div className="mining-withdraw-rules__cardText">
+                                    {eligibility.policy.is_first_withdraw
+                                        ? "Первая заявка проходит бесплатно"
+                                        : "Дальше действует шкала комиссий ниже"}
+                                </div>
+                            </div>
+
+                            <div className="mining-withdraw-rules__fees">
+                                <div className="mining-withdraw-rules__cardLabel">Тарифы</div>
+
+                                <div className="mining-withdraw-rules__tiers">
+                                    {feeTiers.map((tier) => (
+                                        <div key={tier.min_amount} className="mining-withdraw-rules__tier">
+                                            <div className="mining-withdraw-rules__tierMin">
+                                                От {formatBalance(tier.min_amount)} ⭐
+                                            </div>
+                                            <div className="mining-withdraw-rules__tierFee">
+                                                {tier.fee_xtr > 0
+                                                    ? `${tier.fee_xtr} ${eligibility.policy.fee_currency}`
+                                                    : "Без комиссии"}
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
                         </div>
-                    ))}
-                    <div>
-                        • Комиссия списывается с баланса {eligibility.policy.fee_currency}
                     </div>
                 </div>
             </div>
 
             <div className="mt-4">
-                <label className="text-xs uppercase tracking-wide text-slate-400">
-                    Метод вывода
-                </label>
-                <select
-                    value={method}
-                    onChange={(e) => setMethod(e.target.value as WithdrawalMethod)}
-                    className="mt-2"
-                >
-                    <option value="stars">Звезды</option>
-                    <option value="ton">TON</option>
-                </select>
+                <div className="mining-overview-card__labelRow">
+                    <label className="text-xs uppercase tracking-wide text-slate-400">
+                        Метод вывода
+                    </label>
+                    <InfoHint
+                        text={`Курс обмена в TON определяется по рынку ${eligibility.policy.rate_source_name}`}
+                    />
+                </div>
+                <div className="mining-withdraw-selectWrap">
+                    <select
+                        value={method}
+                        onChange={(e) => {
+                            setMethod(e.target.value as WithdrawalMethod);
+                            setMessage("");
+                        }}
+                        className="mining-withdraw-select"
+                    >
+                        <option value="stars">Звезды</option>
+                        <option value="ton">TON</option>
+                    </select>
+                    <span className="mining-withdraw-selectIcon" aria-hidden="true">
+                        <svg viewBox="0 0 20 20" fill="none">
+                            <path
+                                d="M5 7.5 10 12.5 15 7.5"
+                                stroke="currentColor"
+                                strokeWidth="1.9"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                            />
+                        </svg>
+                    </span>
+                </div>
             </div>
 
             <div className="mt-3">
                 <label className="text-xs uppercase tracking-wide text-slate-400">
-                    Сумма
+                    Сумма в звездах
                 </label>
                 <input
                     type="number"
                     value={amount}
-                    onChange={(e) => setAmount(e.target.value)}
+                    onChange={(e) => {
+                        setAmount(e.target.value);
+                        setMessage("");
+                    }}
                     placeholder={`Минимум ${formatBalance(eligibility.min_withdraw)}`}
-                    className="mt-2"
+                    className="mining-withdraw-input mt-2"
                 />
             </div>
 
@@ -213,9 +282,12 @@ export default function WithdrawalPanel() {
                     </label>
                     <input
                         value={wallet}
-                        onChange={(e) => setWallet(e.target.value)}
+                        onChange={(e) => {
+                            setWallet(e.target.value);
+                            setMessage("");
+                        }}
                         placeholder="EQ..."
-                        className="mt-2"
+                        className="mining-withdraw-input mt-2"
                     />
                     <div className="mt-2 text-xs text-slate-500">
                         Укажи кошелек TON для получения выплаты
@@ -223,23 +295,17 @@ export default function WithdrawalPanel() {
                 </div>
             )}
 
-            {method === "stars" && (
-                <div className="mining-note-card text-xs text-slate-400">
-                    Вывод в звездах создается заявкой и дальше обрабатывается админом
-                </div>
-            )}
-
             <button
                 type="button"
                 onClick={() => void handleSubmit()}
-                disabled={!eligibility.can_withdraw || submitting}
+                disabled={submitting}
                 className="mining-primary-button mt-4 w-full"
             >
                 {submitting ? "Отправка..." : "Создать заявку"}
             </button>
 
             {message && (
-                <div className="mining-status-note mt-4">
+                <div className="mining-status-note mt-4" data-tone={messageTone}>
                     {message}
                 </div>
             )}
@@ -392,7 +458,7 @@ function InfoHint({ text }: { text: string }) {
             <button
                 type="button"
                 className="mining-info-hint__button mining-info-hint__button--card"
-                aria-label="Подробнее о доступности вывода"
+                aria-label="Показать подсказку"
                 aria-expanded={open}
                 ref={buttonRef}
                 onClick={() => setOpen((prev) => !prev)}
