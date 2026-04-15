@@ -1,3 +1,4 @@
+import logging
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -21,6 +22,9 @@ from api.services.withdrawals import (
 )
 
 router = APIRouter(prefix="/withdrawals", tags=["withdrawals"])
+logger = logging.getLogger(__name__)
+
+WITHDRAWALS_SERVICE_UNAVAILABLE_DETAIL = "Не удалось обработать вывод. Попробуй еще раз чуть позже."
 
 
 async def _create_withdrawal(
@@ -53,6 +57,14 @@ async def _get_my_withdrawals(user_id: int, limit: int) -> WithdrawalListRespons
     return await get_my_withdrawals_for_user(user_id=user_id, limit=limit)
 
 
+def _raise_withdrawals_service_error(action: str, exc: Exception) -> None:
+    logger.exception("Withdrawals route failed during %s", action)
+    raise HTTPException(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        detail=WITHDRAWALS_SERVICE_UNAVAILABLE_DETAIL,
+    ) from exc
+
+
 @router.get("/eligibility", response_model=WithdrawalEligibilityResponse)
 async def get_withdrawal_eligibility(
         user_id: int = Depends(get_current_user_id),
@@ -74,10 +86,7 @@ async def create_withdrawal(
             detail=str(e),
         )
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to create withdrawal: {e}",
-        )
+        _raise_withdrawals_service_error("create withdrawal", e)
 
 
 @router.post("/preview", response_model=WithdrawalPreviewResponse)
@@ -94,10 +103,7 @@ async def preview_withdrawal(
             detail=str(e),
         )
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to preview withdrawal: {e}",
-        )
+        _raise_withdrawals_service_error("preview withdrawal", e)
 
 
 @router.get("/my", response_model=WithdrawalListResponse)
@@ -108,10 +114,7 @@ async def get_my_withdrawals(
     try:
         return await _get_my_withdrawals(user_id=user_id, limit=limit)
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to get my withdrawals: {e}",
-        )
+        _raise_withdrawals_service_error("get my withdrawals", e)
 
 
 @router.get("/bot/eligibility/{user_id}", response_model=WithdrawalEligibilityResponse)
@@ -136,10 +139,7 @@ async def bot_preview_withdrawal(
             detail=str(e),
         )
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to preview withdrawal: {e}",
-        )
+        _raise_withdrawals_service_error("bot preview withdrawal", e)
 
 
 @router.get("/bot/my/{user_id}", response_model=WithdrawalListResponse)
@@ -151,10 +151,7 @@ async def bot_get_my_withdrawals(
     try:
         return await _get_my_withdrawals(user_id=user_id, limit=limit)
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to get my withdrawals: {e}",
-        )
+        _raise_withdrawals_service_error("bot get my withdrawals", e)
 
 
 @router.post("/bot/create/{user_id}", response_model=WithdrawalCreateResponse)
@@ -171,7 +168,4 @@ async def bot_create_withdrawal(
             detail=str(e),
         )
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to create withdrawal: {e}",
-        )
+        _raise_withdrawals_service_error("bot create withdrawal", e)

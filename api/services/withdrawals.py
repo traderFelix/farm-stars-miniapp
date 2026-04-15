@@ -274,6 +274,16 @@ async def _validate_withdraw_rules(db, user_id: int, amount: float) -> Optional[
     return None
 
 
+def _resolve_paid_fee(
+        requested_fee: Optional[int],
+        *,
+        expected_fee: int,
+) -> int:
+    if requested_fee is None:
+        return int(expected_fee)
+    return int(requested_fee)
+
+
 async def get_withdrawal_eligibility_for_user(
         user_id: int,
 ) -> WithdrawalEligibilityResponse:
@@ -398,7 +408,7 @@ async def create_withdrawal_for_user(
     amount = _safe_float(payload.amount)
     wallet = _normalize_wallet(method, payload.wallet)
 
-    paid_fee = int(payload.paid_fee or 0)
+    paid_fee = payload.paid_fee
     fee_payment_charge_id = payload.fee_payment_charge_id
     fee_invoice_payload = payload.fee_invoice_payload
 
@@ -468,7 +478,11 @@ async def create_withdrawal_for_user(
 
         first = await is_first_withdraw(db, user_id)
         expected_fee = get_withdraw_fee(amount, first)
-        if paid_fee != expected_fee:
+        paid_fee_value = _resolve_paid_fee(
+            paid_fee,
+            expected_fee=expected_fee,
+        )
+        if paid_fee_value != expected_fee:
             await log_user_action_with_fingerprint(
                 db,
                 user_id=int(user_id),
@@ -493,18 +507,18 @@ async def create_withdrawal_for_user(
         await set_withdrawal_fee_info(
             db=db,
             withdrawal_id=withdrawal_id,
-            fee_xtr=paid_fee,
-            fee_paid=paid_fee > 0,
+            fee_xtr=paid_fee_value,
+            fee_paid=paid_fee_value > 0,
             fee_payment_charge_id=fee_payment_charge_id,
             fee_invoice_payload=fee_invoice_payload,
         )
 
-        if paid_fee > 0:
+        if paid_fee_value > 0:
             await xtr_ledger_add(
                 db=db,
                 user_id=user_id,
                 withdrawal_id=withdrawal_id,
-                delta_xtr=paid_fee,
+                delta_xtr=paid_fee_value,
                 reason="withdraw_fee_paid",
                 telegram_payment_charge_id=fee_payment_charge_id,
                 invoice_payload=fee_invoice_payload,
@@ -528,10 +542,10 @@ async def create_withdrawal_for_user(
             amount=amount,
             reason="withdraw_hold",
             withdrawal_id=withdrawal_id,
-            meta=f"method={method};fee_xtr={paid_fee}",
+            meta=f"method={method};fee_xtr={paid_fee_value}",
         )
         if not ok:
-            raise ValueError("insufficient_balance")
+            raise ValueError("На балансе не хватает звезд для вывода")
 
         balance = await get_balance(db, user_id)
         await db.commit()
@@ -542,7 +556,7 @@ async def create_withdrawal_for_user(
             status="pending",
             message="Заявка на вывод создана",
             balance=float(balance or 0),
-            fee_xtr=paid_fee,
+            fee_xtr=paid_fee_value,
         )
     finally:
         await db.close()

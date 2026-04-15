@@ -40,7 +40,7 @@ class WithdrawalCreateRequest(BaseModel):
     amount: float
     wallet: Optional[str] = None
 
-    paid_fee: int = 0
+    paid_fee: Optional[int] = None
     fee_payment_charge_id: Optional[str] = None
     fee_invoice_payload: Optional[str] = None
 
