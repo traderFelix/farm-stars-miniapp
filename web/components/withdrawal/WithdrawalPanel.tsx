@@ -5,6 +5,7 @@ import {
     createWithdrawal,
     getMyWithdrawals,
     getWithdrawalEligibility,
+    toUserErrorMessage,
     type WithdrawalEligibilityResponse,
     type WithdrawalItem,
     type WithdrawalMethod,
@@ -40,7 +41,7 @@ export default function WithdrawalPanel() {
             setEligibility(eligibilityData);
             setWithdrawals(myWithdrawalsData.items || []);
         } catch (e) {
-            setMessage(e instanceof Error ? e.message : "Ошибка загрузки вывода");
+            setMessage(toUserErrorMessage(e, "Не удалось загрузить вывод"));
         } finally {
             setLoading(false);
         }
@@ -90,7 +91,7 @@ export default function WithdrawalPanel() {
             setAmount("");
             setWallet("");
         } catch (e) {
-            setMessage(e instanceof Error ? e.message : "Ошибка создания заявки");
+            setMessage(toUserErrorMessage(e, "Не удалось создать заявку"));
         } finally {
             setSubmitting(false);
         }

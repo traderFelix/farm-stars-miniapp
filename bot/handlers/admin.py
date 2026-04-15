@@ -1915,9 +1915,11 @@ async def adm_user_stats(callback: CallbackQuery):
         await callback.answer("Некорректный user_id", show_alert=True)
         return
 
+    parse_mode: Optional[str] = None
     try:
         result = await get_user_stats(user_id)
         text = result.get("text") or "Нет данных"
+        parse_mode = ParseMode.HTML
     except ApiClientError as e:
         text = f"❌ Не удалось загрузить статистику из API.\n\n{e.detail}"
 
@@ -1935,6 +1937,7 @@ async def adm_user_stats(callback: CallbackQuery):
                     ]
                 ]
             ),
+            parse_mode=parse_mode,
         )
     except TelegramBadRequest as e:
         if "message is not modified" not in str(e):

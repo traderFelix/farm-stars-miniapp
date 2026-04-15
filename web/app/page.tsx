@@ -18,6 +18,7 @@ import {
   getMyProfile,
   joinBattle,
   openBotTasks,
+  toUserErrorMessage,
   updateMyGameNickname,
   type BattleStatusResponse,
   type CheckinStatus,
@@ -44,6 +45,7 @@ const BOT_TASKS_URL = `https://t.me/${BOT_USERNAME}?start=tasks`;
 const HERO_BANNER_STYLE = {
   backgroundImage: `linear-gradient(180deg, rgba(7, 10, 18, 0.04), rgba(7, 10, 18, 0.1)), url("${HERO_BANNER_URL}")`,
 };
+const BOOTSTRAP_ERROR_MESSAGE = "Сейчас не удалось открыть мини-приложение. Попробуй еще раз чуть позже.";
 
 export default function HomePage() {
   const [bootstrapState, setBootstrapState] = useState<BootstrapState>("idle");
@@ -84,7 +86,7 @@ export default function HomePage() {
       setCheckin(status);
       setCheckinState("ready");
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Ошибка загрузки ежедневного бонуса";
+      const message = toUserErrorMessage(error, "Не удалось загрузить ежедневный бонус");
       setCheckin(null);
       setCheckinState("error");
       setCheckinMessage(message);
@@ -118,7 +120,7 @@ export default function HomePage() {
       );
       return status;
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Не удалось загрузить статус дуэли";
+      const message = toUserErrorMessage(error, "Не удалось загрузить статус дуэли");
       if (!options?.silent) {
         setBattleStatus(null);
         setBattleLoadState("error");
@@ -149,7 +151,7 @@ export default function HomePage() {
           : prev,
       );
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Не удалось вступить в дуэль";
+      const message = toUserErrorMessage(error, "Не удалось вступить в дуэль");
       setBattleLoadState("error");
       setBattleErrorMessage(message);
     }
@@ -173,7 +175,7 @@ export default function HomePage() {
           : prev,
       );
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Не удалось отменить поиск соперника";
+      const message = toUserErrorMessage(error, "Не удалось отменить поиск соперника");
       setBattleLoadState("error");
       setBattleErrorMessage(message);
     }
@@ -210,7 +212,7 @@ export default function HomePage() {
 
       await loadCheckinStatus({ preserveMessage: true });
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Ошибка получения ежедневного бонуса";
+      const message = toUserErrorMessage(error, "Не удалось получить ежедневный бонус");
       setCheckinState("error");
       setCheckinMessage(message);
     }
@@ -227,10 +229,8 @@ export default function HomePage() {
       if (!closed) {
         openTelegramLink(BOT_TASKS_URL);
       }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Не удалось открыть поток постов";
+    } catch {
       openTelegramLink(BOT_TASKS_URL);
-      window.alert(message);
     } finally {
       setBotTasksOpening(false);
     }
@@ -252,7 +252,7 @@ export default function HomePage() {
       setProfile(nextProfile);
       setNicknameModalOpen(false);
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Не удалось изменить игровой ник";
+      const message = toUserErrorMessage(error, "Не удалось изменить игровой ник");
       setNicknameErrorMessage(message);
     } finally {
       setNicknameSaveState("idle");
@@ -275,10 +275,9 @@ export default function HomePage() {
 
         const initData = getTelegramInitData();
         if (!initData) {
-          const message = "Не пришли данные запуска из Telegram";
+          const message = "Открой мини-приложение из Telegram и попробуй еще раз.";
           setBootstrapState("error");
           setErrorMessage(message);
-          setDebugMessage(`Ошибка запуска: ${message}`);
           return;
         }
 
@@ -304,10 +303,9 @@ export default function HomePage() {
       } catch (error) {
         if (cancelled) return;
         clearAccessToken();
-        const message = error instanceof Error ? error.message : "Неизвестная ошибка запуска";
+        const message = toUserErrorMessage(error, BOOTSTRAP_ERROR_MESSAGE);
         setBootstrapState("error");
         setErrorMessage(message);
-        setDebugMessage(`Ошибка запуска: ${message}`);
       }
     }
 
@@ -440,12 +438,18 @@ export default function HomePage() {
         {bootstrapState === "error" && (
           <section className="mining-panel">
             <SectionHeader
-              eyebrow="Сбой запуска"
-              title="Не удалось запустить шахту"
-              description="Проверь запуск из Telegram и токен, затем попробуй ещё раз"
+              eyebrow="Запуск"
+              title="Шахта сейчас недоступна"
+              description="Попробуй открыть мини-приложение еще раз чуть позже"
             />
-            <StatusNote tone="error">{debugMessage}</StatusNote>
-            <StatusNote tone="error">{errorMessage}</StatusNote>
+            <StatusNote tone="error">{errorMessage || BOOTSTRAP_ERROR_MESSAGE}</StatusNote>
+            <button
+              type="button"
+              className="mining-primary-button mt-4 w-full"
+              onClick={() => window.location.reload()}
+            >
+              Попробовать снова
+            </button>
           </section>
         )}
 

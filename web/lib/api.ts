@@ -204,6 +204,24 @@ type ErrorPayload = {
     message?: unknown;
 };
 
+const GENERIC_SERVICE_ERROR = "Сервис временно недоступен. Попробуй еще раз чуть позже.";
+const GENERIC_AUTH_ERROR = "Открой мини-приложение из Telegram и попробуй еще раз.";
+const GENERIC_NOT_FOUND_ERROR = "Нужные данные сейчас недоступны.";
+const GENERIC_RATE_LIMIT_ERROR = "Слишком много попыток. Попробуй чуть позже.";
+const GENERIC_ACTION_ERROR = "Не удалось выполнить действие. Попробуй еще раз.";
+
+export class ApiRequestError extends Error {
+    status?: number;
+    detail?: string;
+
+    constructor(message: string, options?: { status?: number; detail?: string }) {
+        super(message);
+        this.name = "ApiRequestError";
+        this.status = options?.status;
+        this.detail = options?.detail;
+    }
+}
+
 function isBrowser(): boolean {
     return typeof window !== "undefined";
 }
@@ -262,7 +280,7 @@ function buildHeaders(auth: boolean, hasBody: boolean): HeadersInit {
     return headers;
 }
 
-function extractErrorMessage(data: unknown, status: number): string {
+function extractErrorDetail(data: unknown): string {
     if (data && typeof data === "object") {
         const payload = data as ErrorPayload;
 
@@ -275,7 +293,104 @@ function extractErrorMessage(data: unknown, status: number): string {
         }
     }
 
-    return `Request failed with status ${status}`;
+    return "";
+}
+
+function containsCyrillic(value: string): boolean {
+    return /[А-Яа-яЁёІіЇїЄє]/.test(value);
+}
+
+function isTechnicalErrorMessage(message: string): boolean {
+    const normalized = message.trim().toLowerCase();
+    if (!normalized) {
+        return true;
+    }
+
+    const technicalMarkers = [
+        "request failed with status",
+        "failed to fetch",
+        "networkerror",
+        "unexpected token",
+        "json",
+        "traceback",
+        "stack",
+        "timeout",
+        "timed out",
+        "token",
+        "authorization",
+        "header",
+        "session",
+        "init_data",
+        "telegram",
+        "invalid",
+        "expired",
+        "missing",
+        "not configured",
+        "unavailable",
+        "failed to",
+        "internal",
+        "proxy",
+        "unsupported",
+    ];
+
+    if (technicalMarkers.some((marker) => normalized.includes(marker))) {
+        return true;
+    }
+
+    return !containsCyrillic(message);
+}
+
+function fallbackMessageForStatus(status: number): string {
+    if (status >= 500) {
+        return GENERIC_SERVICE_ERROR;
+    }
+
+    if (status === 401) {
+        return GENERIC_AUTH_ERROR;
+    }
+
+    if (status === 403) {
+        return "Это действие сейчас недоступно.";
+    }
+
+    if (status === 404) {
+        return GENERIC_NOT_FOUND_ERROR;
+    }
+
+    if (status === 429) {
+        return GENERIC_RATE_LIMIT_ERROR;
+    }
+
+    return GENERIC_ACTION_ERROR;
+}
+
+function buildPublicErrorMessage(status: number, detail: string): string {
+    const fallback = fallbackMessageForStatus(status);
+
+    if (status === 401 || status >= 500) {
+        return fallback;
+    }
+
+    if (detail && !isTechnicalErrorMessage(detail)) {
+        return detail;
+    }
+
+    return fallback;
+}
+
+export function toUserErrorMessage(error: unknown, fallback: string = GENERIC_ACTION_ERROR): string {
+    if (error instanceof ApiRequestError) {
+        return error.message || fallback;
+    }
+
+    if (error instanceof Error) {
+        const message = error.message.trim();
+        if (message && !isTechnicalErrorMessage(message)) {
+            return message;
+        }
+    }
+
+    return fallback;
 }
 
 async function apiRequest<T>(
@@ -284,12 +399,18 @@ async function apiRequest<T>(
 ): Promise<T> {
     const hasBody = body !== undefined;
 
-    const response = await fetch(`/api${path}`, {
-        method,
-        headers: buildHeaders(auth, hasBody),
-        body: hasBody ? JSON.stringify(body) : undefined,
-        cache: "no-store",
-    });
+    let response: Response;
+    try {
+        response = await fetch(`/api${path}`, {
+            method,
+            headers: buildHeaders(auth, hasBody),
+            body: hasBody ? JSON.stringify(body) : undefined,
+            cache: "no-store",
+        });
+    } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        throw new ApiRequestError(GENERIC_SERVICE_ERROR, { detail });
+    }
 
     let data: unknown;
     const contentType = response.headers.get("content-type") || "";
@@ -302,7 +423,11 @@ async function apiRequest<T>(
     }
 
     if (!response.ok) {
-        throw new Error(extractErrorMessage(data, response.status));
+        const detail = extractErrorDetail(data);
+        throw new ApiRequestError(buildPublicErrorMessage(response.status, detail), {
+            status: response.status,
+            detail,
+        });
     }
 
     return data as T;
@@ -320,7 +445,7 @@ export async function authTelegram(
     });
 
     if (!result?.token) {
-        throw new Error("Token was not returned by /auth/telegram");
+        throw new ApiRequestError(GENERIC_AUTH_ERROR);
     }
 
     setAccessToken(result.token);
