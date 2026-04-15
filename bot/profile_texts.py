@@ -21,14 +21,14 @@ def format_user_profile_card(profile: dict[str, Any]) -> str:
     else:
         suspicious_block = "✅ Не подозрительный"
 
-    activity_text = f"{withdrawal_ability:.2f}%"
+    withdrawal_ability_text = f"{withdrawal_ability:.2f}%"
 
     return (
         f"👤 Пользователь: {user_id}\n"
         f"Username: {uname_line}\n"
         f"Баланс: {balance:.2f}⭐\n\n"
         f"Роль: {role}\n"
-        f"Доступность вывода: {activity_text}\n\n"
+        f"Доступность вывода: {withdrawal_ability_text}\n\n"
         f"Риск-скор: {risk_score:.1f}\n\n"
         f"{suspicious_block}"
     )

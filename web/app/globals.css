@@ -354,6 +354,146 @@ textarea:focus {
   box-shadow: var(--shadow-soft);
 }
 
+.mining-withdraw-ability {
+  position: relative;
+  overflow: hidden;
+  border-radius: 28px;
+  border: 1px solid rgba(92, 114, 178, 0.32);
+  background:
+    radial-gradient(circle at top right, rgba(255, 199, 95, 0.16), transparent 24%),
+    radial-gradient(circle at bottom left, rgba(61, 101, 255, 0.16), transparent 28%),
+    linear-gradient(180deg, rgba(16, 21, 40, 0.98), rgba(9, 13, 24, 0.98));
+  box-shadow: var(--shadow-soft), 0 0 0 1px rgba(114, 146, 255, 0.08) inset;
+  padding: 1rem;
+}
+
+.mining-withdraw-ability::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(120deg, rgba(255, 82, 114, 0.08), transparent 30%, rgba(255, 210, 110, 0.08) 65%, transparent 100%);
+  pointer-events: none;
+}
+
+.mining-withdraw-ability__header {
+  position: relative;
+  z-index: 1;
+}
+
+.mining-withdraw-ability__value {
+  position: relative;
+  z-index: 1;
+  margin-top: 0.7rem;
+  color: #f9fbff;
+  font-size: clamp(2.4rem, 8vw, 3.7rem);
+  line-height: 0.95;
+  font-weight: 800;
+  letter-spacing: -0.06em;
+  font-variant-numeric: lining-nums tabular-nums;
+}
+
+.mining-withdraw-ability__track {
+  position: relative;
+  z-index: 1;
+  margin-top: 1rem;
+  height: 1.05rem;
+  overflow: hidden;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: linear-gradient(180deg, rgba(28, 36, 62, 0.96), rgba(16, 22, 40, 0.96));
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.04),
+    inset 0 18px 22px rgba(255, 255, 255, 0.04);
+}
+
+.mining-withdraw-ability__fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #8ec5ff 0%, #66b5ff 100%);
+  box-shadow:
+    0 0 18px rgba(106, 181, 255, 0.28),
+    0 0 30px rgba(106, 181, 255, 0.16);
+  transition:
+    width 260ms ease,
+    background 260ms ease,
+    box-shadow 260ms ease,
+    filter 260ms ease;
+}
+
+.mining-withdraw-ability__fill::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.3), transparent 45%, rgba(255, 255, 255, 0.14));
+  mix-blend-mode: screen;
+}
+
+.mining-withdraw-ability[data-tone="red"] {
+  box-shadow: var(--shadow-soft), 0 0 28px rgba(255, 83, 113, 0.18);
+}
+
+.mining-withdraw-ability[data-tone="red"] .mining-withdraw-ability__value {
+  color: #ffd3da;
+  text-shadow: 0 0 18px rgba(255, 83, 113, 0.22);
+}
+
+.mining-withdraw-ability[data-tone="red"] .mining-withdraw-ability__fill {
+  background: linear-gradient(90deg, #ff5a7d 0%, #ff7a5c 100%);
+  box-shadow:
+    0 0 18px rgba(255, 83, 113, 0.42),
+    0 0 32px rgba(255, 83, 113, 0.24);
+}
+
+.mining-withdraw-ability[data-tone="orange"] {
+  box-shadow: var(--shadow-soft), 0 0 28px rgba(255, 153, 72, 0.18);
+}
+
+.mining-withdraw-ability[data-tone="orange"] .mining-withdraw-ability__value {
+  color: #ffd7b5;
+  text-shadow: 0 0 18px rgba(255, 153, 72, 0.2);
+}
+
+.mining-withdraw-ability[data-tone="orange"] .mining-withdraw-ability__fill {
+  background: linear-gradient(90deg, #ffad4d 0%, #ff8a3d 100%);
+  box-shadow:
+    0 0 18px rgba(255, 153, 72, 0.4),
+    0 0 32px rgba(255, 153, 72, 0.22);
+}
+
+.mining-withdraw-ability[data-tone="yellow"] {
+  box-shadow: var(--shadow-soft), 0 0 28px rgba(255, 209, 92, 0.18);
+}
+
+.mining-withdraw-ability[data-tone="yellow"] .mining-withdraw-ability__value {
+  color: #ffe6a5;
+  text-shadow: 0 0 18px rgba(255, 209, 92, 0.2);
+}
+
+.mining-withdraw-ability[data-tone="yellow"] .mining-withdraw-ability__fill {
+  background: linear-gradient(90deg, #ffd45b 0%, #ffbf3c 100%);
+  box-shadow:
+    0 0 18px rgba(255, 209, 92, 0.4),
+    0 0 32px rgba(255, 209, 92, 0.22);
+}
+
+.mining-withdraw-ability[data-tone="green"] {
+  box-shadow: var(--shadow-soft), 0 0 28px rgba(78, 240, 156, 0.18);
+}
+
+.mining-withdraw-ability[data-tone="green"] .mining-withdraw-ability__value {
+  color: #c9ffe5;
+  text-shadow: 0 0 18px rgba(78, 240, 156, 0.2);
+}
+
+.mining-withdraw-ability[data-tone="green"] .mining-withdraw-ability__fill {
+  background: linear-gradient(90deg, #42f1ad 0%, #1fcf8c 100%);
+  box-shadow:
+    0 0 18px rgba(78, 240, 156, 0.42),
+    0 0 34px rgba(78, 240, 156, 0.26);
+}
+
 .mining-panel,
 .mining-task-card {
   border-radius: 30px;

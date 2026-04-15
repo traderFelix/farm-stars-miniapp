@@ -24,7 +24,7 @@ import {
   type CheckinStatus,
   type Profile,
 } from "@/lib/api";
-import { formatActivity, formatBalance, formatCompactBalance } from "@/lib/format";
+import { formatBalance, formatCompactBalance } from "@/lib/format";
 import {
   closeTelegramMiniApp,
   getTelegramInitData,
@@ -473,17 +473,11 @@ export default function HomePage() {
                   ) : null}
                 </section>
 
-                <section className="grid grid-cols-2 gap-3">
+                <section className="grid grid-cols-1 gap-3">
                   <OverviewCard
                     label="Баланс"
                     value={`${formatBalance(profile.balance)} ⭐`}
                     tone="gold"
-                  />
-                  <OverviewCard
-                    label="Доступность вывода"
-                    value={formatActivity(profile.withdrawal_ability)}
-                    tone="cyan"
-                    infoText="Доступность вывода растет от просмотра постов, ежедневных бонусов, побед в батлах и рефералов"
                   />
                 </section>
 

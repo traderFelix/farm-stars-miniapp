@@ -666,13 +666,13 @@ async def build_user_stats_text(db: aiosqlite.Connection, user_id: int) -> str:
     from shared.db.ledger import get_user_earnings_breakdown
 
     stats = await get_user_earnings_breakdown(db, user_id)
-    activity_total = (
+    withdrawal_ability_total = (
         float(stats["view_post_bonus"])
         + float(stats["daily_bonus"])
         + float(stats["battle_net"])
         + float(stats["referral_bonus"])
     )
-    activity_total_pct = (
+    withdrawal_ability_total_pct = (
         float(stats["view_post_bonus_pct"])
         + float(stats["daily_bonus_pct"])
         + float(stats["battle_net_pct"])
@@ -701,7 +701,7 @@ async def build_user_stats_text(db: aiosqlite.Connection, user_id: int) -> str:
         f"{fmt_stars(stats['daily_bonus'])} ({fmt_pct(stats['daily_bonus_pct'])}%) — ежедневный бонус\n"
         f"{fmt_stars(stats['battle_net'])} ({fmt_pct(stats['battle_net_pct'])}%) — батлы\n"
         f"{fmt_stars(stats['referral_bonus'])} ({fmt_pct(stats['referral_bonus_pct'])}%) — рефералы\n"
-        f"<b>Итого: {fmt_stars(activity_total)} ({fmt_pct_total(activity_total_pct)}%)</b>\n\n"
+        f"<b>Итого: {fmt_stars(withdrawal_ability_total)} ({fmt_pct_total(withdrawal_ability_total_pct)}%)</b>\n\n"
         f"{fmt_stars(stats['contest_bonus'])} ({fmt_pct(stats['contest_bonus_pct'])}%) — конкурсы\n"
         f"{fmt_stars(stats['promo_bonus'])} ({fmt_pct(stats['promo_bonus_pct'])}%) — промокоды\n"
         f"{fmt_stars(stats['admin_adjust'])} ({fmt_pct(stats['admin_adjust_pct'])}%) — начисления от админа\n"

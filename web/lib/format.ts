@@ -8,6 +8,6 @@ export function formatCompactBalance(value: number): string {
     return String(Number(Number(value || 0).toFixed(2)));
 }
 
-export function formatActivity(value: number): string {
+export function formatWithdrawalAbility(value: number): string {
     return `${Number(value || 0).toFixed(2)}%`;
 }

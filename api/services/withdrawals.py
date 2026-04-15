@@ -43,7 +43,7 @@ from shared.db.withdrawals import (
 )
 from shared.db.xtr_ledger import xtr_ledger_add
 
-MIN_TASK_PERCENT_VALUE = round(MIN_WITHDRAW_PERCENT * 100, 2)
+MIN_TASK_PERCENT_VALUE = min(round(MIN_WITHDRAW_PERCENT * 200, 2), 100.0)
 
 
 @dataclass
@@ -198,10 +198,10 @@ async def _build_eligibility(user_id: int) -> EligibilityCheckResult:
                 is_first_withdraw=first_withdraw,
             )
 
-        if withdrawal_ability <= MIN_TASK_PERCENT_VALUE:
+        if withdrawal_ability < MIN_TASK_PERCENT_VALUE:
             return EligibilityCheckResult(
                 can_withdraw=False,
-                message=f"Для вывода нужна доступность вывода выше {MIN_TASK_PERCENT_VALUE:.0f}%",
+                message=f"Для вывода нужно набить {MIN_TASK_PERCENT_VALUE:.0f}% доступности вывода",
                 min_withdraw=MIN_WITHDRAW,
                 min_task_percent=MIN_TASK_PERCENT_VALUE,
                 has_pending_withdrawal=False,
@@ -264,10 +264,10 @@ async def _validate_withdraw_rules(db, user_id: int, amount: float) -> Optional[
     if withdrawal_ability <= 0:
         return "❌ Вывод пока недоступен"
 
-    if withdrawal_ability <= MIN_WITHDRAW_PERCENT * 100:
+    if withdrawal_ability < MIN_TASK_PERCENT_VALUE:
         return (
             "❌ Вывод пока недоступен\n\n"
-            f"Для вывода нужна Доступность вывода выше {MIN_WITHDRAW_PERCENT * 100:.0f}%\n\n"
+            f"Для вывода нужно набить {MIN_TASK_PERCENT_VALUE:.0f}% доступности вывода\n\n"
             f"• Доступность вывода: {withdrawal_ability:.2f}%"
         )
 
