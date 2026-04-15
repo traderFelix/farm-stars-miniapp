@@ -1,4 +1,5 @@
 import json
+import logging
 import mimetypes
 from pathlib import Path
 from typing import Any
@@ -35,8 +36,10 @@ router = APIRouter(
     prefix="/tasks",
     tags=["tasks"],
 )
+logger = logging.getLogger(__name__)
 
 TASKS_BANNER_PATH = MINING_HERO_BANNER_PATH
+TASKS_SERVICE_UNAVAILABLE_DETAIL = "Сервис временно недоступен. Попробуй еще раз чуть позже."
 
 
 async def _get_next_task_or_404(user_id: int) -> TaskListItem:
@@ -238,7 +241,7 @@ def _send_tasks_message_to_user(
     except urllib_error.URLError as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Telegram API is unavailable: {exc.reason}",
+            detail=TASKS_SERVICE_UNAVAILABLE_DETAIL,
         ) from exc
 
     if not response_payload.get("ok"):
@@ -302,9 +305,10 @@ async def open_tasks_in_bot(
         user_id: int = Depends(get_current_user_id),
 ):
     if not TELEGRAM_BOT_TOKEN:
+        logger.error("TELEGRAM_BOT_TOKEN is not configured for tasks/open-in-bot")
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="TELEGRAM_BOT_TOKEN is not configured",
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=TASKS_SERVICE_UNAVAILABLE_DETAIL,
         )
 
     tasks_screen_text = await _build_tasks_screen_text(user_id)

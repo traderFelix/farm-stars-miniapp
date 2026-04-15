@@ -133,13 +133,23 @@ async def flush_pending_task_channel_posts(
 
         try:
             await ingest_callback(item)
-        except Exception:
-            logger.warning(
-                "Failed to flush pending task channel post chat_id=%s post_id=%s",
-                item["chat_id"],
-                item["channel_post_id"],
-                exc_info=True,
-            )
+        except Exception as exc:
+            detail = getattr(exc, "detail", None) or str(exc)
+            if exc.__class__.__name__ == "ApiClientError":
+                logger.warning(
+                    "Failed to flush pending task channel post chat_id=%s post_id=%s detail=%s",
+                    item["chat_id"],
+                    item["channel_post_id"],
+                    detail,
+                )
+            else:
+                logger.warning(
+                    "Failed to flush pending task channel post chat_id=%s post_id=%s detail=%s",
+                    item["chat_id"],
+                    item["channel_post_id"],
+                    detail,
+                    exc_info=True,
+                )
             remaining.append(item)
             remaining.extend(items[index + 1:])
             break

@@ -1,6 +1,7 @@
 import hashlib
 import hmac
 import json
+import logging
 import time
 from typing import Any, Optional, cast
 from urllib.parse import parse_qsl
@@ -9,6 +10,9 @@ import jwt
 from fastapi import HTTPException
 
 from shared.config import JWT_ALG, JWT_EXPIRE_DAYS, JWT_SECRET, TELEGRAM_INIT_DATA_MAX_AGE_SECONDS
+
+logger = logging.getLogger(__name__)
+TELEGRAM_AUTH_UNAVAILABLE_DETAIL = "Сервис временно недоступен. Попробуй еще раз чуть позже."
 
 
 def parse_init_data(init_data: str) -> dict[str, str]:
@@ -25,7 +29,8 @@ def parse_init_data(init_data: str) -> dict[str, str]:
 
 def validate_init_data(init_data: str, bot_token: str) -> dict[str, Any]:
     if not bot_token:
-        raise HTTPException(status_code=500, detail="TELEGRAM_BOT_TOKEN is not configured")
+        logger.error("TELEGRAM_BOT_TOKEN is not configured for Telegram auth")
+        raise HTTPException(status_code=500, detail=TELEGRAM_AUTH_UNAVAILABLE_DETAIL)
 
     parsed = parse_init_data(init_data)
 

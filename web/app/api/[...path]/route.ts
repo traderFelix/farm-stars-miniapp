@@ -55,12 +55,25 @@ async function proxyRequest(
         body = await request.text();
     }
 
-    const backendResponse = await fetch(targetUrl, {
-        method: request.method,
-        headers,
-        body,
-        cache: "no-store",
-    });
+    let backendResponse: Response;
+    try {
+        backendResponse = await fetch(targetUrl, {
+            method: request.method,
+            headers,
+            body,
+            cache: "no-store",
+        });
+    } catch (error) {
+        console.error("API proxy request failed", {
+            method: request.method,
+            targetUrl,
+            error,
+        });
+        return NextResponse.json(
+            { detail: "Backend is temporarily unavailable" },
+            { status: 503 },
+        );
+    }
 
     const responseText = await backendResponse.text();
 

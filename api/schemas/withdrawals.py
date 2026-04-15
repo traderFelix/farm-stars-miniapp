@@ -13,7 +13,7 @@ class WithdrawalEligibilityResponse(BaseModel):
     has_pending_withdrawal: bool
     account_age_hours: float
     required_account_age_hours: float
-    activity_index: float
+    withdrawal_ability: float
     task_earnings_percent: float
     available_balance: float
     message: str
@@ -40,7 +40,7 @@ class WithdrawalCreateRequest(BaseModel):
     amount: float
     wallet: Optional[str] = None
 
-    paid_fee: int = 0
+    paid_fee: Optional[int] = None
     fee_payment_charge_id: Optional[str] = None
     fee_invoice_payload: Optional[str] = None
 

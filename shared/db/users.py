@@ -666,21 +666,51 @@ async def build_user_stats_text(db: aiosqlite.Connection, user_id: int) -> str:
     from shared.db.ledger import get_user_earnings_breakdown
 
     stats = await get_user_earnings_breakdown(db, user_id)
+    withdrawal_ability_total = (
+        float(stats["view_post_bonus"])
+        + float(stats["daily_bonus"])
+        + float(stats["battle_net"])
+        + float(stats["referral_bonus"])
+    )
+    withdrawal_ability_total_pct = (
+        float(stats["view_post_bonus_pct"])
+        + float(stats["daily_bonus_pct"])
+        + float(stats["battle_net_pct"])
+        + float(stats["referral_bonus_pct"])
+    )
+    bonus_total = (
+        float(stats["contest_bonus"])
+        + float(stats["promo_bonus"])
+        + float(stats["admin_adjust"])
+    )
+    bonus_total_pct = (
+        float(stats["contest_bonus_pct"])
+        + float(stats["promo_bonus_pct"])
+        + float(stats["admin_adjust_pct"])
+    )
+
+    def fmt_pct(value: float) -> str:
+        return f"{float(value):.2f}".replace(".", ",")
+
+    def fmt_pct_total(value: float) -> str:
+        return f"{float(value):.2f}"
 
     return (
-        f"⭐ Всего заработано: {fmt_stars(stats['total'])}⭐\n\n"
-        f"{fmt_stars(stats['view_post_bonus'])} ({stats['view_post_bonus_pct']:.1f}%) — просмотр постов\n"
-        f"{fmt_stars(stats['daily_bonus'])} ({stats['daily_bonus_pct']:.1f}%) — ежедневный бонус\n"
-        f"{fmt_stars(stats['battle_net'])} ({stats['battle_net_pct']:.1f}%) — батлы\n"
-        f"{fmt_stars(stats['referral_bonus'])} ({stats['referral_bonus_pct']:.1f}%) — рефералы\n\n"
-        f"{fmt_stars(stats['contest_bonus'])} ({stats['contest_bonus_pct']:.1f}%) — конкурсы\n"
-        f"{fmt_stars(stats['promo_bonus'])} ({stats['promo_bonus_pct']:.1f}%) — промокоды\n"
-        f"{fmt_stars(stats['admin_adjust'])} ({stats['admin_adjust_pct']:.1f}%) — начисления от админа"
+        f"<b>Всего заработано: {fmt_stars(stats['total'])}⭐</b>\n\n"
+        f"{fmt_stars(stats['view_post_bonus'])} ({fmt_pct(stats['view_post_bonus_pct'])}%) — просмотр постов\n"
+        f"{fmt_stars(stats['daily_bonus'])} ({fmt_pct(stats['daily_bonus_pct'])}%) — ежедневный бонус\n"
+        f"{fmt_stars(stats['battle_net'])} ({fmt_pct(stats['battle_net_pct'])}%) — батлы\n"
+        f"{fmt_stars(stats['referral_bonus'])} ({fmt_pct(stats['referral_bonus_pct'])}%) — рефералы\n"
+        f"<b>Итого: {fmt_stars(withdrawal_ability_total)} ({fmt_pct_total(withdrawal_ability_total_pct)}%)</b>\n\n"
+        f"{fmt_stars(stats['contest_bonus'])} ({fmt_pct(stats['contest_bonus_pct'])}%) — конкурсы\n"
+        f"{fmt_stars(stats['promo_bonus'])} ({fmt_pct(stats['promo_bonus_pct'])}%) — промокоды\n"
+        f"{fmt_stars(stats['admin_adjust'])} ({fmt_pct(stats['admin_adjust_pct'])}%) — начисления от админа\n"
+        f"<b>Итого: {fmt_stars(bonus_total)} ({fmt_pct_total(bonus_total_pct)}%)</b>"
     )
 
 
 async def build_user_profile(db: aiosqlite.Connection, user_id: int) -> Optional[dict[str, Any]]:
-    from shared.db.ledger import get_activity_index
+    from shared.db.ledger import get_withdrawal_ability
 
     row = await get_user_by_id(db, user_id)
     if not row:
@@ -700,7 +730,7 @@ async def build_user_profile(db: aiosqlite.Connection, user_id: int) -> Optional
         "risk_score": float(row["risk_score"] or 0),
         "role_level": int(role_level),
         "role": role_title_from_level(role_level),
-        "activity_index": await get_activity_index(db, user_id),
+        "withdrawal_ability": await get_withdrawal_ability(db, user_id),
         "is_suspicious": bool(row["is_suspicious"]) if "is_suspicious" in row.keys() else False,
         "suspicious_reason": row["suspicious_reason"] if "suspicious_reason" in row.keys() else None,
         "created_at": row["created_at"] if "created_at" in row.keys() else None,

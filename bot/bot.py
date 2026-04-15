@@ -3,7 +3,7 @@ import asyncio, logging
 from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
 
-from .api_client import ingest_task_channel_post_via_api
+from .api_client import API_BASE_URL, ingest_task_channel_post_via_api
 from .pending_channel_posts import TaskChannelPostPayload, flush_pending_task_channel_posts
 from shared.config import TELEGRAM_BOT_TOKEN
 from .handlers import user_router, admin_router, admin_fallback_router, errors_router
@@ -19,6 +19,8 @@ logging.basicConfig(
 
 logging.getLogger("aiogram").setLevel(logging.WARNING)
 logging.getLogger("aiohttp.access").setLevel(logging.WARNING)
+
+logger = logging.getLogger(__name__)
 
 
 async def _ingest_pending_task_channel_post(payload: TaskChannelPostPayload) -> None:
@@ -47,12 +49,18 @@ async def main():
         limit=500,
     )
     if flush_result["flushed"] > 0 or flush_result["remaining"] > 0:
-        logging.getLogger(__name__).info(
+        logger.info(
             "Startup flush for pending task channel posts flushed=%s remaining=%s",
             flush_result["flushed"],
             flush_result["remaining"],
         )
+    if flush_result["remaining"] > 0:
+        logger.warning(
+            "Pending task channel posts remain queued. Check backend API availability at %s",
+            API_BASE_URL,
+        )
 
+    logger.info("Starting bot polling")
     await dp.start_polling(bot)
 
 

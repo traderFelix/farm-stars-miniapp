@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 
-import { getMyReferrals, type ReferralMeResponse } from "@/lib/api";
+import { getMyReferrals, toUserErrorMessage, type ReferralMeResponse } from "@/lib/api";
 
 export default function ReferralsPanel() {
     const [loading, setLoading] = useState(true);
@@ -19,7 +19,7 @@ export default function ReferralsPanel() {
             const response = await getMyReferrals();
             setReferrals(response);
         } catch (error) {
-            setMessage(error instanceof Error ? error.message : "Ошибка загрузки рефералок");
+            setMessage(toUserErrorMessage(error, "Не удалось загрузить реферальные данные"));
         } finally {
             setLoading(false);
         }

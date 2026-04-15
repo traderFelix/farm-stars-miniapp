@@ -350,7 +350,11 @@ async def get_user_earnings_breakdown(db: aiosqlite.Connection, user_id: int) ->
         "admin_adjust_pct": pct(admin_adjust, total),
     }
 
-async def get_activity_index(db, user_id: int) -> float:
+async def get_withdrawal_ability(db, user_id: int) -> float:
+    def _scale_withdrawal_ability(raw_value: float) -> float:
+        normalized = max(float(raw_value or 0), 0.0)
+        return min(normalized * 2.0, 100.0)
+
     system_placeholders = ",".join("?" for _ in SYSTEM_REASONS)
     positive_good_reasons = tuple(
         reason for reason in GOOD_ACTIVITY_REASONS if reason != "battle_bonus"
@@ -391,7 +395,8 @@ async def get_activity_index(db, user_id: int) -> float:
     if effective_good_total <= 0:
         return 0.0
 
-    return (effective_good_total / total_earned) * 100.0
+    raw_withdrawal_ability = (effective_good_total / total_earned) * 100.0
+    return _scale_withdrawal_ability(raw_withdrawal_ability)
 
 
 async def balances_audit(db: aiosqlite.Connection, limit: int = 10):

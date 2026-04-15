@@ -7,6 +7,7 @@ import {
     claimCampaign,
     getActiveCampaigns,
     redeemPromo,
+    toUserErrorMessage,
     type CampaignItem,
 } from "@/lib/api";
 import { getTelegramWebApp, openTelegramLink } from "@/lib/telegram";
@@ -77,7 +78,7 @@ export default function CampaignsPanel({ onBalanceChange }: CampaignsPanelProps)
                 getTelegramWebApp()?.HapticFeedback?.notificationOccurred?.("error");
             }
         } catch (error) {
-            setClaimError(error instanceof Error ? error.message : "Не удалось забрать награду");
+            setClaimError(toUserErrorMessage(error, "Не удалось забрать награду"));
             getTelegramWebApp()?.HapticFeedback?.notificationOccurred?.("error");
         } finally {
             setClaimingKey(null);
@@ -110,7 +111,7 @@ export default function CampaignsPanel({ onBalanceChange }: CampaignsPanelProps)
             setPromoCode("");
             getTelegramWebApp()?.HapticFeedback?.notificationOccurred?.("success");
         } catch (error) {
-            setPromoError(error instanceof Error ? error.message : "Не удалось активировать промокод");
+            setPromoError(toUserErrorMessage(error, "Не удалось активировать промокод"));
             getTelegramWebApp()?.HapticFeedback?.notificationOccurred?.("error");
         } finally {
             setPromoSubmitting(false);
