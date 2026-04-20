@@ -9,6 +9,7 @@ def _format_withdrawal_ability(value: float) -> str:
 def format_user_profile_card(profile: dict[str, Any]) -> str:
     user_id = profile["user_id"]
     username = profile.get("username")
+    game_nickname = (profile.get("game_nickname") or "").strip() or "не задан"
     balance = float(profile.get("balance") or 0)
     role = profile.get("role") or "пользователь"
     withdrawal_ability = float(profile.get("withdrawal_ability") or 0)
@@ -31,6 +32,7 @@ def format_user_profile_card(profile: dict[str, Any]) -> str:
     return (
         f"👤 Пользователь: {user_id}\n"
         f"Username: {uname_line}\n"
+        f"Никнейм: {game_nickname}\n"
         f"Баланс: {balance:.2f}⭐\n\n"
         f"Роль: {role}\n"
         f"Доступность вывода: {withdrawal_ability_text}\n\n"

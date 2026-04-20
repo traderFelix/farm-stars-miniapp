@@ -8,6 +8,7 @@ class ProfileResponse(BaseModel):
     username: Optional[str] = None
     first_name: Optional[str] = None
     last_name: Optional[str] = None
+    game_nickname: Optional[str] = None
     balance: float
     risk_score: float = 0
     role_level: int
