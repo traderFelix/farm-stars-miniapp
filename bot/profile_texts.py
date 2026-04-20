@@ -1,6 +1,11 @@
 from typing import Any
 
 
+def _format_withdrawal_ability(value: float) -> str:
+    normalized_value = min(max(float(value or 0), 0), 100)
+    return f"{int(normalized_value)}%"
+
+
 def format_user_profile_card(profile: dict[str, Any]) -> str:
     user_id = profile["user_id"]
     username = profile.get("username")
@@ -21,7 +26,7 @@ def format_user_profile_card(profile: dict[str, Any]) -> str:
     else:
         suspicious_block = "✅ Не подозрительный"
 
-    withdrawal_ability_text = f"{withdrawal_ability:.2f}%"
+    withdrawal_ability_text = _format_withdrawal_ability(withdrawal_ability)
 
     return (
         f"👤 Пользователь: {user_id}\n"

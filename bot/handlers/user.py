@@ -29,7 +29,13 @@ from bot.api_client import (
     ingest_task_channel_post_via_api,
     open_task,
 )
-from bot.keyboards import main_menu, task_after_view_kb, tasks_menu
+from bot.keyboards import (
+    MAIN_MENU_REPLY_BUTTON_TEXT,
+    main_menu,
+    persistent_user_menu_kb,
+    task_after_view_kb,
+    tasks_menu,
+)
 from bot.pending_channel_posts import (
     TaskChannelPostPayload,
     build_task_channel_post_payload,
@@ -45,6 +51,9 @@ router = Router()
 logger = logging.getLogger(__name__)
 
 LAST_TASK_POST_MSG_ID_KEY = "last_task_post_message_id"
+LAST_TASK_MENU_MSG_ID_KEY = "last_task_menu_message_id"
+PERSISTENT_USER_MENU_ENABLED_KEY = "persistent_user_menu_enabled"
+TASK_VIEW_LOCKS: dict[int, asyncio.Lock] = {}
 USER_API_UNAVAILABLE_TEXT = "⚠️ Сервис временно недоступен. Попробуй еще раз чуть позже."
 START_TEXT = (
     "🔥 Начинай прямо сейчас фармить ТГ звезды и TON!\n\n"
@@ -88,6 +97,10 @@ def _require_message(message: Union[Message, InaccessibleMessage, None]) -> Mess
     return message
 
 
+def _optional_message(message: Union[Message, InaccessibleMessage, None]) -> Optional[Message]:
+    return message if isinstance(message, Message) else None
+
+
 def _to_optional_int(value: Any) -> Optional[int]:
     if value is None or isinstance(value, bool):
         return None
@@ -113,6 +126,34 @@ def _format_user_api_error(e: ApiClientError) -> str:
     return USER_API_UNAVAILABLE_TEXT
 
 
+def _is_expired_callback_error(error: TelegramBadRequest) -> bool:
+    message = str(error).lower()
+    return (
+        "query is too old" in message
+        or "response timeout expired" in message
+        or "query id is invalid" in message
+    )
+
+
+async def safe_callback_answer(
+        callback: CallbackQuery,
+        text: Optional[str] = None,
+        *,
+        show_alert: bool = False,
+) -> None:
+    try:
+        await callback.answer(text, show_alert=show_alert)
+    except TelegramBadRequest as e:
+        if _is_expired_callback_error(e):
+            logger.info(
+                "Skipped expired callback answer callback_id=%s user_id=%s",
+                callback.id,
+                callback.from_user.id if callback.from_user else None,
+            )
+            return
+        raise
+
+
 def _log_user_api_error(context: str, e: ApiClientError) -> None:
     logger.warning(
         "User API request failed context=%s status=%s path=%s detail=%s",
@@ -130,7 +171,7 @@ async def _answer_user_api_error(
         context: str,
 ) -> None:
     _log_user_api_error(context, e)
-    await callback.answer(_format_user_api_error(e), show_alert=True)
+    await safe_callback_answer(callback, _format_user_api_error(e), show_alert=True)
 
 
 async def _reply_user_api_error(
@@ -160,7 +201,7 @@ async def _reply_user_api_error_via_callback_message(
         )
         return
 
-    await callback.answer(_format_user_api_error(e), show_alert=True)
+    await safe_callback_answer(callback, _format_user_api_error(e), show_alert=True)
 
 
 async def _send_user_api_error(
@@ -276,6 +317,35 @@ def _format_task_battle_progress(status: Optional[dict[str, Any]]) -> Optional[s
     )
 
 
+async def _ensure_persistent_user_menu(message: Message, state: FSMContext) -> None:
+    data = await state.get_data()
+    if data.get(PERSISTENT_USER_MENU_ENABLED_KEY):
+        return
+
+    await message.answer(
+        "🏠 Кнопка «Меню» закреплена снизу.",
+        reply_markup=persistent_user_menu_kb(),
+    )
+    await state.update_data(**{PERSISTENT_USER_MENU_ENABLED_KEY: True})
+
+
+async def _send_start_screen(message: Message, role_level: int) -> None:
+    if START_VISUAL_PATH.exists():
+        try:
+            await message.answer_photo(
+                photo=FSInputFile(START_VISUAL_PATH),
+                caption=START_TEXT,
+                reply_markup=main_menu(role_level),
+            )
+            return
+        except TelegramBadRequest:
+            logger.exception("Failed to send start photo message to user_id=%s", message.chat.id)
+    else:
+        logger.warning("Start visual asset is missing: %s", START_VISUAL_PATH)
+
+    await message.answer(START_TEXT, reply_markup=main_menu(role_level))
+
+
 @router.channel_post()
 async def ingest_task_channel_post(message: Message):
     has_content = bool(
@@ -321,7 +391,7 @@ async def ingest_task_channel_post(message: Message):
 
 
 @router.message(CommandStart())
-async def start(message: Message):
+async def start(message: Message, bot: Bot, state: FSMContext):
     from_user = _require_user(message.from_user)
     user_id = from_user.id
     username = from_user.username
@@ -334,6 +404,7 @@ async def start(message: Message):
         start_arg = parts[1].strip()
 
     logger.info("START user_id=%s text=%r start_arg=%r", user_id, message.text, start_arg)
+    await _ensure_persistent_user_menu(message, state)
 
     start_referrer_id = int(start_arg) if start_arg and start_arg.isdigit() else None
     try:
@@ -372,30 +443,53 @@ async def start(message: Message):
             )
             return
 
-        await message.answer(tasks_screen_text, reply_markup=tasks_menu())
+        await _delete_last_task_menu(bot, user_id, state)
+        sent = await message.answer(tasks_screen_text, reply_markup=tasks_menu())
+        await state.update_data(**{LAST_TASK_MENU_MSG_ID_KEY: sent.message_id})
         return
 
-    if START_VISUAL_PATH.exists():
-        try:
-            await message.answer_photo(
-                photo=FSInputFile(START_VISUAL_PATH),
-                caption=START_TEXT,
-                reply_markup=main_menu(role_level),
-            )
-            return
-        except TelegramBadRequest:
-            logger.exception("Failed to send start photo message to user_id=%s", message.chat.id)
-    else:
-        logger.warning("Start visual asset is missing: %s", START_VISUAL_PATH)
+    await _delete_last_task_menu(bot, user_id, state)
 
-    await message.answer(START_TEXT, reply_markup=main_menu(role_level))
+    await _send_start_screen(message, role_level)
+
+
+@router.message(F.text == MAIN_MENU_REPLY_BUTTON_TEXT)
+async def open_main_menu_from_reply(message: Message, bot: Bot, state: FSMContext):
+    from_user = _require_user(message.from_user)
+    user_id = from_user.id
+
+    await _ensure_persistent_user_menu(message, state)
+
+    try:
+        menu_payload = await bootstrap_bot_user_via_api(
+            user_id=user_id,
+            username=from_user.username,
+            first_name=from_user.first_name,
+            last_name=from_user.last_name,
+            start_referrer_id=None,
+        )
+    except ApiClientError as e:
+        await _reply_user_api_error(
+            message,
+            e,
+            context="reply_menu.bootstrap",
+        )
+        return
+
+    await _delete_last_task_post(bot, user_id, state)
+    await _delete_last_task_menu(bot, user_id, state)
+    await _send_start_screen(message, int(menu_payload.get("role_level") or 0))
 
 
 @router.callback_query(F.data == "tasks")
-async def show_tasks(callback: CallbackQuery):
-    await callback.answer()
+async def show_tasks(callback: CallbackQuery, bot: Bot, state: FSMContext):
+    await safe_callback_answer(callback)
 
     user_id = callback.from_user.id
+    current_message = _optional_message(callback.message)
+    if current_message is not None:
+        await _ensure_persistent_user_menu(current_message, state)
+
     try:
         tasks_screen_text = await _build_tasks_screen_text(user_id)
     except ApiClientError as e:
@@ -406,28 +500,68 @@ async def show_tasks(callback: CallbackQuery):
         )
         return
 
+    current_message_id = current_message.message_id if current_message else None
+    await _delete_last_task_menu(
+        bot,
+        user_id,
+        state,
+        exclude_message_id=current_message_id,
+    )
     await safe_edit_text(
         callback.message,
         tasks_screen_text,
         reply_markup=tasks_menu(),
     )
+    if current_message_id is not None:
+        await state.update_data(**{LAST_TASK_MENU_MSG_ID_KEY: current_message_id})
 
 
 @router.callback_query(F.data == "task:view_post")
 async def task_view_post(callback: CallbackQuery, bot: Bot, state: FSMContext):
     user_id = callback.from_user.id
+    lock = TASK_VIEW_LOCKS.setdefault(user_id, asyncio.Lock())
+
+    if lock.locked():
+        await safe_callback_answer(callback, "⏳ Пост уже открывается.", show_alert=False)
+        await _hide_task_trigger_message(callback.message)
+        return
+
+    await safe_callback_answer(callback, "Показываю пост...")
+    async with lock:
+        await _process_task_view_post(callback, bot, state, user_id)
+
+
+async def _process_task_view_post(
+        callback: CallbackQuery,
+        bot: Bot,
+        state: FSMContext,
+        user_id: int,
+):
+    hidden_message_id = await _hide_task_trigger_message(callback.message)
+    await _delete_last_task_menu(
+        bot,
+        user_id,
+        state,
+        exclude_message_id=hidden_message_id,
+    )
     try:
         task = await get_next_task(user_id)
     except ApiClientError as e:
-        await _answer_user_api_error(
-            callback,
+        await _send_user_api_error(
+            bot,
+            user_id,
             e,
             context="task_view_post.next_task",
+            reply_markup=task_after_view_kb(),
         )
         return
 
     if not task:
-        await callback.answer("❌ Доступных постов пока нет.", show_alert=True)
+        await bot.send_message(
+            chat_id=user_id,
+            text="❌ Доступных постов пока нет.",
+            reply_markup=task_after_view_kb(),
+        )
         return
 
     task_id = int(task["id"])
@@ -438,34 +572,36 @@ async def task_view_post(callback: CallbackQuery, bot: Bot, state: FSMContext):
     try:
         open_result = await open_task(user_id, task_id)
     except ApiClientError as e:
-        await _answer_user_api_error(
-            callback,
+        await _send_user_api_error(
+            bot,
+            user_id,
             e,
             context="task_view_post.open_task",
+            reply_markup=task_after_view_kb(),
         )
         return
     except Exception:
-        await callback.answer("❌ Не удалось открыть задание.", show_alert=True)
+        await bot.send_message(
+            chat_id=user_id,
+            text="❌ Не удалось открыть задание.",
+            reply_markup=task_after_view_kb(),
+        )
         return
 
     if not open_result.get("ok"):
-        await callback.answer(
-            open_result.get("message") or "❌ Не удалось открыть задание.",
-            show_alert=True,
+        open_error_text = open_result.get("message") or "❌ Не удалось открыть задание."
+        await bot.send_message(
+            chat_id=user_id,
+            text=open_error_text,
+            reply_markup=task_after_view_kb(),
         )
         return
 
     reward = float(task.get("reward") or 0)
     view_seconds = float(open_result.get("hold_seconds") or task.get("hold_seconds") or 0)
+    session_id = open_result.get("session_id")
 
-    await callback.answer(open_result.get("message") or "Показываю пост...")
     await _delete_last_task_post(bot, user_id, state)
-
-    try:
-        callback_message = _require_message(callback.message)
-        await callback_message.delete()
-    except Exception:
-        pass
 
     if not chat_id or normalized_channel_post_id is None:
         await bot.send_message(
@@ -502,7 +638,7 @@ async def task_view_post(callback: CallbackQuery, bot: Bot, state: FSMContext):
     await asyncio.sleep(max(view_seconds, 0.0))
 
     try:
-        result = await check_task(user_id, task_id)
+        result = await check_task(user_id, task_id, session_id=session_id)
     except ApiClientError as e:
         await _send_user_api_error(
             bot,
@@ -589,13 +725,85 @@ async def back_to_main(callback: CallbackQuery, bot: Bot, state: FSMContext):
     role_level = int(menu_payload.get("role_level") or 0)
 
     await _delete_last_task_post(bot, user_id, state)
+    await state.update_data(**{LAST_TASK_MENU_MSG_ID_KEY: None})
 
-    await callback.answer()
+    await safe_callback_answer(callback)
     await safe_edit_text(
         callback.message,
         START_TEXT,
         reply_markup=main_menu(role_level),
     )
+
+
+async def _hide_task_trigger_message(
+        message: Union[Message, InaccessibleMessage, None],
+) -> Optional[int]:
+    task_message = _optional_message(message)
+    if task_message is None:
+        return None
+
+    try:
+        await task_message.delete()
+        return task_message.message_id
+    except TelegramBadRequest as e:
+        if "message to delete not found" in str(e).lower():
+            return task_message.message_id
+        logger.warning(
+            "Failed to delete task trigger message chat_id=%s message_id=%s detail=%s",
+            task_message.chat.id,
+            task_message.message_id,
+            e,
+        )
+    except Exception:
+        logger.exception(
+            "Failed to delete task trigger message chat_id=%s message_id=%s",
+            task_message.chat.id,
+            task_message.message_id,
+        )
+
+    try:
+        await task_message.edit_reply_markup(reply_markup=None)
+    except TelegramBadRequest as e:
+        if "message is not modified" not in str(e):
+            logger.warning(
+                "Failed to remove task trigger keyboard chat_id=%s message_id=%s detail=%s",
+                task_message.chat.id,
+                task_message.message_id,
+                e,
+            )
+    except Exception:
+        logger.exception(
+            "Failed to remove task trigger keyboard chat_id=%s message_id=%s",
+            task_message.chat.id,
+            task_message.message_id,
+        )
+
+    return task_message.message_id
+
+
+async def _delete_last_task_menu(
+        bot: Bot,
+        user_id: int,
+        state: FSMContext,
+        *,
+        exclude_message_id: Optional[int] = None,
+) -> None:
+    data = await state.get_data()
+    last_msg_id = data.get(LAST_TASK_MENU_MSG_ID_KEY)
+    if not last_msg_id:
+        return
+
+    normalized_last_msg_id = int(last_msg_id)
+    if exclude_message_id is not None and normalized_last_msg_id == int(exclude_message_id):
+        await state.update_data(**{LAST_TASK_MENU_MSG_ID_KEY: None})
+        return
+
+    try:
+        await bot.delete_message(chat_id=user_id, message_id=normalized_last_msg_id)
+    except Exception:
+        pass
+
+    await state.update_data(**{LAST_TASK_MENU_MSG_ID_KEY: None})
 
 
 async def _delete_last_task_post(bot: Bot, user_id: int, state: FSMContext) -> None:
@@ -651,16 +859,16 @@ async def client_home(callback: CallbackQuery):
             **_build_tg_user_payload(callback.from_user),
         )
     except ApiClientError as e:
-        await callback.answer(f"❌ {e.detail}", show_alert=True)
+        await safe_callback_answer(callback, f"❌ {e.detail}", show_alert=True)
         return
 
     role_level = int(menu_payload.get("role_level") or 0)
 
     if role_level < ROLE_CLIENT:
-        await callback.answer("❌ Раздел клиента тебе пока недоступен.", show_alert=True)
+        await safe_callback_answer(callback, "❌ Раздел клиента тебе пока недоступен.", show_alert=True)
         return
 
-    await callback.answer()
+    await safe_callback_answer(callback)
     await safe_edit_text(
         callback.message,
         "🤝 <b>Кабинет клиента</b>\n\n"
@@ -685,16 +893,16 @@ async def partner_home(callback: CallbackQuery):
             **_build_tg_user_payload(callback.from_user),
         )
     except ApiClientError as e:
-        await callback.answer(f"❌ {e.detail}", show_alert=True)
+        await safe_callback_answer(callback, f"❌ {e.detail}", show_alert=True)
         return
 
     role_level = int(menu_payload.get("role_level") or 0)
 
     if role_level < ROLE_PARTNER:
-        await callback.answer("❌ Партнерский раздел тебе пока недоступен.", show_alert=True)
+        await safe_callback_answer(callback, "❌ Партнерский раздел тебе пока недоступен.", show_alert=True)
         return
 
-    await callback.answer()
+    await safe_callback_answer(callback)
     await safe_edit_text(
         callback.message,
         "💼 <b>Кабинет партнера</b>\n\n"

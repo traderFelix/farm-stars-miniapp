@@ -143,10 +143,10 @@ class TasksApi(ApiSection):
             json={},
         )
 
-    async def check(self, user_id: int, task_id: int) -> JsonDict:
+    async def check(self, user_id: int, task_id: int, *, session_id: Optional[str] = None) -> JsonDict:
         return await self._post(
             f"/tasks/bot/{int(task_id)}/check/{int(user_id)}",
-            json={},
+            json={"session_id": session_id},
         )
 
     async def ingest_channel_post(
@@ -951,8 +951,8 @@ async def open_task(user_id: int, task_id: int) -> JsonDict:
     return await api_client.tasks.open(user_id, task_id)
 
 
-async def check_task(user_id: int, task_id: int) -> JsonDict:
-    return await api_client.tasks.check(user_id, task_id)
+async def check_task(user_id: int, task_id: int, *, session_id: Optional[str] = None) -> JsonDict:
+    return await api_client.tasks.check(user_id, task_id, session_id=session_id)
 
 
 __all__ = [

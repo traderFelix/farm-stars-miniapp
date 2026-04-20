@@ -1,12 +1,16 @@
 from aiogram.types import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
+    KeyboardButton,
+    ReplyKeyboardMarkup,
     WebAppInfo,
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from shared.config import WEB_ORIGIN_NGROK, ROLE_ADMIN, ROLE_CLIENT, ROLE_PARTNER
 
 # ---------- USER KEYBOARDS ----------
+
+MAIN_MENU_REPLY_BUTTON_TEXT = "🏠 Меню"
 
 
 def _miniapp_button() -> InlineKeyboardButton:
@@ -32,6 +36,18 @@ def main_menu(role_level: int = 0) -> InlineKeyboardMarkup:
         rows.append([InlineKeyboardButton(text="🔐 Админка", callback_data="adm:home")])
 
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def persistent_user_menu_kb() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text=MAIN_MENU_REPLY_BUTTON_TEXT)],
+        ],
+        resize_keyboard=True,
+        is_persistent=True,
+        input_field_placeholder="Выбери действие",
+    )
+
 
 def tasks_menu() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(

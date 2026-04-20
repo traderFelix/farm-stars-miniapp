@@ -2,7 +2,7 @@ import json
 import logging
 import mimetypes
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 from urllib import error as urllib_error
 from urllib import request as urllib_request
 from uuid import uuid4
@@ -59,10 +59,16 @@ async def _open_task(user_id: int, task_id: int) -> TaskOpenResponse:
     )
 
 
-async def _check_task(user_id: int, task_id: int) -> TaskCheckResponse:
+async def _check_task(
+        user_id: int,
+        task_id: int,
+        *,
+        session_id: Optional[str] = None,
+) -> TaskCheckResponse:
     return await check_task_for_user(
         user_id=user_id,
         task_id=task_id,
+        session_id=session_id,
     )
 
 
@@ -290,10 +296,10 @@ async def check_task(
         payload: TaskCheckRequest,
         user_id: int = Depends(get_current_user_id),
 ):
-    _ = payload
     return await _check_task(
         user_id=user_id,
         task_id=task_id,
+        session_id=payload.session_id,
     )
 
 
@@ -357,10 +363,10 @@ async def bot_check_task(
         task_id: int,
         payload: TaskCheckRequest,
 ):
-    _ = payload
     return await _check_task(
         user_id=user_id,
         task_id=task_id,
+        session_id=payload.session_id,
     )
 
 

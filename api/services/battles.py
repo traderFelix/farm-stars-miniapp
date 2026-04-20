@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import random
@@ -57,6 +58,41 @@ _BATTLE_JOIN_CANCEL_MAX_CYCLES_PER_MINUTE = 3
 class BattleRowLike(Protocol):
     def __getitem__(self, key: str) -> object:
         ...
+
+
+class BattleRowSnapshot:
+    def __init__(self, values: dict[str, object]) -> None:
+        self._values = values
+
+    def __getitem__(self, key: str) -> object:
+        return self._values[key]
+
+
+_BATTLE_ROW_SNAPSHOT_KEYS = (
+    "id",
+    "creator_user_id",
+    "opponent_user_id",
+    "result",
+    "winner_user_id",
+    "target_views",
+    "stake_amount",
+    "creator_game_nickname",
+    "opponent_game_nickname",
+)
+
+
+def _as_battle_row(row: object) -> BattleRowLike:
+    return cast(BattleRowLike, row)
+
+
+def _optional_battle_row(row: object) -> Optional[BattleRowLike]:
+    if row is None:
+        return None
+    return _as_battle_row(row)
+
+
+def _snapshot_battle_row(row: BattleRowLike) -> BattleRowSnapshot:
+    return BattleRowSnapshot({key: row[key] for key in _BATTLE_ROW_SNAPSHOT_KEYS})
 
 
 def _row_optional_str(row: BattleRowLike, key: str) -> Optional[str]:
@@ -608,12 +644,18 @@ async def _sync_user_battle_resolution(db, *, user_id: int) -> Optional[dict]:
     )
 
 
+async def sync_user_battle_resolution_for_user_db(db, *, user_id: int) -> Optional[dict]:
+    return await _sync_user_battle_resolution(db, user_id=user_id)
+
+
 async def get_active_battle_for_user_db(
         db,
         *,
         user_id: int,
+        sync_resolution: bool = True,
 ) -> Optional[BattleRowLike]:
-    await _sync_user_battle_resolution(db, user_id=user_id)
+    if sync_resolution:
+        await _sync_user_battle_resolution(db, user_id=user_id)
     battle_row = cast(Optional[BattleRowLike], await get_user_open_battle(db, user_id))
     if not battle_row or _row_str(battle_row, "state") != "active":
         return None
@@ -645,7 +687,7 @@ async def get_battle_status_for_user(
             latest_finished = (
                 None
                 if open_battle
-                else cast(Optional[BattleRowLike], await get_user_latest_finished_battle(db, user_id))
+                else _optional_battle_row(await get_user_latest_finished_battle(db, user_id))
             )
             current_balance = await get_balance(db, user_id)
             total_completed_views = await count_completed_task_views_for_user(db, user_id)
@@ -661,13 +703,7 @@ async def get_battle_status_for_user(
         await db.close()
 
     if resolution_to_notify:
-        db = await get_db()
-        try:
-            battle_row = cast(Optional[BattleRowLike], await get_battle_by_id(db, int(resolution_to_notify["battle_id"])))
-        finally:
-            await db.close()
-        if battle_row:
-            _safe_notify_battle_resolution(battle_row)
+        schedule_battle_resolution_notification(int(resolution_to_notify["battle_id"]))
 
     return response
 
@@ -704,7 +740,9 @@ async def join_battle_for_user(
                     current_balance=current_balance,
                     total_completed_views=total_completed_views,
                     open_battle=None,
-                    latest_finished_battle=cast(Optional[BattleRowLike], await get_user_latest_finished_battle(db, user_id)),
+                    latest_finished_battle=_optional_battle_row(
+                        await get_user_latest_finished_battle(db, user_id)
+                    ),
                     message="Слишком частые перезапуски поиска, попробуй через минуту",
                 )
 
@@ -756,7 +794,9 @@ async def join_battle_for_user(
                                 current_balance=my_balance,
                                 total_completed_views=total_completed_views,
                                 open_battle=None,
-                                latest_finished_battle=cast(Optional[BattleRowLike], await get_user_latest_finished_battle(db, user_id)),
+                                latest_finished_battle=_optional_battle_row(
+                                    await get_user_latest_finished_battle(db, user_id)
+                                ),
                                 message="Для входа в дуэль нужна 1⭐ на игровом балансе",
                             )
                         else:
@@ -775,7 +815,9 @@ async def join_battle_for_user(
                                     current_balance=current_balance,
                                     total_completed_views=total_completed_views,
                                     open_battle=None,
-                                    latest_finished_battle=cast(Optional[BattleRowLike], await get_user_latest_finished_battle(db, user_id)),
+                                    latest_finished_battle=_optional_battle_row(
+                                        await get_user_latest_finished_battle(db, user_id)
+                                    ),
                                     message="Для входа в дуэль нужна 1⭐ на игровом балансе",
                                 )
                             else:
@@ -817,7 +859,9 @@ async def join_battle_for_user(
                         current_balance=current_balance,
                         total_completed_views=total_completed_views,
                         open_battle=None,
-                        latest_finished_battle=await get_user_latest_finished_battle(db, user_id),
+                        latest_finished_battle=_optional_battle_row(
+                            await get_user_latest_finished_battle(db, user_id)
+                        ),
                         message="Для входа в дуэль нужна 1⭐ на игровом балансе",
                     )
 
@@ -852,13 +896,7 @@ async def join_battle_for_user(
         await db.close()
 
     if resolution_to_notify:
-        db = await get_db()
-        try:
-            battle_row = cast(Optional[BattleRowLike], await get_battle_by_id(db, int(resolution_to_notify["battle_id"])))
-        finally:
-            await db.close()
-        if battle_row:
-            _safe_notify_battle_resolution(battle_row)
+        schedule_battle_resolution_notification(int(resolution_to_notify["battle_id"]))
 
     if started_battle_id is not None:
         db = await get_db()
@@ -883,6 +921,7 @@ async def cancel_battle_for_user(
 ) -> BattleStatusResponse:
     db = await get_db()
     response: Optional[BattleStatusResponse] = None
+    resolution_to_notify = None
     try:
         async with tx(db, immediate=True):
             await log_user_action_with_fingerprint(
@@ -892,7 +931,7 @@ async def cancel_battle_for_user(
                 fingerprint=fingerprint,
             )
 
-            await _sync_user_battle_resolution(db, user_id=user_id)
+            resolution_to_notify = await _sync_user_battle_resolution(db, user_id=user_id)
             open_battle = cast(Optional[BattleRowLike], await get_user_open_battle(db, user_id))
             if not open_battle or _row_str(open_battle, "state") != "waiting":
                 current_balance = await get_balance(db, user_id)
@@ -905,7 +944,7 @@ async def cancel_battle_for_user(
                     latest_finished_battle=(
                         None
                         if open_battle
-                        else cast(Optional[BattleRowLike], await get_user_latest_finished_battle(db, user_id))
+                        else _optional_battle_row(await get_user_latest_finished_battle(db, user_id))
                     ),
                     message="Нечего отменять",
                 )
@@ -938,11 +977,16 @@ async def cancel_battle_for_user(
                     current_balance=current_balance,
                     total_completed_views=total_completed_views,
                     open_battle=None,
-                    latest_finished_battle=cast(Optional[BattleRowLike], await get_user_latest_finished_battle(db, user_id)),
+                    latest_finished_battle=_optional_battle_row(
+                        await get_user_latest_finished_battle(db, user_id)
+                    ),
                     message=None,
                 )
     finally:
         await db.close()
+
+    if resolution_to_notify:
+        schedule_battle_resolution_notification(int(resolution_to_notify["battle_id"]))
 
     if response is not None:
         return response
@@ -1025,4 +1069,30 @@ async def notify_battle_resolution_by_id(
         await db.close()
 
     if battle_row:
-        _safe_notify_battle_resolution(battle_row)
+        battle_row_snapshot = _snapshot_battle_row(_as_battle_row(battle_row))
+        await asyncio.to_thread(_safe_notify_battle_resolution, battle_row_snapshot)
+
+
+def schedule_battle_resolution_notification(battle_id: Optional[int]) -> None:
+    if battle_id is None:
+        return
+
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        logger.warning(
+            "No running event loop for battle resolution notification battle_id=%s",
+            battle_id,
+        )
+        return
+
+    async def _notify() -> None:
+        try:
+            await notify_battle_resolution_by_id(battle_id)
+        except Exception:
+            logger.exception(
+                "Failed to notify users about resolved battle battle_id=%s",
+                battle_id,
+            )
+
+    loop.create_task(_notify())
