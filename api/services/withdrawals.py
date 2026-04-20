@@ -93,6 +93,11 @@ def get_withdraw_fee(amount: float, is_first: bool) -> int:
     return 5
 
 
+def _format_withdrawal_ability(value: float) -> str:
+    normalized_value = min(max(float(value or 0), 0), 100)
+    return f"{int(normalized_value)}%"
+
+
 def build_withdrawal_policy(*, is_first_withdraw: bool) -> WithdrawalPolicyResponse:
     return WithdrawalPolicyResponse(
         first_withdraw_free=True,
@@ -268,7 +273,7 @@ async def _validate_withdraw_rules(db, user_id: int, amount: float) -> Optional[
         return (
             "❌ Вывод пока недоступен\n\n"
             f"Для вывода нужно набить {MIN_TASK_PERCENT_VALUE:.0f}% доступности вывода\n\n"
-            f"• Доступность вывода: {withdrawal_ability:.2f}%"
+            f"• Доступность вывода: {_format_withdrawal_ability(withdrawal_ability)}"
         )
 
     return None

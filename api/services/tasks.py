@@ -6,6 +6,7 @@ from html import escape
 from typing import Optional, cast
 from urllib import error as urllib_error
 from urllib import request as urllib_request
+from uuid import uuid4
 
 from api.db.connection import get_db
 from api.schemas.tasks import (
@@ -18,14 +19,19 @@ from api.services.battles import (
     BattleRowLike,
     build_battle_snapshot_for_task,
     get_active_battle_for_user_db,
-    notify_battle_resolution_by_id,
     register_battle_view_completion,
+    schedule_battle_resolution_notification,
+    sync_user_battle_resolution_for_user_db,
 )
 from shared.db.tasks import (
     add_task_post_view,
     allocate_task_post_from_channel_post,
+    complete_task_post_open_session,
+    create_task_post_open_session,
     get_task_channel_by_chat_id,
     get_next_view_post_task_for_user,
+    get_openable_view_post_task_for_user,
+    get_view_post_task_for_open_session,
     get_view_post_task_for_user,
     increment_task_post_views,
 )
@@ -238,7 +244,14 @@ def map_task_row_to_item(row) -> TaskListItem:
 
 
 async def open_view_post_task(db, user_id: int, row) -> TaskOpenResponse:
-    active_battle = cast(Optional[BattleRowLike], await get_active_battle_for_user_db(db, user_id=user_id))
+    active_battle = cast(
+        Optional[BattleRowLike],
+        await get_active_battle_for_user_db(
+            db,
+            user_id=user_id,
+            sync_resolution=False,
+        ),
+    )
     hold_seconds = (
         VIEW_BATTLE_HOLD_MIN_SECONDS
         + random.randint(
@@ -320,8 +333,17 @@ async def open_view_post_task(db, user_id: int, row) -> TaskOpenResponse:
         entity_id=str(task_post_id),
     )
 
+    session_id = uuid4().hex
     opened_at = time.time()
     can_check_at = opened_at + hold_seconds
+    await create_task_post_open_session(
+        db,
+        session_id=session_id,
+        user_id=user_id,
+        task_post_id=task_post_id,
+        opened_at=opened_at,
+        can_check_at=can_check_at,
+    )
 
     return TaskOpenResponse(
         ok=True,
@@ -336,12 +358,18 @@ async def open_view_post_task(db, user_id: int, row) -> TaskOpenResponse:
             row["chat_id"],
             row["channel_post_id"],
         ),
-        session_id=None,
+        session_id=session_id,
         battle=battle_snapshot,
     )
 
 
-async def check_view_post_task(db, user_id: int, row) -> TaskCheckResponse:
+async def check_view_post_task(
+        db,
+        user_id: int,
+        row,
+        *,
+        session_id: Optional[str] = None,
+) -> TaskCheckResponse:
     task_post_id = int(row["id"])
     reward = float(row["reward"] or 0)
 
@@ -356,6 +384,13 @@ async def check_view_post_task(db, user_id: int, row) -> TaskCheckResponse:
         )
         current_balance = await _get_user_balance_safe(db, user_id)
         await db.rollback()
+        if session_id:
+            await complete_task_post_open_session(
+                db,
+                session_id=session_id,
+                status="completed",
+            )
+            await db.commit()
         return TaskCheckResponse(
             ok=True,
             task_id=task_post_id,
@@ -378,6 +413,13 @@ async def check_view_post_task(db, user_id: int, row) -> TaskCheckResponse:
         )
         current_balance = await _get_user_balance_safe(db, user_id)
         await db.rollback()
+        if session_id:
+            await complete_task_post_open_session(
+                db,
+                session_id=session_id,
+                status="completed",
+            )
+            await db.commit()
         return TaskCheckResponse(
             ok=True,
             task_id=task_post_id,
@@ -400,6 +442,13 @@ async def check_view_post_task(db, user_id: int, row) -> TaskCheckResponse:
         )
         current_balance = await _get_user_balance_safe(db, user_id)
         await db.rollback()
+        if session_id:
+            await complete_task_post_open_session(
+                db,
+                session_id=session_id,
+                status="rejected",
+            )
+            await db.commit()
         return TaskCheckResponse(
             ok=True,
             task_id=task_post_id,
@@ -435,15 +484,14 @@ async def check_view_post_task(db, user_id: int, row) -> TaskCheckResponse:
         db,
         user_id=int(user_id),
     )
-    await db.commit()
-    try:
-        await notify_battle_resolution_by_id(battle_update.get("resolved_battle_id"))
-    except Exception:
-        logger.exception(
-            "Failed to notify users about resolved battle after task completion task_post_id=%s user_id=%s",
-            task_post_id,
-            user_id,
+    if session_id:
+        await complete_task_post_open_session(
+            db,
+            session_id=session_id,
+            status="completed",
         )
+    await db.commit()
+    schedule_battle_resolution_notification(battle_update.get("resolved_battle_id"))
 
     return TaskCheckResponse(
         ok=True,
@@ -477,11 +525,17 @@ async def open_task_by_type(db, user_id: int, row) -> TaskOpenResponse:
     )
 
 
-async def check_task_by_type(db, user_id: int, row) -> TaskCheckResponse:
+async def check_task_by_type(
+        db,
+        user_id: int,
+        row,
+        *,
+        session_id: Optional[str] = None,
+) -> TaskCheckResponse:
     task_type = get_task_type_from_row(row)
 
     if task_type == "view_post":
-        return await check_view_post_task(db, user_id, row)
+        return await check_view_post_task(db, user_id, row, session_id=session_id)
 
     current_balance = await _get_user_balance_safe(db, user_id)
     await db.rollback()
@@ -579,13 +633,18 @@ async def ingest_task_channel_post_message(
 
 async def open_task_for_user(user_id: int, task_id: int) -> TaskOpenResponse:
     db = await get_db()
+    resolution_to_notify = None
+    response: Optional[TaskOpenResponse] = None
     try:
-        row = await get_view_post_task_for_user(db, user_id, task_id)
+        await db.execute("BEGIN IMMEDIATE")
+
+        resolution_to_notify = await sync_user_battle_resolution_for_user_db(db, user_id=user_id)
+        row = await get_openable_view_post_task_for_user(db, user_id, task_id)
         if not row:
-            return TaskOpenResponse(
+            response = TaskOpenResponse(
                 ok=False,
                 task_id=task_id,
-                message="Task not found",
+                message="Пост уже открыт другим пользователем. Попробуй следующий.",
                 opened_at=0,
                 hold_seconds=0,
                 can_check_at=0,
@@ -595,35 +654,61 @@ async def open_task_for_user(user_id: int, task_id: int) -> TaskOpenResponse:
                 session_id=None,
                 battle=None,
             )
+            await db.commit()
+        else:
+            response = await open_task_by_type(db, user_id, row)
+            await db.commit()
 
-        response = await open_task_by_type(db, user_id, row)
-        await db.commit()
-        return response
+    except Exception:
+        await db.rollback()
+        raise
     finally:
         await db.close()
 
+    if resolution_to_notify:
+        schedule_battle_resolution_notification(resolution_to_notify.get("battle_id"))
 
-async def check_task_for_user(user_id: int, task_id: int) -> TaskCheckResponse:
+    if response is None:
+        raise RuntimeError("Task open response was not built")
+    return response
+
+
+async def check_task_for_user(
+        user_id: int,
+        task_id: int,
+        *,
+        session_id: Optional[str] = None,
+) -> TaskCheckResponse:
     db = await get_db()
     try:
         await db.execute("BEGIN IMMEDIATE")
 
-        row = await get_view_post_task_for_user(db, user_id, task_id)
-        if not row:
+        row = None
+        if session_id:
+            row = await get_view_post_task_for_open_session(
+                db,
+                user_id=user_id,
+                task_post_id=task_id,
+                session_id=session_id,
+            )
+        if row is None:
+            row = await get_view_post_task_for_user(db, user_id, task_id)
+        if row is None:
             current_balance = await _get_user_balance_safe(db, user_id)
             await db.rollback()
             return TaskCheckResponse(
                 ok=False,
                 task_id=task_id,
                 status="rejected",
-                message="Task not found",
+                message="Пост уже недоступен. Попробуй следующий.",
                 reward_granted=0,
                 new_balance=current_balance,
                 task_completed=False,
                 battle=None,
             )
 
-        return await check_task_by_type(db, user_id, row)
+        assert row is not None
+        return await check_task_by_type(db, user_id, row, session_id=session_id)
 
     except Exception:
         await db.rollback()

@@ -2,6 +2,8 @@ from typing import Optional
 
 import aiosqlite
 
+TASK_POST_OPEN_SESSION_TTL_SECONDS = 10 * 60
+
 
 async def _column_exists(db: aiosqlite.Connection, table_name: str, column_name: str) -> bool:
     async with db.execute(f"PRAGMA table_info({table_name})") as cur:
@@ -21,16 +23,70 @@ async def ensure_task_channels_client_schema(db: aiosqlite.Connection) -> None:
         )
 
 
+async def ensure_task_post_open_sessions_schema(db: aiosqlite.Connection) -> None:
+    await db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS task_post_open_sessions (
+            session_id TEXT PRIMARY KEY,
+            user_id INTEGER NOT NULL,
+            task_post_id INTEGER NOT NULL,
+            opened_at REAL NOT NULL,
+            can_check_at REAL NOT NULL,
+            status TEXT NOT NULL DEFAULT 'opened',
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            completed_at TEXT
+        )
+        """
+    )
+    await db.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_task_post_open_sessions_task_status
+        ON task_post_open_sessions(task_post_id, status, opened_at)
+        """
+    )
+    await db.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_task_post_open_sessions_user_task_status
+        ON task_post_open_sessions(user_id, task_post_id, status, opened_at)
+        """
+    )
+
+
+async def cleanup_expired_task_post_open_sessions(db: aiosqlite.Connection) -> None:
+    await ensure_task_post_open_sessions_schema(db)
+    await db.execute(
+        """
+        UPDATE task_post_open_sessions
+        SET status = 'expired'
+        WHERE status = 'opened'
+          AND opened_at < CAST(strftime('%s', 'now') AS REAL) - ?
+        """,
+        (TASK_POST_OPEN_SESSION_TTL_SECONDS,),
+    )
+
+
+def _active_open_sessions_count_sql() -> str:
+    return """
+        SELECT COUNT(*)
+        FROM task_post_open_sessions s
+        WHERE s.task_post_id = p.id
+          AND s.status = 'opened'
+          AND s.opened_at >= CAST(strftime('%s', 'now') AS REAL) - ?
+    """
+
+
 async def count_available_view_post_tasks_for_user(
         db: aiosqlite.Connection,
         user_id: int,
 ) -> int:
+    await cleanup_expired_task_post_open_sessions(db)
     async with db.execute(
-            """
+            f"""
         SELECT COUNT(*)
         FROM task_posts p
         WHERE p.is_active = 1
           AND p.current_views < p.required_views
+          AND p.current_views + ({_active_open_sessions_count_sql()}) < p.required_views
           AND NOT EXISTS (
               SELECT 1
               FROM task_post_views v
@@ -38,7 +94,7 @@ async def count_available_view_post_tasks_for_user(
                 AND v.task_post_id = p.id
           )
         """,
-            (int(user_id),),
+            (TASK_POST_OPEN_SESSION_TTL_SECONDS, int(user_id)),
     ) as cur:
         row = await cur.fetchone()
         return int(row[0] or 0)
@@ -48,8 +104,9 @@ async def get_next_view_post_task_for_user(
         db: aiosqlite.Connection,
         user_id: int,
 ):
+    await cleanup_expired_task_post_open_sessions(db)
     async with db.execute(
-            """
+            f"""
         SELECT
             p.id,
             p.channel_id,
@@ -65,6 +122,7 @@ async def get_next_view_post_task_for_user(
         JOIN task_channels c ON c.id = p.channel_id
         WHERE p.is_active = 1
           AND p.current_views < p.required_views
+          AND p.current_views + ({_active_open_sessions_count_sql()}) < p.required_views
           AND NOT EXISTS (
               SELECT 1
               FROM task_post_views v
@@ -74,7 +132,45 @@ async def get_next_view_post_task_for_user(
         ORDER BY datetime(p.created_at) ASC, p.id ASC
         LIMIT 1
         """,
-            (int(user_id),),
+            (TASK_POST_OPEN_SESSION_TTL_SECONDS, int(user_id)),
+    ) as cur:
+        return await cur.fetchone()
+
+
+async def get_openable_view_post_task_for_user(
+        db: aiosqlite.Connection,
+        user_id: int,
+        task_post_id: int,
+):
+    await cleanup_expired_task_post_open_sessions(db)
+    async with db.execute(
+            f"""
+        SELECT
+            p.id,
+            p.channel_id,
+            c.chat_id,
+            c.title AS channel_title,
+            c.view_seconds,
+            p.channel_post_id,
+            p.reward,
+            p.required_views,
+            p.current_views,
+            p.created_at
+        FROM task_posts p
+        JOIN task_channels c ON c.id = p.channel_id
+        WHERE p.id = ?
+          AND p.is_active = 1
+          AND p.current_views < p.required_views
+          AND p.current_views + ({_active_open_sessions_count_sql()}) < p.required_views
+          AND NOT EXISTS (
+              SELECT 1
+              FROM task_post_views v
+              WHERE v.user_id = ?
+                AND v.task_post_id = p.id
+          )
+        LIMIT 1
+        """,
+            (int(task_post_id), TASK_POST_OPEN_SESSION_TTL_SECONDS, int(user_id)),
     ) as cur:
         return await cur.fetchone()
 
@@ -113,6 +209,95 @@ async def get_view_post_task_for_user(
             (int(task_post_id), int(user_id)),
     ) as cur:
         return await cur.fetchone()
+
+
+async def create_task_post_open_session(
+        db: aiosqlite.Connection,
+        *,
+        session_id: str,
+        user_id: int,
+        task_post_id: int,
+        opened_at: float,
+        can_check_at: float,
+) -> None:
+    await ensure_task_post_open_sessions_schema(db)
+    await db.execute(
+        """
+        INSERT INTO task_post_open_sessions (
+            session_id, user_id, task_post_id, opened_at, can_check_at, status
+        )
+        VALUES (?, ?, ?, ?, ?, 'opened')
+        """,
+        (
+            str(session_id),
+            int(user_id),
+            int(task_post_id),
+            float(opened_at),
+            float(can_check_at),
+        ),
+    )
+
+
+async def get_view_post_task_for_open_session(
+        db: aiosqlite.Connection,
+        *,
+        user_id: int,
+        task_post_id: int,
+        session_id: str,
+):
+    await cleanup_expired_task_post_open_sessions(db)
+    async with db.execute(
+            """
+        SELECT
+            p.id,
+            p.channel_id,
+            c.chat_id,
+            c.title AS channel_title,
+            c.view_seconds,
+            p.channel_post_id,
+            p.reward,
+            p.required_views,
+            p.current_views,
+            p.created_at,
+            s.session_id,
+            s.opened_at,
+            s.can_check_at
+        FROM task_post_open_sessions s
+        JOIN task_posts p ON p.id = s.task_post_id
+        JOIN task_channels c ON c.id = p.channel_id
+        WHERE s.session_id = ?
+          AND s.user_id = ?
+          AND s.task_post_id = ?
+          AND s.status = 'opened'
+          AND NOT EXISTS (
+              SELECT 1
+              FROM task_post_views v
+              WHERE v.user_id = s.user_id
+                AND v.task_post_id = s.task_post_id
+          )
+        LIMIT 1
+        """,
+            (str(session_id), int(user_id), int(task_post_id)),
+    ) as cur:
+        return await cur.fetchone()
+
+
+async def complete_task_post_open_session(
+        db: aiosqlite.Connection,
+        *,
+        session_id: str,
+        status: str = "completed",
+) -> None:
+    await ensure_task_post_open_sessions_schema(db)
+    await db.execute(
+        """
+        UPDATE task_post_open_sessions
+        SET status = ?,
+            completed_at = datetime('now')
+        WHERE session_id = ?
+        """,
+        (str(status), str(session_id)),
+    )
 
 
 async def add_task_post_view(db, user_id: int, task_post_id: int, reward: float) -> bool:

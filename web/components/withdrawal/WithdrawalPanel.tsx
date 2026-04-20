@@ -367,7 +367,7 @@ function WithdrawalAbilityMeter({ value }: { value: number }) {
         <section className="mining-withdraw-ability" data-tone={tone}>
             <div className="mining-withdraw-ability__header mining-overview-card__labelRow">
                 <div className="mining-overview-card__label">Доступность вывода</div>
-                <InfoHint text="Доступность вывода растет от просмотров, ежедневных бонусов, батлов и рефералов" />
+                <InfoHint text="Доступность вывода растет от просмотров, ежедневных бонусов, дуэлей и рефералов" />
             </div>
 
             <div className="mining-withdraw-ability__value">
