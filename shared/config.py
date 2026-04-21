@@ -25,6 +25,14 @@ def _get_float_env(name: str) -> float:
     return float(_require_env(name))
 
 
+def _get_int_env_default(name: str, default: int) -> int:
+    return int(os.getenv(name, str(default)))
+
+
+def _get_float_env_default(name: str, default: float) -> float:
+    return float(os.getenv(name, str(default)))
+
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 OWNER_ID = _get_env("OWNER_ID")
 ADMIN_IDS = {int(x) for x in _require_env("ADMIN_IDS").split(",") if x.strip()}
@@ -64,17 +72,28 @@ MIN_WITHDRAW_PERCENT = 0.5
 LEDGER_PAGE_SIZE = 20
 REFERRAL_PERCENT = 0.10
 REQUIRED_ACCOUNT_AGE_HOURS = 24.0
-VIEW_BATTLE_ENTRY_FEE = float(os.getenv("VIEW_BATTLE_ENTRY_FEE", "1"))
-VIEW_BATTLE_TARGET_VIEWS = int(os.getenv("VIEW_BATTLE_TARGET_VIEWS", "20"))
-VIEW_BATTLE_DURATION_SECONDS = int(os.getenv("VIEW_BATTLE_DURATION_SECONDS", "300"))
-VIEW_BATTLE_WAITING_EXPIRE_SECONDS = int(os.getenv("VIEW_BATTLE_WAITING_EXPIRE_SECONDS", "600"))
-VIEW_BATTLE_HOLD_MIN_SECONDS = int(os.getenv("VIEW_BATTLE_HOLD_MIN_SECONDS", "5"))
-VIEW_BATTLE_HOLD_MAX_SECONDS = int(os.getenv("VIEW_BATTLE_HOLD_MAX_SECONDS", "8"))
+VIEW_BATTLE_ENTRY_FEE = _get_float_env_default("VIEW_BATTLE_ENTRY_FEE", 1.0)
+VIEW_BATTLE_TARGET_VIEWS = _get_int_env_default("VIEW_BATTLE_TARGET_VIEWS", 20)
+VIEW_BATTLE_DURATION_SECONDS = _get_int_env_default("VIEW_BATTLE_DURATION_SECONDS", 300)
+VIEW_BATTLE_WAITING_EXPIRE_SECONDS = _get_int_env_default("VIEW_BATTLE_WAITING_EXPIRE_SECONDS", 600)
+VIEW_BATTLE_HOLD_MIN_SECONDS = _get_int_env_default("VIEW_BATTLE_HOLD_MIN_SECONDS", 5)
+VIEW_BATTLE_HOLD_MAX_SECONDS = _get_int_env_default("VIEW_BATTLE_HOLD_MAX_SECONDS", 8)
+VIEW_THEFT_ATTACK_TARGET_VIEWS = _get_int_env_default("VIEW_THEFT_ATTACK_TARGET_VIEWS", 5)
+VIEW_THEFT_DEFENSE_TARGET_VIEWS = _get_int_env_default("VIEW_THEFT_DEFENSE_TARGET_VIEWS", 2)
+VIEW_THEFT_PROTECTION_TARGET_VIEWS = _get_int_env_default("VIEW_THEFT_PROTECTION_TARGET_VIEWS", 5)
+VIEW_THEFT_DURATION_SECONDS = _get_int_env_default("VIEW_THEFT_DURATION_SECONDS", 120)
+VIEW_THEFT_PROTECTION_SECONDS = _get_int_env_default("VIEW_THEFT_PROTECTION_SECONDS", 86400)
+VIEW_THEFT_DAILY_LIMIT_SECONDS = _get_int_env_default("VIEW_THEFT_DAILY_LIMIT_SECONDS", 86400)
+VIEW_THEFT_MIN_WITHDRAWAL_ABILITY = _get_float_env_default("VIEW_THEFT_MIN_WITHDRAWAL_ABILITY", 50.0)
+VIEW_THEFT_MIN_AMOUNT = _get_float_env_default("VIEW_THEFT_MIN_AMOUNT", 0.1)
+VIEW_THEFT_MAX_AMOUNT = _get_float_env_default("VIEW_THEFT_MAX_AMOUNT", 1.0)
 
 SYSTEM_REASONS = {
     "withdraw_hold",
     "withdraw_paid",
     "withdraw_release",
+    "theft_hold",
+    "theft_release",
 }
 NON_EARNING_REASONS = SYSTEM_REASONS.union({
     "battle_entry",

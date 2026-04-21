@@ -28,6 +28,7 @@ from api.services.tasks import (
     ingest_task_channel_post_message,
     open_task_for_user,
 )
+from api.services.thefts import get_theft_status_for_user
 from api.services.users import get_bot_main_menu_by_user_id
 from shared.assets import MINING_HERO_BANNER_PATH
 from shared.config import TELEGRAM_BOT_TOKEN
@@ -82,6 +83,7 @@ async def _build_tasks_screen_text(user_id: int) -> str:
     balance = float(menu_payload.get("balance") or 0)
     tasks_status_text = "Сейчас доступных постов нет."
     battle_status_text = ""
+    theft_status_text = ""
 
     try:
         next_task = await get_next_task_for_user(user_id)
@@ -98,11 +100,18 @@ async def _build_tasks_screen_text(user_id: int) -> str:
     except Exception:
         battle_status_text = ""
 
+    try:
+        theft_status = await get_theft_status_for_user(user_id)
+        theft_status_text = _format_theft_status_line(theft_status.model_dump())
+    except Exception:
+        theft_status_text = ""
+
     return (
         "👁 Просмотр постов\n\n"
         "За каждый просмотр начисляется награда.\n"
         f"{tasks_status_text}\n"
         f"{battle_status_text + chr(10) if battle_status_text else ''}\n"
+        f"{theft_status_text + chr(10) if theft_status_text else ''}\n"
         f"Баланс: {balance:.2f}".replace(".00", "") + "⭐"
     )
 
@@ -127,6 +136,24 @@ def _format_battle_status_line(status: dict[str, Any]) -> str:
             f" · {_format_battle_seconds(seconds_left)}"
         )
 
+    return ""
+
+
+def _format_theft_status_line(status: dict[str, Any]) -> str:
+    state = str(status.get("state") or "").strip()
+    if state == "protected":
+        return "🛡 Защита от воровства активна"
+    if state == "active":
+        role = str(status.get("role") or "").strip()
+        my_progress = int(status.get("my_progress") or 0)
+        target_views = int(status.get("target_views") or 0)
+        seconds_left = int(status.get("seconds_left") or 0)
+        if role == "attacker":
+            return f"🕵️ Кража: {my_progress}/{target_views} · {_format_battle_seconds(seconds_left)}"
+        if role == "victim":
+            return f"🚨 Защита от атаки: {my_progress}/{target_views} · {_format_battle_seconds(seconds_left)}"
+        if role == "protector":
+            return f"🛡 Заряд защиты: {my_progress}/{target_views} · {_format_battle_seconds(seconds_left)}"
     return ""
 
 

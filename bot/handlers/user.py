@@ -26,6 +26,7 @@ from bot.api_client import (
     get_bot_main_menu_for_user_context_via_api,
     get_bot_main_menu_via_api,
     get_next_task,
+    get_theft_status,
     ingest_task_channel_post_via_api,
     open_task,
 )
@@ -234,6 +235,7 @@ async def _build_tasks_screen_text(user_id: int) -> str:
     balance = float(menu_payload.get("balance") or 0)
     tasks_status_text: Optional[str] = None
     battle_status_text: Optional[str] = None
+    theft_status_text: Optional[str] = None
 
     try:
         next_task = await get_next_task(user_id)
@@ -260,11 +262,23 @@ async def _build_tasks_screen_text(user_id: int) -> str:
     if battle_status:
         battle_status_text = _format_battle_status_line(battle_status)
 
+    try:
+        theft_status = await get_theft_status(user_id)
+    except ApiClientError as e:
+        _log_user_api_error("tasks_screen.theft_status", e)
+        theft_status = None
+    except Exception:
+        theft_status = None
+
+    if theft_status:
+        theft_status_text = _format_theft_status_line(theft_status)
+
     return (
         "👁 Просмотр постов\n\n"
         "За каждый просмотр начисляется награда.\n"
         f"{tasks_status_text}\n"
         f"{battle_status_text + chr(10) if battle_status_text else ''}\n"
+        f"{theft_status_text + chr(10) if theft_status_text else ''}\n"
         f"Баланс: {fmt_stars(balance)}⭐️"
     )
 
@@ -292,6 +306,26 @@ def _format_battle_status_line(status: dict[str, Any]) -> Optional[str]:
     return None
 
 
+def _format_theft_status_line(status: dict[str, Any]) -> Optional[str]:
+    state = str(status.get("state") or "").strip()
+    if state == "protected":
+        return "🛡 Защита от воровства активна"
+
+    if state == "active":
+        role = str(status.get("role") or "").strip()
+        my_progress = int(status.get("my_progress") or 0)
+        target_views = int(status.get("target_views") or 0)
+        seconds_left = int(status.get("seconds_left") or 0)
+        if role == "attacker":
+            return f"🕵️ Кража: {my_progress}/{target_views} · {_format_battle_seconds(seconds_left)}"
+        if role == "victim":
+            return f"🚨 Защита от атаки: {my_progress}/{target_views} · {_format_battle_seconds(seconds_left)}"
+        if role == "protector":
+            return f"🛡 Заряд защиты: {my_progress}/{target_views} · {_format_battle_seconds(seconds_left)}"
+
+    return None
+
+
 def _format_task_battle_progress(status: Optional[dict[str, Any]]) -> Optional[str]:
     if not status:
         return None
@@ -315,6 +349,52 @@ def _format_task_battle_progress(status: Optional[dict[str, Any]]) -> Optional[s
         f"⚔️ Дуэль: {my_progress}/{target_views} против {opponent_progress}/{target_views}\n"
         f"До конца: {_format_battle_seconds(seconds_left)}"
     )
+
+
+def _format_task_theft_progress(status: Optional[dict[str, Any]]) -> Optional[str]:
+    if not status:
+        return None
+
+    kind = str(status.get("kind") or "").strip()
+    state = str(status.get("state") or "").strip()
+    result = str(status.get("result") or "").strip()
+    role = str(status.get("role") or "").strip()
+    my_progress = int(status.get("my_progress") or 0)
+    target_views = int(status.get("target_views") or 0)
+    opponent_progress = int(status.get("opponent_progress") or 0)
+    opponent_target_views = int(status.get("opponent_target_views") or 0)
+    amount = float(status.get("amount") or 0)
+
+    if state == "finished":
+        if result == "stolen":
+            if role == "attacker":
+                return f"🕵️ Кража удалась: +{fmt_stars(amount)}⭐"
+            return f"💥 У тебя украли -{fmt_stars(amount)}⭐"
+        if result == "defended":
+            return "🛡 Ты отбил атаку" if role == "victim" else "🛡 Кражу отбили"
+        if result == "protected":
+            return "🛡 Защита включена на сутки"
+        if result == "expired":
+            return "⌛ Время активности вышло"
+
+    seconds_left = int(status.get("seconds_left") or 0)
+    if kind == "attack":
+        return (
+            f"🕵️ Кража: {my_progress}/{target_views} против {opponent_progress}/{opponent_target_views}\n"
+            f"До конца: {_format_battle_seconds(seconds_left)}"
+        )
+    if kind == "defense":
+        return (
+            f"🚨 Отбиваешь кражу: {my_progress}/{target_views} против {opponent_progress}/{opponent_target_views}\n"
+            f"До конца: {_format_battle_seconds(seconds_left)}"
+        )
+    if kind == "protection":
+        return (
+            f"🛡 Заряд защиты: {my_progress}/{target_views}\n"
+            f"До конца: {_format_battle_seconds(seconds_left)}"
+        )
+
+    return None
 
 
 async def _ensure_persistent_user_menu(message: Message, state: FSMContext) -> None:
@@ -680,7 +760,9 @@ async def _process_task_view_post(
 
     if status_value == "completed":
         battle_progress_text = _format_task_battle_progress(result.get("battle"))
-        battle_block = f"\n\n{battle_progress_text}" if battle_progress_text else ""
+        theft_progress_text = _format_task_theft_progress(result.get("theft"))
+        activity_progress_text = battle_progress_text or theft_progress_text
+        activity_block = f"\n\n{activity_progress_text}" if activity_progress_text else ""
         await bot.send_message(
             chat_id=user_id,
             text=(
@@ -688,7 +770,7 @@ async def _process_task_view_post(
                 f"Начислено: {fmt_stars(reward)}⭐\n"
                 f"{remaining_text}\n"
                 f"Баланс: {fmt_stars(new_balance)}⭐️"
-                f"{battle_block}"
+                f"{activity_block}"
             ),
             reply_markup=task_after_view_kb(),
         )

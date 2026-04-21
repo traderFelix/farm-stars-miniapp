@@ -57,6 +57,10 @@ class UserBattleStatsResponse(BaseModel):
     text: str
 
 
+class UserTheftStatsResponse(BaseModel):
+    text: str
+
+
 class UserLedgerEntry(BaseModel):
     created_at: str
     delta: float

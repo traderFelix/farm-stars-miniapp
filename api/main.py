@@ -21,6 +21,7 @@ from api.routes.profile import router as profile_router
 from api.routes.promos import router as promos_router
 from api.routes.referrals import router as referrals_router
 from api.routes.tasks import router as tasks_router
+from api.routes.thefts import router as thefts_router
 from api.routes.ledger import router as ledger_router
 from api.routes.checkin import router as checkin_router
 from api.routes.withdrawals import router as withdrawals_router
@@ -50,6 +51,7 @@ app.include_router(internal_users_router)
 app.include_router(profile_router)
 app.include_router(referrals_router)
 app.include_router(tasks_router)
+app.include_router(thefts_router)
 app.include_router(miniapp_compat_router)
 app.include_router(users_router)
 app.include_router(analytics_admin_router)

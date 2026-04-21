@@ -14,15 +14,19 @@ import {
   clearAccessToken,
   type BattleRecentResult,
   getMyBattleStatus,
+  getMyTheftStatus,
   getCheckinStatus,
   getMyProfile,
   joinBattle,
   openBotTasks,
+  startTheft,
+  startTheftProtection,
   toUserErrorMessage,
   updateMyGameNickname,
   type BattleStatusResponse,
   type CheckinStatus,
   type Profile,
+  type TheftStatusResponse,
 } from "@/lib/api";
 import { formatBalance, formatCompactBalance } from "@/lib/format";
 import {
@@ -37,6 +41,7 @@ type AppTab = "profile" | "mining" | "referrals" | "campaigns" | "withdrawal";
 
 type CheckinState = "idle" | "loading" | "ready" | "claiming" | "error";
 type BattleLoadState = "idle" | "loading" | "ready" | "working" | "error";
+type TheftLoadState = "idle" | "loading" | "ready" | "working" | "error";
 type NicknameSaveState = "idle" | "saving";
 
 const HERO_BANNER_URL = ["/hero", "mining-hero-banner.png"].join("/");
@@ -65,11 +70,17 @@ export default function HomePage() {
   const [battleLoadState, setBattleLoadState] = useState<BattleLoadState>("idle");
   const [battleErrorMessage, setBattleErrorMessage] = useState("");
   const [battleDisplaySeconds, setBattleDisplaySeconds] = useState(0);
+  const [theftStatus, setTheftStatus] = useState<TheftStatusResponse | null>(null);
+  const [theftLoadState, setTheftLoadState] = useState<TheftLoadState>("idle");
+  const [theftErrorMessage, setTheftErrorMessage] = useState("");
+  const [theftNoticeMessage, setTheftNoticeMessage] = useState("");
+  const [theftDisplaySeconds, setTheftDisplaySeconds] = useState(0);
   const [nicknameModalOpen, setNicknameModalOpen] = useState(false);
   const [nicknameDraft, setNicknameDraft] = useState("");
   const [nicknameSaveState, setNicknameSaveState] = useState<NicknameSaveState>("idle");
   const [nicknameErrorMessage, setNicknameErrorMessage] = useState("");
   const battleSyncInFlightRef = useRef(false);
+  const theftSyncInFlightRef = useRef(false);
 
   const [debugMessage, setDebugMessage] = useState<string>("Шаг 1: запуск");
   const [errorMessage, setErrorMessage] = useState<string>("");
@@ -178,6 +189,86 @@ export default function HomePage() {
       const message = toUserErrorMessage(error, "Не удалось отменить поиск соперника");
       setBattleLoadState("error");
       setBattleErrorMessage(message);
+    }
+  }
+
+  async function loadTheftStatus(options?: { silent?: boolean }) {
+    if (theftSyncInFlightRef.current) {
+      return theftStatus;
+    }
+
+    theftSyncInFlightRef.current = true;
+
+    if (!options?.silent) {
+      setTheftLoadState("loading");
+      setTheftErrorMessage("");
+      setTheftNoticeMessage("");
+    }
+
+    try {
+      const status = await getMyTheftStatus();
+      setTheftStatus(status);
+      setTheftLoadState("ready");
+      setTheftErrorMessage("");
+      if (options?.silent && status.state !== "active") {
+        setTheftNoticeMessage("");
+      }
+      return status;
+    } catch (error) {
+      const message = toUserErrorMessage(error, "Не удалось загрузить статус воровства");
+      if (!options?.silent) {
+        setTheftStatus(null);
+        setTheftLoadState("error");
+        setTheftErrorMessage(message);
+        setTheftDisplaySeconds(0);
+      }
+      return theftStatus;
+    } finally {
+      theftSyncInFlightRef.current = false;
+    }
+  }
+
+  async function handleStartTheft() {
+    if (theftLoadState === "working") return;
+
+    try {
+      setTheftLoadState("working");
+      setTheftErrorMessage("");
+      setTheftNoticeMessage("");
+      const result = await startTheft();
+      setTheftStatus(result.status);
+      setTheftLoadState("ready");
+      if (result.ok) {
+        setTheftNoticeMessage(result.message);
+      } else if (result.status.can_attack) {
+        setTheftErrorMessage(result.message);
+      }
+    } catch (error) {
+      const message = toUserErrorMessage(error, "Не удалось начать воровство");
+      setTheftLoadState("error");
+      setTheftErrorMessage(message);
+    }
+  }
+
+  async function handleStartTheftProtection() {
+    if (theftLoadState === "working") return;
+
+    try {
+      setTheftLoadState("working");
+      setTheftErrorMessage("");
+      setTheftNoticeMessage("");
+      const result = await startTheftProtection();
+      setTheftStatus(result.status);
+      setTheftLoadState("ready");
+      if (result.ok) {
+        setTheftNoticeMessage(result.message);
+      } else {
+        setTheftErrorMessage(result.message);
+      }
+    } catch (error) {
+      const message = toUserErrorMessage(error, "Не удалось включить защиту");
+      setTheftLoadState("error");
+      setTheftErrorMessage(message);
     }
   }
 
@@ -298,8 +389,12 @@ export default function HomePage() {
         await loadBattleStatus();
         if (cancelled) return;
 
+        setDebugMessage("Шаг 7: загрузка воровства");
+        await loadTheftStatus();
+        if (cancelled) return;
+
         setBootstrapState("ready");
-        setDebugMessage("Шаг 7: готово");
+        setDebugMessage("Шаг 8: готово");
       } catch (error) {
         if (cancelled) return;
         clearAccessToken();
@@ -319,6 +414,7 @@ export default function HomePage() {
   useEffect(() => {
     if (bootstrapState !== "ready" || activeTab !== "mining") return;
     void loadBattleStatus();
+    void loadTheftStatus();
   }, [activeTab, bootstrapState]);
 
   useEffect(() => {
@@ -341,6 +437,30 @@ export default function HomePage() {
   }, [battleStatus?.battle_id, battleStatus?.state]);
 
   useEffect(() => {
+    if (theftStatus?.state === "active") {
+      setTheftDisplaySeconds(Math.max(Number(theftStatus.seconds_left) || 0, 0));
+      return;
+    }
+
+    setTheftDisplaySeconds(0);
+  }, [
+    theftStatus?.protection_attempt_id,
+    theftStatus?.seconds_left,
+    theftStatus?.state,
+    theftStatus?.theft_id,
+  ]);
+
+  useEffect(() => {
+    if (theftStatus?.state !== "active") return;
+
+    const timer = window.setInterval(() => {
+      setTheftDisplaySeconds((prev) => Math.max(prev - 1, 0));
+    }, 1000);
+
+    return () => window.clearInterval(timer);
+  }, [theftStatus?.protection_attempt_id, theftStatus?.state, theftStatus?.theft_id]);
+
+  useEffect(() => {
     if (bootstrapState !== "ready" || activeTab !== "mining") return;
     if (!battleStatus || !["waiting", "active"].includes(battleStatus.state)) return;
 
@@ -350,6 +470,23 @@ export default function HomePage() {
 
     return () => window.clearInterval(timer);
   }, [activeTab, battleStatus?.battle_id, battleStatus?.state, bootstrapState]);
+
+  useEffect(() => {
+    if (bootstrapState !== "ready" || activeTab !== "mining") return;
+    if (!theftStatus || theftStatus.state !== "active") return;
+
+    const timer = window.setInterval(() => {
+      void loadTheftStatus({ silent: true });
+    }, 8000);
+
+    return () => window.clearInterval(timer);
+  }, [
+    activeTab,
+    bootstrapState,
+    theftStatus?.protection_attempt_id,
+    theftStatus?.state,
+    theftStatus?.theft_id,
+  ]);
 
   return (
     <main className="mining-app">
@@ -562,6 +699,25 @@ export default function HomePage() {
                     botTasksOpening={botTasksOpening}
                     onJoin={() => void handleJoinBattle()}
                     onCancel={() => void handleCancelBattle()}
+                    onOpenTasks={() => void handleOpenBotTasks()}
+                  />
+                </section>
+
+                <section className="mining-panel">
+                  <SectionHeader
+                    title="Воровство"
+                    description="Укради звезды или заряди защиту на сутки через просмотры постов"
+                  />
+
+                  <TheftPanel
+                    status={theftStatus}
+                    displaySeconds={theftDisplaySeconds}
+                    loadState={theftLoadState}
+                    errorMessage={theftErrorMessage}
+                    noticeMessage={theftNoticeMessage}
+                    botTasksOpening={botTasksOpening}
+                    onStart={() => void handleStartTheft()}
+                    onProtect={() => void handleStartTheftProtection()}
                     onOpenTasks={() => void handleOpenBotTasks()}
                   />
                 </section>
@@ -1014,6 +1170,7 @@ function BattlePanel({
   const targetViews = Math.max(status?.target_views ?? 20, 1);
   const myProgress = Math.max(status?.my_progress ?? 0, 0);
   const opponentProgress = Math.max(status?.opponent_progress ?? 0, 0);
+  const joinButtonLabel = getBattleJoinButtonLabel(status, loadState, entryFee);
   const leftPrimaryLabel = state === "active" ? `${myProgress}/${targetViews}` : `${status?.total_completed_views ?? 0}`;
   const leftPrimaryTitle = state === "active" ? "Твой прогресс" : "Всего просмотров";
   const rightPrimaryLabel = state === "active" ? `${opponentProgress}/${targetViews}` : `${formatCompactBalance(entryFee)} ⭐`;
@@ -1088,7 +1245,7 @@ function BattlePanel({
             disabled={isBusy || !status?.can_join}
             className="mining-primary-button w-full"
           >
-            {status?.can_join ? "Найти соперника" : "Нужна 1⭐"}
+            {joinButtonLabel}
           </button>
           {idleMessage ? <StatusNote tone={idleMessageTone}>{idleMessage}</StatusNote> : null}
         </div>
@@ -1119,6 +1276,148 @@ function BattlePanel({
           </button>
         </div>
       )}
+    </div>
+  );
+}
+
+function TheftPanel({
+  status,
+  displaySeconds,
+  loadState,
+  errorMessage,
+  noticeMessage,
+  botTasksOpening,
+  onStart,
+  onProtect,
+  onOpenTasks,
+}: {
+  status: TheftStatusResponse | null;
+  displaySeconds: number;
+  loadState: TheftLoadState;
+  errorMessage: string;
+  noticeMessage: string;
+  botTasksOpening: boolean;
+  onStart: () => void;
+  onProtect: () => void;
+  onOpenTasks: () => void;
+}) {
+  const state = status?.state ?? "idle";
+  const role = status?.role ?? null;
+  const isBusy = loadState === "loading" || loadState === "working";
+  const myProgress = Math.max(status?.my_progress ?? 0, 0);
+  const targetViews = Math.max(status?.target_views ?? 5, 1);
+  const opponentProgress = Math.max(status?.opponent_progress ?? 0, 0);
+  const opponentTargetViews = Math.max(status?.opponent_target_views ?? 3, 1);
+  const amount = Number(status?.amount ?? 0);
+  const activeAmountLabel = role === "attacker" ? "Скрыто" : `${formatCompactBalance(amount)} ⭐`;
+  const canAttack = Boolean(status?.can_attack) && !isBusy;
+  const canProtect = Boolean(status?.can_protect) && !isBusy;
+
+  if (loadState === "loading" && !status) {
+    return <StatusNote>Проверяю, можно ли сейчас воровать или поставить защиту...</StatusNote>;
+  }
+
+  return (
+    <div className="mt-4 space-y-4">
+      {state === "active" ? (
+        <section className="mining-battle-race">
+          <StatusNote>{getTheftActiveTitle(role)}</StatusNote>
+
+          <BattleProgressLane
+            label={getTheftSelfLabel(role)}
+            value={`${myProgress}/${targetViews}`}
+            hint={buildBattleProgressHint(myProgress, targetViews)}
+            progress={myProgress}
+            total={targetViews}
+            tone="gold"
+          />
+
+          {role !== "protector" ? (
+            <BattleProgressLane
+              label={getTheftOpponentLabel(role, status?.opponent_name)}
+              value={`${opponentProgress}/${opponentTargetViews}`}
+              hint={buildBattleProgressHint(opponentProgress, opponentTargetViews)}
+              progress={opponentProgress}
+              total={opponentTargetViews}
+              tone="cyan"
+            />
+          ) : null}
+
+          <div className="mining-battle-meta">
+            <div className="mining-battle-meta__item" data-tone="slate">
+              <div className="mining-battle-meta__label">Осталось</div>
+              <div className="mining-battle-meta__value">{formatBattleCountdown(displaySeconds)}</div>
+            </div>
+            <div className="mining-battle-meta__item" data-tone="slate">
+              <div className="mining-battle-meta__label">
+                {role === "protector" ? "Защита" : role === "attacker" ? "Награда" : "Сумма"}
+              </div>
+              <div className="mining-battle-meta__value">
+                {role === "protector" ? "24 часа" : activeAmountLabel}
+              </div>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={onOpenTasks}
+            disabled={botTasksOpening || isBusy}
+            className="mining-primary-button w-full"
+          >
+            {botTasksOpening ? "Открываю..." : "Перейти к просмотру постов"}
+          </button>
+        </section>
+      ) : (
+        <>
+          <section className="grid grid-cols-2 gap-3">
+            <OverviewCard label="Кража" value="0.1-1 ⭐" tone="gold" />
+            <OverviewCard
+              label={state === "protected" ? "Защита" : "Лимит"}
+              value={state === "protected" ? "24 часа" : "1/сутки"}
+              tone="cyan"
+            />
+          </section>
+
+          {state === "protected" ? (
+            <StatusNote tone="success">
+              Защита активна{status?.protected_until ? ` до ${formatTheftProtectedUntil(status.protected_until)}` : ""}.
+            </StatusNote>
+          ) : (
+            <StatusNote>
+              Чтобы украсть или защититься, нужно сделать 5 просмотров за 2 минуты
+            </StatusNote>
+          )}
+
+          {status?.last_result ? (
+            <StatusNote tone={getTheftRecentResultTone(status.last_result)}>
+              {formatTheftRecentResult(status.last_result)}
+            </StatusNote>
+          ) : null}
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            <button
+              type="button"
+              onClick={onStart}
+              disabled={!canAttack}
+              className="mining-primary-button w-full"
+            >
+              {getTheftAttackButtonLabel(status)}
+            </button>
+            <button
+              type="button"
+              onClick={onProtect}
+              disabled={!canProtect}
+              className="mining-secondary-button w-full"
+            >
+              {status?.can_protect === false ? "Защита активна" : "Защита на сутки"}
+            </button>
+          </div>
+        </>
+      )}
+
+      {noticeMessage ? <StatusNote tone="success">{noticeMessage}</StatusNote> : null}
+
+      {errorMessage ? <StatusNote tone="error">{errorMessage}</StatusNote> : null}
     </div>
   );
 }
@@ -1173,6 +1472,111 @@ function BattleSearchStatus({ message }: { message: string }) {
   );
 }
 
+function getBattleJoinButtonLabel(
+  status: BattleStatusResponse | null,
+  loadState: BattleLoadState,
+  entryFee: number,
+): string {
+  if (status?.can_join) {
+    return "Найти соперника";
+  }
+
+  if (!status && loadState === "error") {
+    return "Дуэль недоступна";
+  }
+
+  if (status && Number(status.current_balance) < entryFee) {
+    return "Нужна 1⭐";
+  }
+
+  return "Сейчас недоступно";
+}
+
+function getTheftAttackButtonLabel(status: TheftStatusResponse | null): string {
+  if (status?.can_attack === false) {
+    return "Уже сегодня воровал";
+  }
+
+  return "Украсть звезды";
+}
+
+function getTheftRecentResultTone(
+  result: NonNullable<TheftStatusResponse["last_result"]>,
+): "default" | "error" | "success" {
+  if (result.result === "stolen") {
+    return result.role === "attacker" ? "success" : "error";
+  }
+
+  if (result.result === "defended") {
+    return result.role === "victim" ? "success" : "default";
+  }
+
+  if (result.result === "protected") {
+    return "success";
+  }
+
+  return "default";
+}
+
+function formatTheftRecentResult(result: NonNullable<TheftStatusResponse["last_result"]>): string {
+  if (result.result === "stolen") {
+    if (result.role === "attacker") {
+      return `Кража удалась: +${formatCompactBalance(result.amount)} ⭐`;
+    }
+
+    return `У тебя украли ${formatCompactBalance(result.amount)} ⭐`;
+  }
+
+  if (result.result === "defended") {
+    return result.role === "victim" ? "Ты отбил атаку" : "Кражу отбили";
+  }
+
+  if (result.result === "expired") {
+    return "Кража сорвалась: время вышло";
+  }
+
+  return "Защита включена на сутки";
+}
+
+function getTheftActiveTitle(role: TheftStatusResponse["role"]): string {
+  if (role === "attacker") {
+    return "Кража запущена: сделай 5 просмотров быстрее, чем цель отобьет атаку.";
+  }
+
+  if (role === "victim") {
+    return "На тебя напали: сделай 3 просмотра быстрее вора, чтобы отбить атаку.";
+  }
+
+  if (role === "protector") {
+    return "Заряжаешь защиту: сделай 5 просмотров, чтобы включить антиворовство на сутки.";
+  }
+
+  return "Активность воровства уже идет.";
+}
+
+function getTheftSelfLabel(role: TheftStatusResponse["role"]): string {
+  if (role === "victim") {
+    return "Твоя оборона";
+  }
+
+  if (role === "protector") {
+    return "Твоя защита";
+  }
+
+  return "Твоя кража";
+}
+
+function getTheftOpponentLabel(
+  role: TheftStatusResponse["role"],
+  opponentName?: string | null,
+): string {
+  if (role === "victim") {
+    return opponentName ? `Вор ${opponentName}` : "Вор";
+  }
+
+  return opponentName ? `Цель ${opponentName}` : "Цель";
+}
+
 function buildBattleProgressHint(progress: number, total: number): string {
   const remaining = Math.max(total - progress, 0);
   if (remaining === 0) {
@@ -1187,6 +1591,40 @@ function formatBattleCountdown(seconds: number): string {
   const minutes = Math.floor(safeSeconds / 60);
   const restSeconds = safeSeconds % 60;
   return `${minutes}:${String(restSeconds).padStart(2, "0")}`;
+}
+
+function formatTheftProtectedUntil(value: string): string {
+  const date = parseApiUtcDate(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return new Intl.DateTimeFormat("ru-RU", {
+    day: "2-digit",
+    month: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+}
+
+function parseApiUtcDate(value: string): Date {
+  const normalized = value.trim();
+  if (!normalized) {
+    return new Date(Number.NaN);
+  }
+
+  if (/[zZ]$|[+-]\d{2}:?\d{2}$/.test(normalized)) {
+    return new Date(normalized);
+  }
+
+  const sqliteUtcMatch = normalized.match(
+    /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})(?:\.\d+)?$/,
+  );
+  if (sqliteUtcMatch) {
+    return new Date(`${sqliteUtcMatch[1]}T${sqliteUtcMatch[2]}Z`);
+  }
+
+  return new Date(normalized);
 }
 
 function formatBattleRecentResult(result: BattleRecentResult): string {

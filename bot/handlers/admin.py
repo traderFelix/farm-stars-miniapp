@@ -33,6 +33,7 @@ from bot.api_client import (
     get_task_channel_via_api,
     get_user_ledger_page,
     get_user_battle_stats,
+    get_user_theft_stats,
     get_user_profile,
     get_user_risk_page,
     get_user_stats,
@@ -1959,6 +1960,42 @@ async def adm_user_battles(callback: CallbackQuery):
         text = result.get("text") or "Нет данных"
     except ApiClientError as e:
         text = f"❌ Не удалось загрузить статистику батлов из API.\n\n{e.detail}"
+
+    try:
+        await safe_edit_text(
+            callback.message,
+            text,
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        InlineKeyboardButton(
+                            text="⬅ Назад",
+                            callback_data=f"adm:user:details:{user_id}",
+                        )
+                    ]
+                ]
+            ),
+        )
+    except TelegramBadRequest as e:
+        if "message is not modified" not in str(e):
+            raise
+
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("adm:user:thefts:"))
+async def adm_user_thefts(callback: CallbackQuery):
+    try:
+        user_id = int(callback.data.split(":")[-1])
+    except (ValueError, IndexError):
+        await callback.answer("Некорректный user_id", show_alert=True)
+        return
+
+    try:
+        result = await get_user_theft_stats(user_id)
+        text = result.get("text") or "Нет данных"
+    except ApiClientError as e:
+        text = f"❌ Не удалось загрузить статистику воровства из API.\n\n{e.detail}"
 
     try:
         await safe_edit_text(
