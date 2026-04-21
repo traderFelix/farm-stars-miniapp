@@ -1370,10 +1370,10 @@ function TheftPanel({
       ) : (
         <>
           <section className="grid grid-cols-2 gap-3">
-            <OverviewCard label="Кража" value="0.1-1 ⭐" tone="gold" />
+            <OverviewCard label="Кража" value={formatAvailability(status?.can_attack)} tone="gold" />
             <OverviewCard
               label={state === "protected" ? "Защита" : "Лимит"}
-              value={state === "protected" ? "24 часа" : "1/сутки"}
+              value={formatAvailability(status?.can_protect)}
               tone="cyan"
             />
           </section>
@@ -1498,6 +1498,10 @@ function getTheftAttackButtonLabel(status: TheftStatusResponse | null): string {
   }
 
   return "Украсть звезды";
+}
+
+function formatAvailability(value?: boolean): string {
+  return value ? "0/1" : "1/1";
 }
 
 function getTheftRecentResultTone(
