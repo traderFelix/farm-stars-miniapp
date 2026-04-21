@@ -850,11 +850,13 @@ function OverviewCard({
   value,
   tone,
   infoText,
+  compactValue = false,
 }: {
   label: string;
   value: string;
   tone: "gold" | "cyan" | "slate";
   infoText?: string;
+  compactValue?: boolean;
 }) {
   return (
     <div className="mining-overview-card" data-tone={tone}>
@@ -862,7 +864,9 @@ function OverviewCard({
         <div className="mining-overview-card__label">{label}</div>
         {infoText ? <InfoHint text={infoText} /> : null}
       </div>
-      <div className="mining-overview-card__value">{value}</div>
+      <div className="mining-overview-card__value" data-compact={compactValue}>
+        {value}
+      </div>
     </div>
   );
 }
@@ -1372,21 +1376,18 @@ function TheftPanel({
           <section className="grid grid-cols-2 gap-3">
             <OverviewCard label="Кража" value={formatAvailability(status?.can_attack)} tone="gold" />
             <OverviewCard
-              label={state === "protected" ? "Защита" : "Лимит"}
-              value={formatAvailability(status?.can_protect)}
+              label="Защита"
+              value={formatTheftProtectionCardValue(status)}
               tone="cyan"
+              compactValue
             />
           </section>
 
-          {state === "protected" ? (
-            <StatusNote tone="success">
-              Защита активна{status?.protected_until ? ` до ${formatTheftProtectedUntil(status.protected_until)}` : ""}.
-            </StatusNote>
-          ) : (
+          {state !== "protected" ? (
             <StatusNote>
               Чтобы украсть или защититься, нужно сделать 5 просмотров за 2 минуты
             </StatusNote>
-          )}
+          ) : null}
 
           {status?.last_result ? (
             <StatusNote tone={getTheftRecentResultTone(status.last_result)}>
@@ -1504,6 +1505,24 @@ function formatAvailability(value?: boolean): string {
   return value ? "0/1" : "1/1";
 }
 
+function formatTheftProtectionCardValue(status: TheftStatusResponse | null): string {
+  return `${getRemainingProtectionHours(status)}/24 часа`;
+}
+
+function getRemainingProtectionHours(status: TheftStatusResponse | null): number {
+  if (status?.state !== "protected" || !status.protected_until) {
+    return 0;
+  }
+
+  const date = parseApiUtcDate(status.protected_until);
+  if (Number.isNaN(date.getTime())) {
+    return 24;
+  }
+
+  const diffMs = Math.max(date.getTime() - Date.now(), 0);
+  return Math.min(Math.ceil(diffMs / 3_600_000), 24);
+}
+
 function getTheftRecentResultTone(
   result: NonNullable<TheftStatusResponse["last_result"]>,
 ): "default" | "error" | "success" {
@@ -1595,20 +1614,6 @@ function formatBattleCountdown(seconds: number): string {
   const minutes = Math.floor(safeSeconds / 60);
   const restSeconds = safeSeconds % 60;
   return `${minutes}:${String(restSeconds).padStart(2, "0")}`;
-}
-
-function formatTheftProtectedUntil(value: string): string {
-  const date = parseApiUtcDate(value);
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-
-  return new Intl.DateTimeFormat("ru-RU", {
-    day: "2-digit",
-    month: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(date);
 }
 
 function parseApiUtcDate(value: string): Date {

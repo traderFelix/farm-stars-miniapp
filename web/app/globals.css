@@ -413,6 +413,14 @@ textarea:focus {
   word-break: normal;
 }
 
+.mining-overview-card__value[data-compact="true"] {
+  font-size: clamp(1.18rem, 4.8vw, 1.45rem);
+  font-weight: 620;
+  letter-spacing: -0.015em;
+  line-height: 1.16;
+  white-space: normal;
+}
+
 .mining-overview-card[data-tone="gold"] {
   box-shadow: var(--shadow-soft), var(--shadow-glow-gold);
 }
