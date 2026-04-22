@@ -670,12 +670,14 @@ async def build_user_stats_text(db: aiosqlite.Connection, user_id: int) -> str:
         float(stats["view_post_bonus"])
         + float(stats["daily_bonus"])
         + float(stats["battle_net"])
+        + float(stats["theft_net"])
         + float(stats["referral_bonus"])
     )
     withdrawal_ability_total_pct = (
         float(stats["view_post_bonus_pct"])
         + float(stats["daily_bonus_pct"])
         + float(stats["battle_net_pct"])
+        + float(stats["theft_net_pct"])
         + float(stats["referral_bonus_pct"])
     )
     bonus_total = (
@@ -700,6 +702,7 @@ async def build_user_stats_text(db: aiosqlite.Connection, user_id: int) -> str:
         f"{fmt_stars(stats['view_post_bonus'])} ({fmt_pct(stats['view_post_bonus_pct'])}%) — просмотр постов\n"
         f"{fmt_stars(stats['daily_bonus'])} ({fmt_pct(stats['daily_bonus_pct'])}%) — ежедневный бонус\n"
         f"{fmt_stars(stats['battle_net'])} ({fmt_pct(stats['battle_net_pct'])}%) — батлы\n"
+        f"{fmt_stars(stats['theft_net'])} ({fmt_pct(stats['theft_net_pct'])}%) — воровство\n"
         f"{fmt_stars(stats['referral_bonus'])} ({fmt_pct(stats['referral_bonus_pct'])}%) — рефералы\n"
         f"<b>Итого: {fmt_stars(withdrawal_ability_total)} ({fmt_pct_total(withdrawal_ability_total_pct)}%)</b>\n\n"
         f"{fmt_stars(stats['contest_bonus'])} ({fmt_pct(stats['contest_bonus_pct'])}%) — конкурсы\n"

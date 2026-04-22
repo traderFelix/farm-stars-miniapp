@@ -172,6 +172,17 @@ async def ledger_sum_by_reason(db: aiosqlite.Connection, reason: str) -> float:
         return float(row[0] or 0)
 
 
+async def ledger_count_by_reason(db: aiosqlite.Connection, reason: str) -> int:
+    query = """
+    SELECT COUNT(*)
+    FROM ledger
+    WHERE reason = ?
+    """
+    async with db.execute(query, (reason,)) as cur:
+        row = await cur.fetchone()
+        return int(row[0] or 0)
+
+
 async def ledger_sum_battle_net(db: aiosqlite.Connection) -> float:
     query = """
     SELECT COALESCE(SUM(delta), 0)
@@ -299,6 +310,7 @@ async def get_user_earnings_breakdown(db: aiosqlite.Connection, user_id: int) ->
                 0
             ) AS battle_net,
             COALESCE(SUM(CASE WHEN reason = 'admin_adjust' THEN delta ELSE 0 END), 0) AS admin_adjust,
+            COALESCE(SUM(CASE WHEN reason IN ('theft_win', 'theft_loss') THEN delta ELSE 0 END), 0) AS theft_net,
             COALESCE(
                 SUM(
                     CASE
@@ -325,6 +337,7 @@ async def get_user_earnings_breakdown(db: aiosqlite.Connection, user_id: int) ->
     referral_bonus = float(row["referral_bonus"] or 0)
     battle_net = float(row["battle_net"] or 0)
     admin_adjust = float(row["admin_adjust"] or 0)
+    theft_net = float(row["theft_net"] or 0)
     total = float(row["total_earned"] or 0)
 
     def pct(value: float, total_value: float) -> float:
@@ -346,6 +359,8 @@ async def get_user_earnings_breakdown(db: aiosqlite.Connection, user_id: int) ->
         "referral_bonus_pct": pct(referral_bonus, total),
         "battle_net": battle_net,
         "battle_net_pct": pct(battle_net, total),
+        "theft_net": theft_net,
+        "theft_net_pct": pct(theft_net, total),
         "admin_adjust": admin_adjust,
         "admin_adjust_pct": pct(admin_adjust, total),
     }
@@ -372,6 +387,10 @@ async def get_withdrawal_ability(db, user_id: int) -> float:
             ELSE 0
         END), 0) AS battle_net,
         COALESCE(SUM(CASE
+            WHEN reason IN ('theft_win', 'theft_loss') THEN delta
+            ELSE 0
+        END), 0) AS theft_net,
+        COALESCE(SUM(CASE
             WHEN reason NOT IN ({system_placeholders}) THEN delta
             ELSE 0
         END), 0) AS total_earned
@@ -386,12 +405,13 @@ async def get_withdrawal_ability(db, user_id: int) -> float:
 
     positive_good_total = float(row["positive_good_total"] or 0)
     battle_net = float(row["battle_net"] or 0)
+    theft_net = float(row["theft_net"] or 0)
     total_earned = float(row["total_earned"] or 0)
 
     if total_earned <= 0:
         return 0.0
 
-    effective_good_total = positive_good_total + battle_net
+    effective_good_total = positive_good_total + battle_net + theft_net
     if effective_good_total <= 0:
         return 0.0
 

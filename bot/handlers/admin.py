@@ -33,6 +33,7 @@ from bot.api_client import (
     get_task_channel_via_api,
     get_user_ledger_page,
     get_user_battle_stats,
+    get_user_theft_stats,
     get_user_profile,
     get_user_risk_page,
     get_user_stats,
@@ -1723,8 +1724,6 @@ async def adm_audit_balances(callback: CallbackQuery):
     admin_adjust_net = float(audit.get("admin_adjust_net") or 0)
     total_withdrawn_sum = float(audit.get("total_withdrawn") or 0)
     pending_withdrawn_sum = float(audit.get("pending_withdrawn") or 0)
-    claimed_from_ledger = float(audit.get("campaign_claimed_from_ledger") or 0)
-    promo_claimed_from_ledger = float(audit.get("promo_claimed_from_ledger") or 0)
     referral_bonus = float(audit.get("referral_bonus") or 0)
     view_post_bonus = float(audit.get("view_post_bonus") or 0)
     daily_bonus = float(audit.get("daily_bonus") or 0)
@@ -1733,10 +1732,8 @@ async def adm_audit_balances(callback: CallbackQuery):
     lines = [
         "🧮 Сверка балансов\n",
         f"Баланс пользователей: {fmt_stars(total_balances_sum)}⭐\n",
-        f"Получено в конкурсах (база): {fmt_stars(total_claimed_all)}⭐",
-        f"Получено в конкурсах (леджер): {fmt_stars(claimed_from_ledger)}⭐",
-        f"Получено по промокодам (база): {fmt_stars(total_promo_claimed_all)}⭐",
-        f"Получено по промокодам (леджер): {fmt_stars(promo_claimed_from_ledger)}⭐",
+        f"Получено в конкурсах: {fmt_stars(total_claimed_all)}⭐",
+        f"Получено по промокодам: {fmt_stars(total_promo_claimed_all)}⭐",
         f"Получено за рефералов: {fmt_stars(referral_bonus)}⭐\n"
         f"Получено за просмотры постов: {fmt_stars(view_post_bonus)}⭐\n"
         f"Получено за ежедневный бонус: {fmt_stars(daily_bonus)}⭐\n"
@@ -1959,6 +1956,42 @@ async def adm_user_battles(callback: CallbackQuery):
         text = result.get("text") or "Нет данных"
     except ApiClientError as e:
         text = f"❌ Не удалось загрузить статистику батлов из API.\n\n{e.detail}"
+
+    try:
+        await safe_edit_text(
+            callback.message,
+            text,
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        InlineKeyboardButton(
+                            text="⬅ Назад",
+                            callback_data=f"adm:user:details:{user_id}",
+                        )
+                    ]
+                ]
+            ),
+        )
+    except TelegramBadRequest as e:
+        if "message is not modified" not in str(e):
+            raise
+
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("adm:user:thefts:"))
+async def adm_user_thefts(callback: CallbackQuery):
+    try:
+        user_id = int(callback.data.split(":")[-1])
+    except (ValueError, IndexError):
+        await callback.answer("Некорректный user_id", show_alert=True)
+        return
+
+    try:
+        result = await get_user_theft_stats(user_id)
+        text = result.get("text") or "Нет данных"
+    except ApiClientError as e:
+        text = f"❌ Не удалось загрузить статистику воровства из API.\n\n{e.detail}"
 
     try:
         await safe_edit_text(

@@ -2,6 +2,7 @@ from aiogram.types import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     KeyboardButton,
+    MenuButtonWebApp,
     ReplyKeyboardMarkup,
     WebAppInfo,
 )
@@ -19,6 +20,16 @@ def _miniapp_button() -> InlineKeyboardButton:
 
     return InlineKeyboardButton(
         text="🚀 Открыть приложение",
+        web_app=WebAppInfo(url=WEB_ORIGIN_NGROK),
+    )
+
+
+def miniapp_menu_button() -> MenuButtonWebApp:
+    if not WEB_ORIGIN_NGROK:
+        raise RuntimeError("Environment variable WEB_ORIGIN_NGROK is required")
+
+    return MenuButtonWebApp(
+        text="Open",
         web_app=WebAppInfo(url=WEB_ORIGIN_NGROK),
     )
 
@@ -64,6 +75,7 @@ def task_after_view_kb() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="⬅ Назад", callback_data="back")],
         ]
     )
+
 
 # ---------- ADMIN KEYBOARDS ----------
 
@@ -138,6 +150,7 @@ def user_actions_kb(user_id: int) -> InlineKeyboardMarkup:
         inline_keyboard=[
             [InlineKeyboardButton(text="📊 Статистика ⭐", callback_data=f"adm:user:stats:{user_id}",)],
             [InlineKeyboardButton(text="⚔️ Батлы", callback_data=f"adm:user:battles:{user_id}",)],
+            [InlineKeyboardButton(text="🕵️ Воровство", callback_data=f"adm:user:thefts:{user_id}",)],
             [InlineKeyboardButton(text="📜 Последние операции", callback_data=f"adm:user:ledger:{user_id}",)],
             [InlineKeyboardButton(text="🛡 Риск-история", callback_data=f"adm:user:risk:{user_id}",)],
             [InlineKeyboardButton(text="🔧 Изменить роль", callback_data=f"adm:user:role:{user_id}")],

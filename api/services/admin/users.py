@@ -8,6 +8,7 @@ from shared.db.common import tx
 from shared.db.battles import list_battle_opponent_stats
 from shared.db.ledger import list_user_ledger_page
 from shared.db.ledger import apply_balance_delta
+from shared.db.thefts import list_theft_opponent_stats
 from shared.db.users import (
     build_user_stats_text,
     build_user_profile,
@@ -172,6 +173,54 @@ async def get_battle_stats(
         if draws:
             line += f", ничьих {draws}"
         line += f" · всего {total}"
+        lines.append(line)
+
+    return {
+        "text": "\n".join(lines),
+    }
+
+
+async def get_theft_stats(
+        db: aiosqlite.Connection,
+        user_id: int,
+) -> dict[str, Any]:
+    await _ensure_user_exists(db, int(user_id))
+
+    rows = await list_theft_opponent_stats(db, user_id=int(user_id), limit=50)
+    if not rows:
+        return {
+            "text": "🕵️ Воровство\n\nУ пользователя пока нет завершенных краж",
+        }
+
+    lines = ["🕵️ Воровство\n"]
+    for index, row in enumerate(rows, start=1):
+        opponent_username = (row["opponent_username"] or "").strip()
+        opponent_nickname = (row["opponent_game_nickname"] or "").strip()
+        opponent_first_name = (row["opponent_first_name"] or "").strip()
+        opponent_name = (
+            opponent_nickname
+            or (f"@{opponent_username}" if opponent_username else "")
+            or opponent_first_name
+            or f"id:{int(row['opponent_user_id'])}"
+        )
+        stolen_amount = float(row["stolen_amount"] or 0)
+        lost_amount = float(row["lost_amount"] or 0)
+        net_amount = stolen_amount - lost_amount
+        stolen_count = int(row["stolen_count"] or 0)
+        lost_count = int(row["lost_count"] or 0)
+        defended_count = int(row["defended_count"] or 0)
+        survived_count = int(row["survived_count"] or 0)
+        failed_count = int(row["failed_count"] or 0)
+        total = int(row["total"] or 0)
+        line = (
+            f"{index}. {opponent_name} — украл +{stolen_amount:g}⭐, "
+            f"потерял -{lost_amount:g}⭐, итог {net_amount:+g}⭐"
+        )
+        line += (
+            f" · события: украл {stolen_count}, потерял {lost_count}, "
+            f"отбил {defended_count}, сорвано по таймеру {survived_count}, "
+            f"неудачных атак {failed_count} · всего {total}"
+        )
         lines.append(line)
 
     return {

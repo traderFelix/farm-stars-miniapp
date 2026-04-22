@@ -26,13 +26,15 @@ from bot.api_client import (
     get_bot_main_menu_for_user_context_via_api,
     get_bot_main_menu_via_api,
     get_next_task,
+    get_theft_status,
     ingest_task_channel_post_via_api,
     open_task,
+    report_task_unavailable,
 )
 from bot.keyboards import (
     MAIN_MENU_REPLY_BUTTON_TEXT,
     main_menu,
-    persistent_user_menu_kb,
+    miniapp_menu_button,
     task_after_view_kb,
     tasks_menu,
 )
@@ -52,8 +54,8 @@ logger = logging.getLogger(__name__)
 
 LAST_TASK_POST_MSG_ID_KEY = "last_task_post_message_id"
 LAST_TASK_MENU_MSG_ID_KEY = "last_task_menu_message_id"
-PERSISTENT_USER_MENU_ENABLED_KEY = "persistent_user_menu_enabled"
 TASK_VIEW_LOCKS: dict[int, asyncio.Lock] = {}
+TASK_UNAVAILABLE_MAX_RETRIES = 3
 USER_API_UNAVAILABLE_TEXT = "⚠️ Сервис временно недоступен. Попробуй еще раз чуть позже."
 START_TEXT = (
     "🔥 Начинай прямо сейчас фармить ТГ звезды и TON!\n\n"
@@ -115,6 +117,20 @@ def _to_optional_int(value: Any) -> Optional[int]:
         return int(stripped)
 
     return int(value)
+
+
+def _is_forwarded_channel_post(message: Message) -> bool:
+    forward_markers = (
+        "forward_origin",
+        "forward_from",
+        "forward_from_chat",
+        "forward_sender_name",
+        "forward_date",
+    )
+    return (
+        any(getattr(message, marker, None) is not None for marker in forward_markers)
+        or bool(getattr(message, "is_automatic_forward", False))
+    )
 
 
 def _format_user_api_error(e: ApiClientError) -> str:
@@ -234,6 +250,7 @@ async def _build_tasks_screen_text(user_id: int) -> str:
     balance = float(menu_payload.get("balance") or 0)
     tasks_status_text: Optional[str] = None
     battle_status_text: Optional[str] = None
+    theft_status_text: Optional[str] = None
 
     try:
         next_task = await get_next_task(user_id)
@@ -260,11 +277,23 @@ async def _build_tasks_screen_text(user_id: int) -> str:
     if battle_status:
         battle_status_text = _format_battle_status_line(battle_status)
 
+    try:
+        theft_status = await get_theft_status(user_id)
+    except ApiClientError as e:
+        _log_user_api_error("tasks_screen.theft_status", e)
+        theft_status = None
+    except Exception:
+        theft_status = None
+
+    if theft_status:
+        theft_status_text = _format_theft_status_line(theft_status)
+
     return (
         "👁 Просмотр постов\n\n"
         "За каждый просмотр начисляется награда.\n"
         f"{tasks_status_text}\n"
         f"{battle_status_text + chr(10) if battle_status_text else ''}\n"
+        f"{theft_status_text + chr(10) if theft_status_text else ''}\n"
         f"Баланс: {fmt_stars(balance)}⭐️"
     )
 
@@ -288,6 +317,26 @@ def _format_battle_status_line(status: dict[str, Any]) -> Optional[str]:
             f"⚔️ Дуэль: {my_progress}/{target_views} против {opponent_progress}/{target_views}"
             f" · { _format_battle_seconds(seconds_left) }"
         )
+
+    return None
+
+
+def _format_theft_status_line(status: dict[str, Any]) -> Optional[str]:
+    state = str(status.get("state") or "").strip()
+    if state == "protected":
+        return "🛡 Защита от воровства активна"
+
+    if state == "active":
+        role = str(status.get("role") or "").strip()
+        my_progress = int(status.get("my_progress") or 0)
+        target_views = int(status.get("target_views") or 0)
+        seconds_left = int(status.get("seconds_left") or 0)
+        if role == "attacker":
+            return f"🕵️ Кража: {my_progress}/{target_views} · {_format_battle_seconds(seconds_left)}"
+        if role == "victim":
+            return f"🚨 Защита от атаки: {my_progress}/{target_views} · {_format_battle_seconds(seconds_left)}"
+        if role == "protector":
+            return f"🛡 Заряд защиты: {my_progress}/{target_views} · {_format_battle_seconds(seconds_left)}"
 
     return None
 
@@ -317,16 +366,69 @@ def _format_task_battle_progress(status: Optional[dict[str, Any]]) -> Optional[s
     )
 
 
-async def _ensure_persistent_user_menu(message: Message, state: FSMContext) -> None:
-    data = await state.get_data()
-    if data.get(PERSISTENT_USER_MENU_ENABLED_KEY):
-        return
+def _format_task_theft_progress(status: Optional[dict[str, Any]]) -> Optional[str]:
+    if not status:
+        return None
 
-    await message.answer(
-        "🏠 Кнопка «Меню» закреплена снизу.",
-        reply_markup=persistent_user_menu_kb(),
-    )
-    await state.update_data(**{PERSISTENT_USER_MENU_ENABLED_KEY: True})
+    kind = str(status.get("kind") or "").strip()
+    state = str(status.get("state") or "").strip()
+    result = str(status.get("result") or "").strip()
+    role = str(status.get("role") or "").strip()
+    my_progress = int(status.get("my_progress") or 0)
+    target_views = int(status.get("target_views") or 0)
+    opponent_progress = int(status.get("opponent_progress") or 0)
+    opponent_target_views = int(status.get("opponent_target_views") or 0)
+    amount = float(status.get("amount") or 0)
+
+    if state == "finished":
+        if result == "stolen":
+            if role == "attacker":
+                return f"🕵️ Кража удалась: +{fmt_stars(amount)}⭐"
+            return f"💥 У тебя украли -{fmt_stars(amount)}⭐"
+        if result == "defended":
+            return "🛡 Ты отбил атаку" if role == "victim" else "🛡 Кражу отбили"
+        if result == "protected":
+            return "🛡 Защита включена на сутки"
+        if result == "expired":
+            return "⌛ Время активности вышло"
+
+    seconds_left = int(status.get("seconds_left") or 0)
+    if kind == "attack":
+        return (
+            f"🕵️ Кража: {my_progress}/{target_views} против {opponent_progress}/{opponent_target_views}\n"
+            f"До конца: {_format_battle_seconds(seconds_left)}"
+        )
+    if kind == "defense":
+        return (
+            f"🚨 Отбиваешь кражу: {my_progress}/{target_views} против {opponent_progress}/{opponent_target_views}\n"
+            f"До конца: {_format_battle_seconds(seconds_left)}"
+        )
+    if kind == "protection":
+        return (
+            f"🛡 Заряд защиты: {my_progress}/{target_views}\n"
+            f"До конца: {_format_battle_seconds(seconds_left)}"
+        )
+
+    return None
+
+
+async def _ensure_chat_menu_button(bot: Bot, chat_id: int) -> None:
+    try:
+        await bot.set_chat_menu_button(
+            chat_id=int(chat_id),
+            menu_button=miniapp_menu_button(),
+        )
+    except TelegramBadRequest as e:
+        logger.info(
+            "Could not set chat menu button chat_id=%s detail=%s",
+            chat_id,
+            e,
+        )
+    except Exception:
+        logger.exception(
+            "Could not set chat menu button chat_id=%s",
+            chat_id,
+        )
 
 
 async def _send_start_screen(message: Message, role_level: int) -> None:
@@ -357,6 +459,15 @@ async def ingest_task_channel_post(message: Message):
         or message.document
     )
     if not has_content:
+        return
+
+    if _is_forwarded_channel_post(message):
+        logger.info(
+            "Skipped forwarded task channel post chat_id=%s post_id=%s title=%s",
+            message.chat.id,
+            message.message_id,
+            message.chat.title,
+        )
         return
 
     flush_result = await flush_pending_task_channel_posts(
@@ -404,7 +515,7 @@ async def start(message: Message, bot: Bot, state: FSMContext):
         start_arg = parts[1].strip()
 
     logger.info("START user_id=%s text=%r start_arg=%r", user_id, message.text, start_arg)
-    await _ensure_persistent_user_menu(message, state)
+    await _ensure_chat_menu_button(bot, user_id)
 
     start_referrer_id = int(start_arg) if start_arg and start_arg.isdigit() else None
     try:
@@ -458,7 +569,7 @@ async def open_main_menu_from_reply(message: Message, bot: Bot, state: FSMContex
     from_user = _require_user(message.from_user)
     user_id = from_user.id
 
-    await _ensure_persistent_user_menu(message, state)
+    await _ensure_chat_menu_button(bot, user_id)
 
     try:
         menu_payload = await bootstrap_bot_user_via_api(
@@ -486,9 +597,8 @@ async def show_tasks(callback: CallbackQuery, bot: Bot, state: FSMContext):
     await safe_callback_answer(callback)
 
     user_id = callback.from_user.id
+    await _ensure_chat_menu_button(bot, user_id)
     current_message = _optional_message(callback.message)
-    if current_message is not None:
-        await _ensure_persistent_user_menu(current_message, state)
 
     try:
         tasks_screen_text = await _build_tasks_screen_text(user_id)
@@ -536,6 +646,8 @@ async def _process_task_view_post(
         bot: Bot,
         state: FSMContext,
         user_id: int,
+        *,
+        unavailable_attempt: int = 0,
 ):
     hidden_message_id = await _hide_task_trigger_message(callback.message)
     await _delete_last_task_menu(
@@ -604,6 +716,20 @@ async def _process_task_view_post(
     await _delete_last_task_post(bot, user_id, state)
 
     if not chat_id or normalized_channel_post_id is None:
+        reported = await _report_unavailable_task(
+            user_id=user_id,
+            task_id=task_id,
+            reason="missing task post data",
+        )
+        if reported and unavailable_attempt + 1 < TASK_UNAVAILABLE_MAX_RETRIES:
+            await _process_task_view_post(
+                callback,
+                bot,
+                state,
+                user_id,
+                unavailable_attempt=unavailable_attempt + 1,
+            )
+            return
         await bot.send_message(
             chat_id=user_id,
             text="❌ У задания нет данных поста.",
@@ -611,13 +737,78 @@ async def _process_task_view_post(
         )
         return
 
+    sent_message_id: Optional[int] = None
     try:
         sent = await bot.forward_message(
             chat_id=user_id,
             from_chat_id=str(chat_id),
             message_id=normalized_channel_post_id,
         )
-    except TelegramBadRequest:
+        sent_message_id = sent.message_id
+    except TelegramBadRequest as e:
+        logger.warning(
+            "Failed to forward task post user_id=%s task_id=%s chat_id=%s channel_post_id=%s detail=%s",
+            user_id,
+            task_id,
+            chat_id,
+            normalized_channel_post_id,
+            e,
+        )
+        try:
+            copied = await bot.copy_message(
+                chat_id=user_id,
+                from_chat_id=str(chat_id),
+                message_id=normalized_channel_post_id,
+            )
+            sent_message_id = int(copied.message_id)
+        except TelegramBadRequest as copy_error:
+            logger.warning(
+                "Failed to copy task post user_id=%s task_id=%s chat_id=%s channel_post_id=%s detail=%s",
+                user_id,
+                task_id,
+                chat_id,
+                normalized_channel_post_id,
+                copy_error,
+            )
+            reported = await _report_unavailable_task(
+                user_id=user_id,
+                task_id=task_id,
+                reason=f"forward: {e}; copy: {copy_error}",
+            )
+            if reported and unavailable_attempt + 1 < TASK_UNAVAILABLE_MAX_RETRIES:
+                await _process_task_view_post(
+                    callback,
+                    bot,
+                    state,
+                    user_id,
+                    unavailable_attempt=unavailable_attempt + 1,
+                )
+                return
+            await bot.send_message(
+                chat_id=user_id,
+                text=(
+                    "❌ Не удалось показать пост.\n"
+                    "Проверь, что бот есть в канале и видит этот пост."
+                ),
+                reply_markup=task_after_view_kb(),
+            )
+            return
+
+    if sent_message_id is None:
+        reported = await _report_unavailable_task(
+            user_id=user_id,
+            task_id=task_id,
+            reason="missing sent message id",
+        )
+        if reported and unavailable_attempt + 1 < TASK_UNAVAILABLE_MAX_RETRIES:
+            await _process_task_view_post(
+                callback,
+                bot,
+                state,
+                user_id,
+                unavailable_attempt=unavailable_attempt + 1,
+            )
+            return
         await bot.send_message(
             chat_id=user_id,
             text=(
@@ -630,7 +821,7 @@ async def _process_task_view_post(
 
     await state.update_data(
         **{
-            LAST_TASK_POST_MSG_ID_KEY: sent.message_id,
+            LAST_TASK_POST_MSG_ID_KEY: sent_message_id,
             "active_task_id": task_id,
         }
     )
@@ -680,7 +871,9 @@ async def _process_task_view_post(
 
     if status_value == "completed":
         battle_progress_text = _format_task_battle_progress(result.get("battle"))
-        battle_block = f"\n\n{battle_progress_text}" if battle_progress_text else ""
+        theft_progress_text = _format_task_theft_progress(result.get("theft"))
+        activity_progress_text = battle_progress_text or theft_progress_text
+        activity_block = f"\n\n{activity_progress_text}" if activity_progress_text else ""
         await bot.send_message(
             chat_id=user_id,
             text=(
@@ -688,7 +881,7 @@ async def _process_task_view_post(
                 f"Начислено: {fmt_stars(reward)}⭐\n"
                 f"{remaining_text}\n"
                 f"Баланс: {fmt_stars(new_balance)}⭐️"
-                f"{battle_block}"
+                f"{activity_block}"
             ),
             reply_markup=task_after_view_kb(),
         )
@@ -707,6 +900,30 @@ async def _process_task_view_post(
         text=f"⚠️ {message_text}",
         reply_markup=task_after_view_kb(),
     )
+
+
+async def _report_unavailable_task(
+        *,
+        user_id: int,
+        task_id: int,
+        reason: str,
+) -> bool:
+    try:
+        await report_task_unavailable(
+            user_id,
+            task_id,
+            reason=reason[:500],
+        )
+        return True
+    except ApiClientError as e:
+        _log_user_api_error("task_view_post.report_unavailable", e)
+    except Exception:
+        logger.exception(
+            "Failed to report unavailable task task_id=%s user_id=%s",
+            task_id,
+            user_id,
+        )
+    return False
 
 
 @router.callback_query(F.data == "back")

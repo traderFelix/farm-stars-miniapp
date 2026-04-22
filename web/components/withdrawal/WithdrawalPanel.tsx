@@ -13,6 +13,23 @@ import {
 } from "@/lib/api";
 import { formatWithdrawalAbility, formatBalance } from "@/lib/format";
 
+const WITHDRAWAL_METHOD_OPTIONS: Array<{
+    value: WithdrawalMethod;
+    label: string;
+    description: string;
+}> = [
+    {
+        value: "stars",
+        label: "Звезды",
+        description: "Вывод внутри Telegram",
+    },
+    {
+        value: "ton",
+        label: "TON",
+        description: "На TON-кошелек",
+    },
+];
+
 export default function WithdrawalPanel() {
     const [loading, setLoading] = useState(true);
     const [eligibility, setEligibility] =
@@ -229,34 +246,14 @@ export default function WithdrawalPanel() {
                     <label className="text-xs uppercase tracking-wide text-slate-400">
                         Метод вывода
                     </label>
-                    <InfoHint
-                        text={`Курс обмена в TON определяется по рынку ${eligibility.policy.rate_source_name}`}
-                    />
                 </div>
-                <div className="mining-withdraw-selectWrap">
-                    <select
-                        value={method}
-                        onChange={(e) => {
-                            setMethod(e.target.value as WithdrawalMethod);
-                            setMessage("");
-                        }}
-                        className="mining-withdraw-select"
-                    >
-                        <option value="stars">Звезды</option>
-                        <option value="ton">TON</option>
-                    </select>
-                    <span className="mining-withdraw-selectIcon" aria-hidden="true">
-                        <svg viewBox="0 0 20 20" fill="none">
-                            <path
-                                d="M5 7.5 10 12.5 15 7.5"
-                                stroke="currentColor"
-                                strokeWidth="1.9"
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
-                            />
-                        </svg>
-                    </span>
-                </div>
+                <WithdrawalMethodDropdown
+                    value={method}
+                    onChange={(nextMethod) => {
+                        setMethod(nextMethod);
+                        setMessage("");
+                    }}
+                />
             </div>
 
             <div className="mt-3">
@@ -290,7 +287,7 @@ export default function WithdrawalPanel() {
                         className="mining-withdraw-input mt-2"
                     />
                     <div className="mt-2 text-xs text-slate-500">
-                        Укажи кошелек TON для получения выплаты
+                        Курс обмена в TON определяется по рынку {eligibility.policy.rate_source_name}
                     </div>
                 </div>
             )}
@@ -388,6 +385,113 @@ function WithdrawalAbilityMeter({ value }: { value: number }) {
                 />
             </div>
         </section>
+    );
+}
+
+function WithdrawalMethodDropdown({
+    value,
+    onChange,
+}: {
+    value: WithdrawalMethod;
+    onChange: (value: WithdrawalMethod) => void;
+}) {
+    const [open, setOpen] = useState(false);
+    const rootRef = useRef<HTMLDivElement | null>(null);
+    const selected =
+        WITHDRAWAL_METHOD_OPTIONS.find((option) => option.value === value) ||
+        WITHDRAWAL_METHOD_OPTIONS[0];
+
+    useEffect(() => {
+        if (!open) return;
+
+        function handlePointerDown(event: globalThis.MouseEvent | TouchEvent) {
+            const target = event.target as Node | null;
+            if (!target || rootRef.current?.contains(target)) return;
+            setOpen(false);
+        }
+
+        function handleEscape(event: KeyboardEvent) {
+            if (event.key === "Escape") {
+                setOpen(false);
+            }
+        }
+
+        document.addEventListener("mousedown", handlePointerDown);
+        document.addEventListener("touchstart", handlePointerDown);
+        document.addEventListener("keydown", handleEscape);
+
+        return () => {
+            document.removeEventListener("mousedown", handlePointerDown);
+            document.removeEventListener("touchstart", handlePointerDown);
+            document.removeEventListener("keydown", handleEscape);
+        };
+    }, [open]);
+
+    function handleSelect(nextValue: WithdrawalMethod) {
+        onChange(nextValue);
+        setOpen(false);
+    }
+
+    return (
+        <div className="mining-withdraw-selectWrap" ref={rootRef}>
+            <button
+                type="button"
+                className="mining-withdraw-select"
+                aria-haspopup="listbox"
+                aria-expanded={open}
+                onClick={() => setOpen((prev) => !prev)}
+                data-open={open ? "true" : "false"}
+            >
+                <span className="mining-withdraw-selectValue">
+                    <span className="mining-withdraw-selectLabel">{selected.label}</span>
+                    <span className="mining-withdraw-selectDescription">
+                        {selected.description}
+                    </span>
+                </span>
+                <span className="mining-withdraw-selectIcon" aria-hidden="true">
+                    <svg viewBox="0 0 20 20" fill="none">
+                        <path
+                            d="M5 7.5 10 12.5 15 7.5"
+                            stroke="currentColor"
+                            strokeWidth="1.9"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                        />
+                    </svg>
+                </span>
+            </button>
+
+            {open && (
+                <div className="mining-withdraw-menu" role="listbox">
+                    {WITHDRAWAL_METHOD_OPTIONS.map((option) => {
+                        const selectedOption = option.value === value;
+                        return (
+                            <button
+                                key={option.value}
+                                type="button"
+                                className="mining-withdraw-menuOption"
+                                role="option"
+                                aria-selected={selectedOption}
+                                data-selected={selectedOption ? "true" : "false"}
+                                onClick={() => handleSelect(option.value)}
+                            >
+                                <span className="mining-withdraw-menuCheck" aria-hidden="true">
+                                    {selectedOption ? "✓" : ""}
+                                </span>
+                                <span className="mining-withdraw-menuText">
+                                    <span className="mining-withdraw-menuLabel">
+                                        {option.label}
+                                    </span>
+                                    <span className="mining-withdraw-menuDescription">
+                                        {option.description}
+                                    </span>
+                                </span>
+                            </button>
+                        );
+                    })}
+                </div>
+            )}
+        </div>
     );
 }
 

@@ -2,6 +2,8 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
 
+from api.schemas.thefts import TheftActivitySnapshot
+
 
 TaskType = Literal["view_post"]
 TaskStatus = Literal["available", "in_progress", "completed", "blocked"]
@@ -56,6 +58,7 @@ class TaskOpenResponse(BaseModel):
 
     session_id: Optional[str] = None
     battle: Optional[TaskBattleSnapshot] = None
+    theft: Optional[TheftActivitySnapshot] = None
 
 
 class TaskCheckRequest(BaseModel):
@@ -72,6 +75,7 @@ class TaskCheckResponse(BaseModel):
     new_balance: float = 0
     task_completed: bool = False
     battle: Optional[TaskBattleSnapshot] = None
+    theft: Optional[TheftActivitySnapshot] = None
 
 
 class TaskChannelPostIngestRequest(BaseModel):
@@ -83,3 +87,13 @@ class TaskChannelPostIngestRequest(BaseModel):
 
 class TaskChannelPostIngestResponse(BaseModel):
     allocated: bool
+
+
+class TaskUnavailableRequest(BaseModel):
+    reason: Optional[str] = None
+
+
+class TaskUnavailableResponse(BaseModel):
+    ok: bool
+    task_id: int
+    deactivated: bool = False

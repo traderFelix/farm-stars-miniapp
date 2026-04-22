@@ -56,10 +56,8 @@ class AuditResponse(BaseModel):
     total_balances: float
     campaign_claims_count: int
     campaign_claimed_total: float
-    campaign_claimed_from_ledger: float
     promo_claims_count: int
     promo_claimed_total: float
-    promo_claimed_from_ledger: float
     referral_bonus: float
     view_post_bonus: float
     daily_bonus: float

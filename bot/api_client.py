@@ -12,8 +12,8 @@ from shared.config import (
 
 JsonDict = dict[str, Any]
 
-API_BASE_URL = SHARED_API_BASE_URL or "http://127.0.0.1:8000"
-API_TIMEOUT = float(SHARED_API_TIMEOUT or 10)
+API_BASE_URL = SHARED_API_BASE_URL
+API_TIMEOUT = SHARED_API_TIMEOUT
 
 
 class ApiClientError(Exception):
@@ -167,10 +167,21 @@ class TasksApi(ApiSection):
             },
         )
 
+    async def report_unavailable(self, user_id: int, task_id: int, *, reason: Optional[str] = None) -> JsonDict:
+        return await self._post(
+            f"/tasks/bot/{int(task_id)}/unavailable/{int(user_id)}",
+            json={"reason": reason},
+        )
+
 
 class BattlesApi(ApiSection):
     async def get_status(self, user_id: int) -> JsonDict:
         return await self._get(f"/battles/bot/me/{int(user_id)}")
+
+
+class TheftsApi(ApiSection):
+    async def get_status(self, user_id: int) -> JsonDict:
+        return await self._get(f"/thefts/bot/me/{int(user_id)}")
 
 
 class UsersApi(ApiSection):
@@ -188,6 +199,9 @@ class UsersApi(ApiSection):
 
     async def get_battle_stats(self, user_id: int) -> JsonDict:
         return await self._get(f"/admin/users/{int(user_id)}/battle-stats")
+
+    async def get_theft_stats(self, user_id: int) -> JsonDict:
+        return await self._get(f"/admin/users/{int(user_id)}/theft-stats")
 
     async def get_ledger(
             self,
@@ -532,6 +546,7 @@ class BotApiClient:
         self.admin_promos = PromosAdminApi(self)
         self.task_channels = TaskChannelsApi(self)
         self.analytics = AnalyticsApi(self)
+        self.thefts = TheftsApi(self)
 
     def _build_headers(self) -> dict[str, str]:
         if not self.internal_token:
@@ -618,6 +633,10 @@ async def get_user_stats(user_id: int) -> JsonDict:
 
 async def get_user_battle_stats(user_id: int) -> JsonDict:
     return await api_client.users.get_battle_stats(user_id)
+
+
+async def get_user_theft_stats(user_id: int) -> JsonDict:
+    return await api_client.users.get_theft_stats(user_id)
 
 
 async def get_user_ledger_page(
@@ -932,6 +951,10 @@ async def get_battle_status(user_id: int) -> JsonDict:
     return await api_client.battles.get_status(user_id)
 
 
+async def get_theft_status(user_id: int) -> JsonDict:
+    return await api_client.thefts.get_status(user_id)
+
+
 async def ingest_task_channel_post_via_api(
         *,
         chat_id: str,
@@ -955,6 +978,10 @@ async def check_task(user_id: int, task_id: int, *, session_id: Optional[str] = 
     return await api_client.tasks.check(user_id, task_id, session_id=session_id)
 
 
+async def report_task_unavailable(user_id: int, task_id: int, *, reason: Optional[str] = None) -> JsonDict:
+    return await api_client.tasks.report_unavailable(user_id, task_id, reason=reason)
+
+
 __all__ = [
     "ApiClientError",
     "BotApiClient",
@@ -962,6 +989,7 @@ __all__ = [
     "get_user_profile",
     "get_user_stats",
     "get_user_battle_stats",
+    "get_user_theft_stats",
     "get_user_ledger_page",
     "get_user_risk_page",
     "lookup_user",
@@ -1008,8 +1036,10 @@ __all__ = [
     "get_bot_main_menu_for_user_context_via_api",
     "get_bot_main_menu_via_api",
     "get_next_task",
+    "get_theft_status",
     "get_battle_status",
     "ingest_task_channel_post_via_api",
     "open_task",
     "check_task",
+    "report_task_unavailable",
 ]

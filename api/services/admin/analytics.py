@@ -2,15 +2,14 @@ from typing import Any
 
 import aiosqlite
 
-from shared.db.campaigns import global_claims_stats
 from shared.db.ledger import (
     balances_audit,
     get_balance_adjusts_by_admin,
+    ledger_count_by_reason,
     ledger_sum_battle_net,
     ledger_sum_by_reason,
     list_global_ledger_page,
 )
-from shared.db.promos import global_claims_stats as global_promo_claims_stats
 from shared.db.users import (
     top_users_by_balance,
     total_balances,
@@ -120,13 +119,13 @@ async def get_audit(
 ) -> dict[str, Any]:
     mismatches = await balances_audit(db, limit=int(limit))
     total_balances_sum = await total_balances(db)
-    claims_count_all, total_claimed_all = await global_claims_stats(db)
-    promo_claims_count_all, promo_claimed_all = await global_promo_claims_stats(db)
     admin_added, admin_removed = await get_balance_adjusts_by_admin(db)
     total_withdrawn_sum = await total_withdrawn_amount(db)
     pending_withdrawn_sum = await pending_withdrawn_amount(db)
-    claimed_from_ledger = await ledger_sum_by_reason(db, "contest_bonus")
-    promo_claimed_from_ledger = await ledger_sum_by_reason(db, "promo_bonus")
+    campaign_claimed_total = await ledger_sum_by_reason(db, "contest_bonus")
+    promo_claimed_total = await ledger_sum_by_reason(db, "promo_bonus")
+    claims_count_from_ledger = await ledger_count_by_reason(db, "contest_bonus")
+    promo_claims_count_from_ledger = await ledger_count_by_reason(db, "promo_bonus")
     referral_bonus = await ledger_sum_by_reason(db, "referral_bonus")
     view_post_bonus = await ledger_sum_by_reason(db, "view_post_bonus")
     daily_bonus = await ledger_sum_by_reason(db, "daily_bonus")
@@ -134,12 +133,10 @@ async def get_audit(
 
     return {
         "total_balances": float(total_balances_sum),
-        "campaign_claims_count": int(claims_count_all),
-        "campaign_claimed_total": float(total_claimed_all),
-        "campaign_claimed_from_ledger": float(claimed_from_ledger),
-        "promo_claims_count": int(promo_claims_count_all),
-        "promo_claimed_total": float(promo_claimed_all),
-        "promo_claimed_from_ledger": float(promo_claimed_from_ledger),
+        "campaign_claims_count": int(claims_count_from_ledger),
+        "campaign_claimed_total": float(campaign_claimed_total),
+        "promo_claims_count": int(promo_claims_count_from_ledger),
+        "promo_claimed_total": float(promo_claimed_total),
         "referral_bonus": float(referral_bonus),
         "view_post_bonus": float(view_post_bonus),
         "daily_bonus": float(daily_bonus),

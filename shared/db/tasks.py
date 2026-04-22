@@ -32,12 +32,18 @@ async def ensure_task_post_open_sessions_schema(db: aiosqlite.Connection) -> Non
             task_post_id INTEGER NOT NULL,
             opened_at REAL NOT NULL,
             can_check_at REAL NOT NULL,
+            activity_type TEXT,
+            activity_id INTEGER,
             status TEXT NOT NULL DEFAULT 'opened',
             created_at TEXT NOT NULL DEFAULT (datetime('now')),
             completed_at TEXT
         )
         """
     )
+    if not await _column_exists(db, "task_post_open_sessions", "activity_type"):
+        await db.execute("ALTER TABLE task_post_open_sessions ADD COLUMN activity_type TEXT")
+    if not await _column_exists(db, "task_post_open_sessions", "activity_id"):
+        await db.execute("ALTER TABLE task_post_open_sessions ADD COLUMN activity_id INTEGER")
     await db.execute(
         """
         CREATE INDEX IF NOT EXISTS idx_task_post_open_sessions_task_status
@@ -219,14 +225,23 @@ async def create_task_post_open_session(
         task_post_id: int,
         opened_at: float,
         can_check_at: float,
+        activity_type: Optional[str] = None,
+        activity_id: Optional[int] = None,
 ) -> None:
     await ensure_task_post_open_sessions_schema(db)
     await db.execute(
         """
         INSERT INTO task_post_open_sessions (
-            session_id, user_id, task_post_id, opened_at, can_check_at, status
+            session_id,
+            user_id,
+            task_post_id,
+            opened_at,
+            can_check_at,
+            activity_type,
+            activity_id,
+            status
         )
-        VALUES (?, ?, ?, ?, ?, 'opened')
+        VALUES (?, ?, ?, ?, ?, ?, ?, 'opened')
         """,
         (
             str(session_id),
@@ -234,6 +249,8 @@ async def create_task_post_open_session(
             int(task_post_id),
             float(opened_at),
             float(can_check_at),
+            activity_type,
+            int(activity_id) if activity_id is not None else None,
         ),
     )
 
@@ -261,7 +278,9 @@ async def get_view_post_task_for_open_session(
             p.created_at,
             s.session_id,
             s.opened_at,
-            s.can_check_at
+            s.can_check_at,
+            s.activity_type,
+            s.activity_id
         FROM task_post_open_sessions s
         JOIN task_posts p ON p.id = s.task_post_id
         JOIN task_channels c ON c.id = p.channel_id
@@ -347,6 +366,32 @@ async def increment_task_post_views(
         WHERE id = ?
           AND is_active = 1
           AND current_views < required_views
+        """,
+        (int(task_post_id),),
+    )
+    return cur.rowcount == 1
+
+
+async def mark_task_post_unavailable(
+        db: aiosqlite.Connection,
+        task_post_id: int,
+) -> bool:
+    await ensure_task_post_open_sessions_schema(db)
+    await db.execute(
+        """
+        UPDATE task_post_open_sessions
+        SET status = 'expired'
+        WHERE task_post_id = ?
+          AND status = 'opened'
+        """,
+        (int(task_post_id),),
+    )
+    cur = await db.execute(
+        """
+        UPDATE task_posts
+        SET is_active = 0
+        WHERE id = ?
+          AND is_active = 1
         """,
         (int(task_post_id),),
     )

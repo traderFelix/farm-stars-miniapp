@@ -193,6 +193,43 @@ export type BattleStatusResponse = {
     last_result?: BattleRecentResult | null;
 };
 
+export type TheftState = "idle" | "active" | "protected";
+export type TheftRole = "attacker" | "victim" | "protector";
+export type TheftResult = "stolen" | "defended" | "expired" | "protected";
+
+export type TheftRecentResult = {
+    result: TheftResult;
+    role: TheftRole;
+    finished_at: string;
+    amount: number;
+    opponent_name?: string | null;
+};
+
+export type TheftStatusResponse = {
+    state: TheftState;
+    message: string;
+    theft_id?: number | null;
+    protection_attempt_id?: number | null;
+    role?: TheftRole | null;
+    amount: number;
+    my_progress: number;
+    target_views: number;
+    opponent_progress: number;
+    opponent_target_views: number;
+    seconds_left: number;
+    opponent_name?: string | null;
+    protected_until?: string | null;
+    can_attack: boolean;
+    can_protect: boolean;
+    last_result?: TheftRecentResult | null;
+};
+
+export type TheftActionResponse = {
+    ok: boolean;
+    message: string;
+    status: TheftStatusResponse;
+};
+
 type RequestOptions = {
     method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
     body?: unknown;
@@ -492,6 +529,27 @@ export async function joinBattle(): Promise<BattleStatusResponse> {
 
 export async function cancelBattle(): Promise<BattleStatusResponse> {
     return apiRequest<BattleStatusResponse>("/battles/cancel", {
+        method: "POST",
+        auth: true,
+    });
+}
+
+export async function getMyTheftStatus(): Promise<TheftStatusResponse> {
+    return apiRequest<TheftStatusResponse>("/thefts/me", {
+        method: "GET",
+        auth: true,
+    });
+}
+
+export async function startTheft(): Promise<TheftActionResponse> {
+    return apiRequest<TheftActionResponse>("/thefts/start", {
+        method: "POST",
+        auth: true,
+    });
+}
+
+export async function startTheftProtection(): Promise<TheftActionResponse> {
+    return apiRequest<TheftActionResponse>("/thefts/protect", {
         method: "POST",
         auth: true,
     });

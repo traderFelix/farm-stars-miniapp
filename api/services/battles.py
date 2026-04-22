@@ -14,6 +14,7 @@ from api.schemas.battles import BattleRecentResult, BattleResult, BattleState, B
 from api.schemas.tasks import TaskBattleResult, TaskBattleSnapshot, TaskBattleState
 from api.security.request_fingerprint import RequestFingerprint
 from api.services.antiabuse import log_user_action_with_fingerprint
+from api.services.thefts import get_active_theft_activity_for_user_db, sync_theft_resolution_db
 from shared.config import (
     TELEGRAM_BOT_TOKEN,
     VIEW_BATTLE_DURATION_SECONDS,
@@ -46,7 +47,7 @@ from shared.db.ledger import (
     has_battle_entry_lock,
     has_battle_refund_record,
 )
-from shared.db.tasks import count_completed_task_views_for_user
+from shared.db.tasks import count_available_view_post_tasks_for_user, count_completed_task_views_for_user
 from shared.db.users import add_user_risk_score, default_game_nickname_for_user_id, get_balance
 
 logger = logging.getLogger(__name__)
@@ -249,6 +250,7 @@ def _build_status_response(
         open_battle: Optional[BattleRowLike],
         latest_finished_battle: Optional[BattleRowLike] = None,
         message: Optional[str] = None,
+        can_join: Optional[bool] = None,
 ) -> BattleStatusResponse:
     if open_battle:
         my_progress, opponent_progress = _battle_progress_tuple(open_battle, user_id)
@@ -292,7 +294,7 @@ def _build_status_response(
         opponent_name=None,
         current_balance=float(current_balance),
         total_completed_views=int(total_completed_views),
-        can_join=float(current_balance) >= VIEW_BATTLE_ENTRY_FEE,
+        can_join=bool(can_join) if can_join is not None else float(current_balance) >= VIEW_BATTLE_ENTRY_FEE,
         can_cancel=False,
         can_open_tasks=False,
         hold_seconds_min=VIEW_BATTLE_HOLD_MIN_SECONDS,
@@ -300,6 +302,10 @@ def _build_status_response(
         message=message or "",
         last_result=_battle_recent_result_from_row(latest_finished_battle, user_id),
     )
+
+
+def _not_enough_posts_message(*, activity_name: str) -> str:
+    return f"Не хватает доступных постов для {activity_name}. Попробуй чуть позже."
 
 
 def build_battle_snapshot_for_task(
@@ -680,9 +686,11 @@ async def get_battle_status_for_user(
 ) -> BattleStatusResponse:
     db = await get_db()
     resolution_to_notify = None
+    response: Optional[BattleStatusResponse] = None
     try:
         async with tx(db, immediate=True):
             resolution_to_notify = await _sync_user_battle_resolution(db, user_id=user_id)
+            await sync_theft_resolution_db(db)
             open_battle = cast(Optional[BattleRowLike], await get_user_open_battle(db, user_id))
             latest_finished = (
                 None
@@ -691,6 +699,11 @@ async def get_battle_status_for_user(
             )
             current_balance = await get_balance(db, user_id)
             total_completed_views = await count_completed_task_views_for_user(db, user_id)
+            active_theft_activity = await get_active_theft_activity_for_user_db(
+                db,
+                user_id=user_id,
+                sync_resolution=False,
+            )
 
             response = _build_status_response(
                 user_id=user_id,
@@ -698,12 +711,21 @@ async def get_battle_status_for_user(
                 total_completed_views=total_completed_views,
                 open_battle=open_battle,
                 latest_finished_battle=latest_finished,
+                message=(
+                    "Сначала заверши активность воровства или защиты"
+                    if active_theft_activity and not open_battle
+                    else None
+                ),
+                can_join=False if active_theft_activity and not open_battle else None,
             )
     finally:
         await db.close()
 
     if resolution_to_notify:
         schedule_battle_resolution_notification(int(resolution_to_notify["battle_id"]))
+
+    if response is None:
+        raise RuntimeError("Battle status response was not built")
 
     return response
 
@@ -747,6 +769,7 @@ async def join_battle_for_user(
                 )
 
             resolution_to_notify = await _sync_user_battle_resolution(db, user_id=user_id)
+            await sync_theft_resolution_db(db)
             open_battle = cast(Optional[BattleRowLike], await get_user_open_battle(db, user_id))
             if response is None and open_battle:
                 current_balance = await get_balance(db, user_id)
@@ -758,6 +781,41 @@ async def join_battle_for_user(
                     open_battle=open_battle,
                     message="У тебя уже есть активная дуэль",
                 )
+            if response is None and await get_active_theft_activity_for_user_db(
+                    db,
+                    user_id=user_id,
+                    sync_resolution=False,
+            ):
+                current_balance = await get_balance(db, user_id)
+                total_completed_views = await count_completed_task_views_for_user(db, user_id)
+                response = _build_status_response(
+                    user_id=user_id,
+                    current_balance=current_balance,
+                    total_completed_views=total_completed_views,
+                    open_battle=None,
+                    latest_finished_battle=_optional_battle_row(
+                        await get_user_latest_finished_battle(db, user_id)
+                    ),
+                    message="Сначала заверши активность воровства или защиты",
+                    can_join=False,
+                )
+            if response is None:
+                available_posts = await count_available_view_post_tasks_for_user(db, user_id)
+                if available_posts < VIEW_BATTLE_TARGET_VIEWS:
+                    current_balance = await get_balance(db, user_id)
+                    total_completed_views = await count_completed_task_views_for_user(db, user_id)
+                    response = _build_status_response(
+                        user_id=user_id,
+                        current_balance=current_balance,
+                        total_completed_views=total_completed_views,
+                        open_battle=None,
+                        latest_finished_battle=_optional_battle_row(
+                            await get_user_latest_finished_battle(db, user_id)
+                        ),
+                        message=_not_enough_posts_message(
+                            activity_name="дуэли",
+                        ),
+                    )
             if response is None:
                 candidate = cast(Optional[BattleRowLike], await get_waiting_battle_for_match(db, user_id))
                 if candidate:
@@ -768,7 +826,22 @@ async def join_battle_for_user(
                         user_id=creator_user_id,
                         battle_id=battle_id,
                     )
-                    if not creator_stake_locked:
+                    creator_available_posts = await count_available_view_post_tasks_for_user(db, creator_user_id)
+                    if creator_available_posts < VIEW_BATTLE_TARGET_VIEWS:
+                        cancelled = await cancel_waiting_battle(
+                            db,
+                            battle_id=battle_id,
+                            user_id=creator_user_id,
+                        )
+                        if cancelled:
+                            await _refund_waiting_battle_stake_if_locked(
+                                db,
+                                battle_id=battle_id,
+                                user_id=creator_user_id,
+                                stake_amount=_row_float(candidate, "stake_amount", VIEW_BATTLE_ENTRY_FEE),
+                                result="not_enough_posts",
+                            )
+                    elif not creator_stake_locked:
                         creator_debited = await apply_balance_debit_if_enough(
                             db,
                             user_id=creator_user_id,
@@ -785,7 +858,7 @@ async def join_battle_for_user(
                         else:
                             creator_stake_locked = True
 
-                    if creator_stake_locked:
+                    if creator_available_posts >= VIEW_BATTLE_TARGET_VIEWS and creator_stake_locked:
                         my_balance = await get_balance(db, user_id)
                         if my_balance < VIEW_BATTLE_ENTRY_FEE:
                             total_completed_views = await count_completed_task_views_for_user(db, user_id)

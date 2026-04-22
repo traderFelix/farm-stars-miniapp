@@ -1,4 +1,7 @@
-from typing import Any, cast
+import asyncio
+import logging
+from contextlib import asynccontextmanager, suppress
+from typing import Any, AsyncIterator, Optional, cast
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -21,17 +24,62 @@ from api.routes.profile import router as profile_router
 from api.routes.promos import router as promos_router
 from api.routes.referrals import router as referrals_router
 from api.routes.tasks import router as tasks_router
+from api.routes.thefts import router as thefts_router
 from api.routes.ledger import router as ledger_router
 from api.routes.checkin import router as checkin_router
 from api.routes.withdrawals import router as withdrawals_router
+from api.services.thefts import sync_expired_thefts_and_notify
 
-app = FastAPI(title="Farm Stars")
+logger = logging.getLogger(__name__)
+_THEFT_RESOLUTION_POLL_SECONDS = 5
+_theft_resolution_task: Optional[asyncio.Task] = None
 
 allowed_origins: list[str] = [
     origin
     for origin in (WEB_ORIGIN_DEV, WEB_ORIGIN_NGROK)
     if origin
 ]
+
+
+async def _theft_resolution_watcher() -> None:
+    while True:
+        try:
+            await sync_expired_thefts_and_notify()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Failed to sync expired thefts")
+
+        await asyncio.sleep(_THEFT_RESOLUTION_POLL_SECONDS)
+
+
+async def start_theft_resolution_watcher() -> None:
+    global _theft_resolution_task
+    if _theft_resolution_task is None or _theft_resolution_task.done():
+        _theft_resolution_task = asyncio.create_task(_theft_resolution_watcher())
+
+
+async def stop_theft_resolution_watcher() -> None:
+    global _theft_resolution_task
+    if _theft_resolution_task is None:
+        return
+
+    _theft_resolution_task.cancel()
+    with suppress(asyncio.CancelledError):
+        await _theft_resolution_task
+    _theft_resolution_task = None
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    await start_theft_resolution_watcher()
+    try:
+        yield
+    finally:
+        await stop_theft_resolution_watcher()
+
+
+app = FastAPI(title="Farm Stars", lifespan=lifespan)
 
 app.add_middleware(
     cast(Any, CORSMiddleware),
@@ -50,6 +98,7 @@ app.include_router(internal_users_router)
 app.include_router(profile_router)
 app.include_router(referrals_router)
 app.include_router(tasks_router)
+app.include_router(thefts_router)
 app.include_router(miniapp_compat_router)
 app.include_router(users_router)
 app.include_router(analytics_admin_router)

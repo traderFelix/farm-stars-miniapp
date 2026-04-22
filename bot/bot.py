@@ -1,9 +1,12 @@
 import asyncio, logging
 
 from aiogram import Bot, Dispatcher
+from aiogram.exceptions import TelegramAPIError
 from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.types import BotCommand
 
 from .api_client import API_BASE_URL, ingest_task_channel_post_via_api
+from .keyboards import miniapp_menu_button
 from .pending_channel_posts import TaskChannelPostPayload, flush_pending_task_channel_posts
 from shared.config import TELEGRAM_BOT_TOKEN
 from .handlers import user_router, admin_router, admin_fallback_router, errors_router
@@ -23,6 +26,11 @@ logging.getLogger("aiohttp.access").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 
+BOT_COMMANDS = [
+    BotCommand(command="start", description="Открыть меню"),
+]
+
+
 async def _ingest_pending_task_channel_post(payload: TaskChannelPostPayload) -> None:
     await ingest_task_channel_post_via_api(
         chat_id=payload["chat_id"],
@@ -30,6 +38,14 @@ async def _ingest_pending_task_channel_post(payload: TaskChannelPostPayload) -> 
         title=payload["title"],
         reward=payload["reward"],
     )
+
+
+async def _configure_bot_menu(bot: Bot) -> None:
+    try:
+        await bot.set_my_commands(BOT_COMMANDS)
+        await bot.set_chat_menu_button(menu_button=miniapp_menu_button())
+    except TelegramAPIError as exc:
+        logger.warning("Failed to configure bot commands/menu button: %s", exc)
 
 
 async def main():
@@ -43,6 +59,8 @@ async def main():
     dp.include_router(admin_router)
     dp.include_router(admin_fallback_router)
     dp.include_router(errors_router)
+
+    await _configure_bot_menu(bot)
 
     flush_result = await flush_pending_task_channel_posts(
         _ingest_pending_task_channel_post,
