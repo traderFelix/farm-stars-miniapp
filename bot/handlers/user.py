@@ -29,6 +29,7 @@ from bot.api_client import (
     get_theft_status,
     ingest_task_channel_post_via_api,
     open_task,
+    report_task_unavailable,
 )
 from bot.keyboards import (
     MAIN_MENU_REPLY_BUTTON_TEXT,
@@ -55,6 +56,7 @@ LAST_TASK_POST_MSG_ID_KEY = "last_task_post_message_id"
 LAST_TASK_MENU_MSG_ID_KEY = "last_task_menu_message_id"
 PERSISTENT_USER_MENU_ENABLED_KEY = "persistent_user_menu_enabled"
 TASK_VIEW_LOCKS: dict[int, asyncio.Lock] = {}
+TASK_UNAVAILABLE_MAX_RETRIES = 3
 USER_API_UNAVAILABLE_TEXT = "⚠️ Сервис временно недоступен. Попробуй еще раз чуть позже."
 START_TEXT = (
     "🔥 Начинай прямо сейчас фармить ТГ звезды и TON!\n\n"
@@ -116,6 +118,20 @@ def _to_optional_int(value: Any) -> Optional[int]:
         return int(stripped)
 
     return int(value)
+
+
+def _is_forwarded_channel_post(message: Message) -> bool:
+    forward_markers = (
+        "forward_origin",
+        "forward_from",
+        "forward_from_chat",
+        "forward_sender_name",
+        "forward_date",
+    )
+    return (
+        any(getattr(message, marker, None) is not None for marker in forward_markers)
+        or bool(getattr(message, "is_automatic_forward", False))
+    )
 
 
 def _format_user_api_error(e: ApiClientError) -> str:
@@ -402,10 +418,25 @@ async def _ensure_persistent_user_menu(message: Message, state: FSMContext) -> N
     if data.get(PERSISTENT_USER_MENU_ENABLED_KEY):
         return
 
-    await message.answer(
+    sent = await message.answer(
         "🏠 Кнопка «Меню» закреплена снизу.",
         reply_markup=persistent_user_menu_kb(),
     )
+    try:
+        await sent.delete()
+    except TelegramBadRequest as e:
+        logger.info(
+            "Could not delete persistent menu setup message chat_id=%s message_id=%s detail=%s",
+            sent.chat.id,
+            sent.message_id,
+            e,
+        )
+    except Exception:
+        logger.exception(
+            "Could not delete persistent menu setup message chat_id=%s message_id=%s",
+            sent.chat.id,
+            sent.message_id,
+        )
     await state.update_data(**{PERSISTENT_USER_MENU_ENABLED_KEY: True})
 
 
@@ -437,6 +468,15 @@ async def ingest_task_channel_post(message: Message):
         or message.document
     )
     if not has_content:
+        return
+
+    if _is_forwarded_channel_post(message):
+        logger.info(
+            "Skipped forwarded task channel post chat_id=%s post_id=%s title=%s",
+            message.chat.id,
+            message.message_id,
+            message.chat.title,
+        )
         return
 
     flush_result = await flush_pending_task_channel_posts(
@@ -616,6 +656,8 @@ async def _process_task_view_post(
         bot: Bot,
         state: FSMContext,
         user_id: int,
+        *,
+        unavailable_attempt: int = 0,
 ):
     hidden_message_id = await _hide_task_trigger_message(callback.message)
     await _delete_last_task_menu(
@@ -684,6 +726,20 @@ async def _process_task_view_post(
     await _delete_last_task_post(bot, user_id, state)
 
     if not chat_id or normalized_channel_post_id is None:
+        reported = await _report_unavailable_task(
+            user_id=user_id,
+            task_id=task_id,
+            reason="missing task post data",
+        )
+        if reported and unavailable_attempt + 1 < TASK_UNAVAILABLE_MAX_RETRIES:
+            await _process_task_view_post(
+                callback,
+                bot,
+                state,
+                user_id,
+                unavailable_attempt=unavailable_attempt + 1,
+            )
+            return
         await bot.send_message(
             chat_id=user_id,
             text="❌ У задания нет данных поста.",
@@ -691,13 +747,78 @@ async def _process_task_view_post(
         )
         return
 
+    sent_message_id: Optional[int] = None
     try:
         sent = await bot.forward_message(
             chat_id=user_id,
             from_chat_id=str(chat_id),
             message_id=normalized_channel_post_id,
         )
-    except TelegramBadRequest:
+        sent_message_id = sent.message_id
+    except TelegramBadRequest as e:
+        logger.warning(
+            "Failed to forward task post user_id=%s task_id=%s chat_id=%s channel_post_id=%s detail=%s",
+            user_id,
+            task_id,
+            chat_id,
+            normalized_channel_post_id,
+            e,
+        )
+        try:
+            copied = await bot.copy_message(
+                chat_id=user_id,
+                from_chat_id=str(chat_id),
+                message_id=normalized_channel_post_id,
+            )
+            sent_message_id = int(copied.message_id)
+        except TelegramBadRequest as copy_error:
+            logger.warning(
+                "Failed to copy task post user_id=%s task_id=%s chat_id=%s channel_post_id=%s detail=%s",
+                user_id,
+                task_id,
+                chat_id,
+                normalized_channel_post_id,
+                copy_error,
+            )
+            reported = await _report_unavailable_task(
+                user_id=user_id,
+                task_id=task_id,
+                reason=f"forward: {e}; copy: {copy_error}",
+            )
+            if reported and unavailable_attempt + 1 < TASK_UNAVAILABLE_MAX_RETRIES:
+                await _process_task_view_post(
+                    callback,
+                    bot,
+                    state,
+                    user_id,
+                    unavailable_attempt=unavailable_attempt + 1,
+                )
+                return
+            await bot.send_message(
+                chat_id=user_id,
+                text=(
+                    "❌ Не удалось показать пост.\n"
+                    "Проверь, что бот есть в канале и видит этот пост."
+                ),
+                reply_markup=task_after_view_kb(),
+            )
+            return
+
+    if sent_message_id is None:
+        reported = await _report_unavailable_task(
+            user_id=user_id,
+            task_id=task_id,
+            reason="missing sent message id",
+        )
+        if reported and unavailable_attempt + 1 < TASK_UNAVAILABLE_MAX_RETRIES:
+            await _process_task_view_post(
+                callback,
+                bot,
+                state,
+                user_id,
+                unavailable_attempt=unavailable_attempt + 1,
+            )
+            return
         await bot.send_message(
             chat_id=user_id,
             text=(
@@ -710,7 +831,7 @@ async def _process_task_view_post(
 
     await state.update_data(
         **{
-            LAST_TASK_POST_MSG_ID_KEY: sent.message_id,
+            LAST_TASK_POST_MSG_ID_KEY: sent_message_id,
             "active_task_id": task_id,
         }
     )
@@ -789,6 +910,30 @@ async def _process_task_view_post(
         text=f"⚠️ {message_text}",
         reply_markup=task_after_view_kb(),
     )
+
+
+async def _report_unavailable_task(
+        *,
+        user_id: int,
+        task_id: int,
+        reason: str,
+) -> bool:
+    try:
+        await report_task_unavailable(
+            user_id,
+            task_id,
+            reason=reason[:500],
+        )
+        return True
+    except ApiClientError as e:
+        _log_user_api_error("task_view_post.report_unavailable", e)
+    except Exception:
+        logger.exception(
+            "Failed to report unavailable task task_id=%s user_id=%s",
+            task_id,
+            user_id,
+        )
+    return False
 
 
 @router.callback_query(F.data == "back")

@@ -20,6 +20,8 @@ from api.schemas.tasks import (
     TaskListItem,
     TaskOpenRequest,
     TaskOpenResponse,
+    TaskUnavailableRequest,
+    TaskUnavailableResponse,
 )
 from api.services.battles import get_battle_status_for_user
 from api.services.tasks import (
@@ -27,6 +29,7 @@ from api.services.tasks import (
     get_next_task_for_user,
     ingest_task_channel_post_message,
     open_task_for_user,
+    report_task_post_unavailable,
 )
 from api.services.thefts import get_theft_status_for_user
 from api.services.users import get_bot_main_menu_by_user_id
@@ -411,4 +414,22 @@ async def bot_ingest_channel_post(
         channel_post_id=payload.channel_post_id,
         title=payload.title,
         reward=payload.reward,
+    )
+
+
+@router.post(
+    "/bot/{task_id}/unavailable/{user_id}",
+    response_model=TaskUnavailableResponse,
+    summary="Bot internal: mark task post unavailable",
+    dependencies=[Depends(require_internal_token)],
+)
+async def bot_report_task_post_unavailable(
+        user_id: int,
+        task_id: int,
+        payload: TaskUnavailableRequest,
+):
+    return await report_task_post_unavailable(
+        user_id=user_id,
+        task_post_id=task_id,
+        reason=payload.reason,
     )

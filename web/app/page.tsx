@@ -1416,7 +1416,7 @@ function TheftPanel({
         </>
       )}
 
-      {noticeMessage ? <StatusNote tone="success">{noticeMessage}</StatusNote> : null}
+      {state !== "active" && noticeMessage ? <StatusNote tone="success">{noticeMessage}</StatusNote> : null}
 
       {errorMessage ? <StatusNote tone="error">{errorMessage}</StatusNote> : null}
     </div>

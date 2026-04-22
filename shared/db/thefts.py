@@ -181,11 +181,10 @@ async def get_user_latest_finished_theft(db: aiosqlite.Connection, user_id: int)
         return await cur.fetchone()
 
 
-async def has_recent_theft_attack(
+async def has_theft_attack_today(
         db: aiosqlite.Connection,
         *,
         attacker_user_id: int,
-        seconds: int,
 ) -> bool:
     await ensure_view_thefts_schema(db)
     async with db.execute(
@@ -194,10 +193,10 @@ async def has_recent_theft_attack(
         FROM view_thefts
         WHERE attacker_user_id = ?
           AND COALESCE(result, '') != 'cancelled'
-          AND datetime(created_at) >= datetime('now', ?)
+          AND date(created_at) = date('now')
         LIMIT 1
         """,
-        (int(attacker_user_id), f"-{int(seconds)} seconds"),
+        (int(attacker_user_id),),
     ) as cur:
         return await cur.fetchone() is not None
 

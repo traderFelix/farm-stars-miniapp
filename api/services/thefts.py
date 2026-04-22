@@ -5,7 +5,7 @@ import json
 import logging
 import random
 from datetime import datetime, timezone
-from typing import Optional, Protocol, cast
+from typing import Literal, Optional, Protocol, TypedDict, cast
 from urllib import error as urllib_error
 from urllib import request as urllib_request
 
@@ -22,10 +22,7 @@ from api.services.antiabuse import log_user_action_with_fingerprint
 from api.security.request_fingerprint import RequestFingerprint
 from shared.config import (
     TELEGRAM_BOT_TOKEN,
-    VIEW_BATTLE_HOLD_MAX_SECONDS,
-    VIEW_BATTLE_HOLD_MIN_SECONDS,
     VIEW_THEFT_ATTACK_TARGET_VIEWS,
-    VIEW_THEFT_DAILY_LIMIT_SECONDS,
     VIEW_THEFT_DEFENSE_TARGET_VIEWS,
     VIEW_THEFT_DURATION_SECONDS,
     VIEW_THEFT_MAX_AMOUNT,
@@ -51,7 +48,7 @@ from shared.db.thefts import (
     get_user_active_theft,
     get_user_current_protection,
     get_user_latest_finished_theft,
-    has_recent_theft_attack,
+    has_theft_attack_today,
     increment_theft_progress,
     increment_theft_protection_progress,
     list_expired_active_thefts,
@@ -69,6 +66,12 @@ _SQLITE_DT_FORMAT = "%Y-%m-%d %H:%M:%S"
 class TheftRowLike(Protocol):
     def __getitem__(self, key: str) -> object:
         ...
+
+
+class ActiveTheftActivity(TypedDict):
+    activity_type: str
+    activity_id: int
+    snapshot: TheftActivitySnapshot
 
 
 def _optional_theft_row(row: object) -> Optional[TheftRowLike]:
@@ -106,7 +109,8 @@ def _row_optional_int(row: TheftRowLike, key: str) -> Optional[int]:
 
 
 def _row_int(row: TheftRowLike, key: str, default: int = 0) -> int:
-    return _row_optional_int(row, key) if _row_optional_int(row, key) is not None else int(default)
+    value = _row_optional_int(row, key)
+    return value if value is not None else int(default)
 
 
 def _row_float(row: TheftRowLike, key: str, default: float = 0.0) -> float:
@@ -204,7 +208,9 @@ def _build_theft_snapshot(
     normalized_result = result
     if normalized_result is None and _row_str(theft_row, "state") == "finished":
         normalized_result = _row_optional_str(theft_row, "result")
-    snapshot_state = "active" if _row_str(theft_row, "state") == "active" and normalized_result is None else "finished"
+    snapshot_state: Literal["active", "finished"] = (
+        "active" if _row_str(theft_row, "state") == "active" and normalized_result is None else "finished"
+    )
     amount = _row_float(theft_row, "amount")
     if role == "attacker" and snapshot_state == "active":
         amount = 0
@@ -477,12 +483,26 @@ async def sync_theft_resolution_db(db) -> list[int]:
     return await _sync_theft_resolution(db)
 
 
+async def sync_expired_thefts_and_notify() -> int:
+    db = await get_db()
+    try:
+        async with tx(db, immediate=True):
+            resolved_ids = await _sync_theft_resolution(db)
+    finally:
+        await db.close()
+
+    for theft_id in resolved_ids:
+        schedule_theft_resolution_notification(theft_id)
+
+    return len(resolved_ids)
+
+
 async def get_active_theft_activity_for_user_db(
         db,
         *,
         user_id: int,
         sync_resolution: bool = True,
-) -> Optional[dict[str, object]]:
+) -> Optional[ActiveTheftActivity]:
     if sync_resolution:
         await _sync_theft_resolution(db)
 
@@ -540,10 +560,9 @@ async def _get_status_response(db, user_id: int) -> TheftStatusResponse:
 
     protection = await get_user_current_protection(db, user_id)
     if protection:
-        can_attack = not await has_recent_theft_attack(
+        can_attack = not await has_theft_attack_today(
             db,
             attacker_user_id=user_id,
-            seconds=VIEW_THEFT_DAILY_LIMIT_SECONDS,
         )
         return TheftStatusResponse(
             state="protected",
@@ -557,10 +576,9 @@ async def _get_status_response(db, user_id: int) -> TheftStatusResponse:
     return TheftStatusResponse(
         state="idle",
         message="Можно начать кражу или зарядить защиту",
-        can_attack=not await has_recent_theft_attack(
+        can_attack=not await has_theft_attack_today(
             db,
             attacker_user_id=user_id,
-            seconds=VIEW_THEFT_DAILY_LIMIT_SECONDS,
         ),
         can_protect=True,
         last_result=_theft_recent_result_from_row(latest_finished_theft, user_id),
@@ -614,14 +632,13 @@ async def start_theft_for_user(
                     message="У тебя уже есть активная активность.",
                     status=await _get_status_response(db, user_id),
                 )
-            elif await has_recent_theft_attack(
+            elif await has_theft_attack_today(
                     db,
                     attacker_user_id=user_id,
-                    seconds=VIEW_THEFT_DAILY_LIMIT_SECONDS,
             ):
                 response = TheftActionResponse(
                     ok=False,
-                    message="Воровать можно только 1 раз в сутки.",
+                    message="Воровать можно только 1 раз в сутки по UTC.",
                     status=await _get_status_response(db, user_id),
                 )
             else:

@@ -372,6 +372,32 @@ async def increment_task_post_views(
     return cur.rowcount == 1
 
 
+async def mark_task_post_unavailable(
+        db: aiosqlite.Connection,
+        task_post_id: int,
+) -> bool:
+    await ensure_task_post_open_sessions_schema(db)
+    await db.execute(
+        """
+        UPDATE task_post_open_sessions
+        SET status = 'expired'
+        WHERE task_post_id = ?
+          AND status = 'opened'
+        """,
+        (int(task_post_id),),
+    )
+    cur = await db.execute(
+        """
+        UPDATE task_posts
+        SET is_active = 0
+        WHERE id = ?
+          AND is_active = 1
+        """,
+        (int(task_post_id),),
+    )
+    return cur.rowcount == 1
+
+
 async def list_task_channels(db: aiosqlite.Connection):
     await ensure_task_channels_client_schema(db)
     async with db.execute(

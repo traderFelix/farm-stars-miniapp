@@ -87,3 +87,13 @@ class TaskChannelPostIngestRequest(BaseModel):
 
 class TaskChannelPostIngestResponse(BaseModel):
     allocated: bool
+
+
+class TaskUnavailableRequest(BaseModel):
+    reason: Optional[str] = None
+
+
+class TaskUnavailableResponse(BaseModel):
+    ok: bool
+    task_id: int
+    deactivated: bool = False

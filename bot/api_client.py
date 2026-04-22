@@ -167,6 +167,12 @@ class TasksApi(ApiSection):
             },
         )
 
+    async def report_unavailable(self, user_id: int, task_id: int, *, reason: Optional[str] = None) -> JsonDict:
+        return await self._post(
+            f"/tasks/bot/{int(task_id)}/unavailable/{int(user_id)}",
+            json={"reason": reason},
+        )
+
 
 class BattlesApi(ApiSection):
     async def get_status(self, user_id: int) -> JsonDict:
@@ -972,6 +978,10 @@ async def check_task(user_id: int, task_id: int, *, session_id: Optional[str] = 
     return await api_client.tasks.check(user_id, task_id, session_id=session_id)
 
 
+async def report_task_unavailable(user_id: int, task_id: int, *, reason: Optional[str] = None) -> JsonDict:
+    return await api_client.tasks.report_unavailable(user_id, task_id, reason=reason)
+
+
 __all__ = [
     "ApiClientError",
     "BotApiClient",
@@ -1031,4 +1041,5 @@ __all__ = [
     "ingest_task_channel_post_via_api",
     "open_task",
     "check_task",
+    "report_task_unavailable",
 ]

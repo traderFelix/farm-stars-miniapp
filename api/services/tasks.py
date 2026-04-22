@@ -3,7 +3,7 @@ import logging
 import random
 import time
 from html import escape
-from typing import Optional, cast
+from typing import Any, Optional, cast
 from urllib import error as urllib_error
 from urllib import request as urllib_request
 from uuid import uuid4
@@ -15,6 +15,7 @@ from api.schemas.tasks import (
     TaskListItem,
     TaskOpenResponse,
 )
+from api.schemas.thefts import TheftActivitySnapshot
 from api.services.battles import (
     BattleRowLike,
     build_battle_snapshot_for_task,
@@ -40,6 +41,7 @@ from shared.db.tasks import (
     get_view_post_task_for_open_session,
     get_view_post_task_for_user,
     increment_task_post_views,
+    mark_task_post_unavailable,
 )
 from shared.db.abuse import count_recent_abuse_events, log_abuse_event
 from shared.db.common import tx
@@ -230,6 +232,18 @@ def _row_value(row, key: str, default=None):
     return default if value is None else value
 
 
+def _optional_int_value(value: object) -> Optional[int]:
+    if value is None or value == "":
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, str):
+        return int(value)
+    return int(str(value))
+
+
 def map_view_post_task_row_to_item(row) -> TaskListItem:
     return TaskListItem(
         id=int(row["id"]),
@@ -291,12 +305,12 @@ async def open_view_post_task(db, user_id: int, row) -> TaskOpenResponse:
         if active_battle
         else None
     )
-    theft_snapshot = theft_activity.get("snapshot") if theft_activity else None
+    theft_snapshot: Optional[TheftActivitySnapshot] = theft_activity["snapshot"] if theft_activity else None
     activity_type = "battle" if active_battle else (
         str(theft_activity["activity_type"]) if theft_activity else None
     )
-    activity_id = int(active_battle["id"]) if active_battle else (
-        int(theft_activity["activity_id"]) if theft_activity else None
+    activity_id = _optional_int_value(active_battle["id"]) if active_battle else (
+        _optional_int_value(theft_activity["activity_id"]) if theft_activity else None
     )
 
     recent_clicks = await count_recent_abuse_events(db, user_id, "task_view_click", 1)
@@ -528,7 +542,7 @@ async def check_view_post_task(
             db,
             user_id=int(user_id),
             activity_type=str(activity_type),
-            activity_id=int(activity_id) if activity_id is not None else None,
+            activity_id=_optional_int_value(activity_id),
         )
     if session_id:
         await complete_task_post_open_session(
@@ -538,10 +552,13 @@ async def check_view_post_task(
         )
     new_balance = await _get_user_balance_safe(db, user_id)
     await db.commit()
-    schedule_battle_resolution_notification(battle_update.get("resolved_battle_id"))
-    schedule_theft_resolution_notification(
-        int(theft_update["resolved_theft_id"]) if theft_update.get("resolved_theft_id") else None
-    )
+    resolved_battle_id = cast(Optional[int], battle_update.get("resolved_battle_id"))
+    resolved_theft_id = cast(Optional[int], theft_update.get("resolved_theft_id"))
+    battle_snapshot = cast(Optional[TaskBattleSnapshot], battle_update.get("battle"))
+    theft_snapshot = cast(Optional[TheftActivitySnapshot], theft_update.get("theft"))
+
+    schedule_battle_resolution_notification(resolved_battle_id)
+    schedule_theft_resolution_notification(resolved_theft_id)
 
     return TaskCheckResponse(
         ok=True,
@@ -551,8 +568,8 @@ async def check_view_post_task(
         reward_granted=reward,
         new_balance=new_balance,
         task_completed=True,
-        battle=battle_update.get("battle"),
-        theft=theft_update.get("theft"),
+        battle=battle_snapshot,
+        theft=theft_snapshot,
     )
 
 
@@ -682,6 +699,41 @@ async def ingest_task_channel_post_message(
         await db.close()
 
 
+async def report_task_post_unavailable(
+        *,
+        user_id: int,
+        task_post_id: int,
+        reason: Optional[str] = None,
+) -> dict[str, object]:
+    db = await get_db()
+    try:
+        async with tx(db, immediate=True):
+            deactivated = await mark_task_post_unavailable(db, int(task_post_id))
+            await log_abuse_event(
+                db,
+                int(user_id),
+                "task_post_unavailable",
+                entity_type="task_post",
+                entity_id=str(task_post_id),
+                meta=(reason or "")[:500] or None,
+            )
+    finally:
+        await db.close()
+
+    logger.warning(
+        "Task post marked unavailable task_post_id=%s user_id=%s deactivated=%s reason=%s",
+        task_post_id,
+        user_id,
+        deactivated,
+        reason,
+    )
+    return {
+        "ok": True,
+        "task_id": int(task_post_id),
+        "deactivated": bool(deactivated),
+    }
+
+
 async def open_task_for_user(user_id: int, task_id: int) -> TaskOpenResponse:
     db = await get_db()
     resolution_to_notify = None
@@ -762,8 +814,9 @@ async def check_task_for_user(
                 battle=None,
             )
 
-        assert row is not None
-        return await check_task_by_type(db, user_id, row, session_id=session_id)
+        if row is None:
+            raise RuntimeError("Task row was not loaded")
+        return await check_task_by_type(db, user_id, cast(Any, row), session_id=session_id)
 
     except Exception:
         await db.rollback()
