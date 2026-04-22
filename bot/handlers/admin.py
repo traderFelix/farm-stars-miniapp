@@ -14,6 +14,7 @@ from bot.api_client import (
     clear_user_suspicious,
     create_campaign_via_api,
     create_promo_via_api,
+    create_subscription_task_via_api,
     create_task_channel_via_api,
     delete_campaign_via_api,
     delete_campaign_winner_via_api,
@@ -28,6 +29,7 @@ from bot.api_client import (
     get_promo_stats_via_api,
     get_promo_via_api,
     get_promos_summary_via_api,
+    get_subscription_task_via_api,
     get_top_balances_via_api,
     get_withdrawal_details,
     get_task_channel_posts_via_api,
@@ -40,6 +42,7 @@ from bot.api_client import (
     get_user_stats,
     list_campaigns_via_api,
     list_promos_via_api,
+    list_subscription_tasks_via_api,
     list_withdrawals_queue,
     list_recent_fee_payments_via_api,
     list_task_channels_via_api,
@@ -51,6 +54,7 @@ from bot.api_client import (
     reject_withdrawal,
     set_campaign_status_via_api,
     set_promo_status_via_api,
+    set_subscription_task_status_via_api,
     set_user_role,
     toggle_task_channel_via_api,
     update_task_channel_title_via_api,
@@ -82,11 +86,11 @@ from bot.keyboards import (
     campaign_created_kb, user_actions_kb, admin_withdraw_list_kb, admin_withdraw_actions_kb, campaign_delete_confirm_kb,
     admin_task_channels_kb, admin_task_channel_card_kb, admin_growth_photo_kb, promos_list_kb, promo_manage_kb,
     promo_delete_confirm_kb, promo_created_kb, promo_stats_list_kb, admin_campaigns_menu_kb, admin_promos_menu_kb,
-    admin_task_channel_manual_post_confirm_kb,
+    admin_task_channel_manual_post_confirm_kb, admin_subscription_tasks_kb, admin_subscription_task_card_kb,
 )
 
 from bot.states import (
-    CampaignCreate, PromoCreate, AddWinners, DeleteWinner, UserLookup, AdminAdjust, AdminRefundFee, TaskChannelBindClient, TaskChannelCreate, TaskChannelEdit, TaskChannelManualPost,
+    CampaignCreate, PromoCreate, AddWinners, DeleteWinner, UserLookup, AdminAdjust, AdminRefundFee, TaskChannelBindClient, TaskChannelCreate, TaskChannelEdit, TaskChannelManualPost, SubscriptionTaskCreate,
 )
 
 router = Router()
@@ -303,6 +307,12 @@ async def admin_api_unavailable_myrole(message: Message):
         TaskChannelEdit.views_per_post,
         TaskChannelEdit.view_seconds,
         TaskChannelManualPost.post_url,
+        SubscriptionTaskCreate.chat_id,
+        SubscriptionTaskCreate.channel_url,
+        SubscriptionTaskCreate.instant_reward,
+        SubscriptionTaskCreate.daily_reward_total,
+        SubscriptionTaskCreate.daily_claim_days,
+        SubscriptionTaskCreate.max_subscribers,
     )
 )
 async def admin_api_unavailable_state_message(message: Message):
@@ -486,6 +496,42 @@ def _build_task_channel_card_text(detail: dict) -> tuple[str, bool, int]:
         f"Фактически набрано: {total_current}"
     )
     return text, is_active, channel_id
+
+
+def _build_subscription_task_card_text(detail: dict) -> tuple[str, bool, int]:
+    task = detail["task"]
+
+    task_id = int(task["id"])
+    title = task.get("title") or "Без названия"
+    chat_id = task["chat_id"]
+    channel_url = task["channel_url"]
+    is_active = bool(task.get("is_active") or False)
+    instant_reward = float(task.get("instant_reward") or 0)
+    daily_reward_total = float(task.get("daily_reward_total") or 0)
+    daily_claim_days = int(task.get("daily_claim_days") or 0)
+    total_reward = float(task.get("total_reward") or 0)
+    participants = int(task.get("participants_count") or 0)
+    max_subscribers = int(task.get("max_subscribers") or 0)
+    active_count = int(task.get("active_count") or 0)
+    completed_count = int(task.get("completed_count") or 0)
+    abandoned_count = int(task.get("abandoned_count") or 0)
+    status_text = "🟢 Включено" if is_active else "🔴 Отключено"
+
+    text = (
+        "📢 Задание подписки\n\n"
+        f"Название: {title}\n"
+        f"ID канала: {chat_id}\n"
+        f"Ссылка: {channel_url}\n"
+        f"Статус: {status_text}\n\n"
+        f"Награда пользователю: {fmt_stars(total_reward)}⭐\n"
+        f"Сразу: {fmt_stars(instant_reward)}⭐\n"
+        f"Ежедневный фонд: {fmt_stars(daily_reward_total)}⭐ / {daily_claim_days} дн.\n\n"
+        f"Лимит: {participants}/{max_subscribers}\n"
+        f"Активных доклеймов: {active_count}\n"
+        f"Завершено: {completed_count}\n"
+        f"Удалено юзерами: {abandoned_count}"
+    )
+    return text, is_active, task_id
 
 
 def _build_campaign_card_text(detail: dict) -> tuple[str, str]:
@@ -1814,6 +1860,7 @@ async def adm_audit_balances(callback: CallbackQuery):
     referral_bonus = float(audit.get("referral_bonus") or 0)
     view_post_bonus = float(audit.get("view_post_bonus") or 0)
     daily_bonus = float(audit.get("daily_bonus") or 0)
+    subscription_bonus = float(audit.get("subscription_bonus") or 0)
     battle_bonus = float(audit.get("battle_bonus") or 0)
 
     lines = [
@@ -1824,6 +1871,7 @@ async def adm_audit_balances(callback: CallbackQuery):
         f"Получено за рефералов: {fmt_stars(referral_bonus)}⭐\n"
         f"Получено за просмотры постов: {fmt_stars(view_post_bonus)}⭐\n"
         f"Получено за ежедневный бонус: {fmt_stars(daily_bonus)}⭐\n"
+        f"Получено за подписки: {fmt_stars(subscription_bonus)}⭐\n"
         f"Результат батлов: {fmt_stars(battle_bonus)}⭐\n"
         f"Получено от админа: {fmt_stars(admin_adjust_net)}⭐\n",
         f"Выведено: {fmt_stars(total_withdrawn_sum)}⭐",
@@ -2324,6 +2372,227 @@ async def adm_fee_refund_manual_finish(message: Message, state: FSMContext):
         f"user_id={user_id}\n"
         f"charge_id={charge_id}"
     )
+
+
+@router.callback_query(F.data == "adm:sub:list")
+async def adm_subscription_tasks_list(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    await state.clear()
+
+    try:
+        result = await list_subscription_tasks_via_api()
+    except ApiClientError as e:
+        await safe_edit_text(
+            callback.message,
+            f"❌ Не удалось загрузить задания подписок.\n\n{e.detail}",
+            reply_markup=admin_back_kb(),
+        )
+        return
+
+    rows = result.get("items") or []
+    if not rows:
+        await safe_edit_text(
+            callback.message,
+            "📢 Задания подписок\n\n"
+            "Пока нет заданий подписаться на канал.",
+            reply_markup=admin_subscription_tasks_kb([]),
+        )
+        return
+
+    await safe_edit_text(
+        callback.message,
+        "📢 Задания подписок\n\n"
+        "Выбери задание:",
+        reply_markup=admin_subscription_tasks_kb(rows),
+    )
+
+
+@router.callback_query(F.data == "adm:sub:new")
+async def adm_subscription_task_new_start(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    await state.clear()
+    await state.set_state(SubscriptionTaskCreate.chat_id)
+    await safe_edit_text(
+        callback.message,
+        "➕ Новое задание подписки\n\n"
+        "Пришли chat_id канала.\n"
+        "Пример: -1001234567890\n\n"
+        "Бот должен быть в канале, иначе проверка подписки не сработает.",
+        reply_markup=admin_back_kb("adm:sub:list"),
+    )
+
+
+@router.message(SubscriptionTaskCreate.chat_id)
+async def adm_subscription_task_new_chat_id(message: Message, state: FSMContext):
+    chat_id = (message.text or "").strip()
+    if not chat_id:
+        await message.answer("❌ Нужен chat_id канала.")
+        return
+
+    title = await _get_channel_title_for_admin(message.bot, chat_id) if message.bot else None
+    await state.update_data(chat_id=chat_id, title=title)
+    await state.set_state(SubscriptionTaskCreate.channel_url)
+    await message.answer(
+        f"Канал: {title or chat_id}\n\n"
+        "Теперь пришли ссылку, которую пользователь будет открывать для подписки.\n"
+        "Например: https://t.me/channel или invite-link."
+    )
+
+
+@router.message(SubscriptionTaskCreate.channel_url)
+async def adm_subscription_task_new_channel_url(message: Message, state: FSMContext):
+    channel_url = (message.text or "").strip()
+    if not channel_url:
+        await message.answer("❌ Нужна ссылка на канал.")
+        return
+    if channel_url.startswith("t.me/"):
+        channel_url = f"https://{channel_url}"
+
+    await state.update_data(channel_url=channel_url)
+    await state.set_state(SubscriptionTaskCreate.instant_reward)
+    await message.answer(
+        "Сколько звезд дать сразу после проверки подписки?\n"
+        "Можно 0. Пример: 1 или 0.5"
+    )
+
+
+@router.message(SubscriptionTaskCreate.instant_reward)
+async def adm_subscription_task_new_instant_reward(message: Message, state: FSMContext):
+    try:
+        instant_reward = round(float((message.text or "").strip().replace(",", ".")), 2)
+        if instant_reward < 0:
+            raise ValueError
+    except ValueError:
+        await message.answer("❌ Введи число 0 или больше.")
+        return
+
+    await state.update_data(instant_reward=instant_reward)
+    await state.set_state(SubscriptionTaskCreate.daily_reward_total)
+    await message.answer(
+        "Сколько звезд распределить на ежедневный клейм?\n"
+        "Можно 0, если награда только одноразовая."
+    )
+
+
+@router.message(SubscriptionTaskCreate.daily_reward_total)
+async def adm_subscription_task_new_daily_reward_total(message: Message, state: FSMContext):
+    try:
+        daily_reward_total = round(float((message.text or "").strip().replace(",", ".")), 2)
+        if daily_reward_total < 0:
+            raise ValueError
+    except ValueError:
+        await message.answer("❌ Введи число 0 или больше.")
+        return
+
+    await state.update_data(daily_reward_total=daily_reward_total)
+    await state.set_state(SubscriptionTaskCreate.daily_claim_days)
+    await message.answer(
+        "На сколько дней растянуть ежедневный клейм?\n"
+        "Если ежедневный фонд 0, введи 0."
+    )
+
+
+@router.message(SubscriptionTaskCreate.daily_claim_days)
+async def adm_subscription_task_new_daily_claim_days(message: Message, state: FSMContext):
+    try:
+        daily_claim_days = int((message.text or "").strip())
+        if daily_claim_days < 0:
+            raise ValueError
+    except ValueError:
+        await message.answer("❌ Введи целое число 0 или больше.")
+        return
+
+    await state.update_data(daily_claim_days=daily_claim_days)
+    await state.set_state(SubscriptionTaskCreate.max_subscribers)
+    await message.answer("Теперь введи лимит подписчиков для задания. Пример: 120")
+
+
+@router.message(SubscriptionTaskCreate.max_subscribers)
+async def adm_subscription_task_new_max_subscribers(message: Message, state: FSMContext):
+    try:
+        max_subscribers = int((message.text or "").strip())
+        if max_subscribers <= 0:
+            raise ValueError
+    except ValueError:
+        await message.answer("❌ Введи целое число больше 0.")
+        return
+
+    data = await state.get_data()
+    instant_reward = float(data.get("instant_reward") or 0)
+    daily_reward_total = float(data.get("daily_reward_total") or 0)
+    if instant_reward <= 0 and daily_reward_total <= 0:
+        await message.answer("❌ Нельзя создать задание с нулевой наградой. Вернись и укажи награду.")
+        return
+
+    try:
+        detail = await create_subscription_task_via_api(
+            chat_id=str(data["chat_id"]),
+            title=data.get("title"),
+            channel_url=str(data["channel_url"]),
+            instant_reward=instant_reward,
+            daily_reward_total=daily_reward_total,
+            daily_claim_days=int(data.get("daily_claim_days") or 0),
+            max_subscribers=max_subscribers,
+        )
+    except ApiClientError as e:
+        await message.answer(f"❌ {e.detail}")
+        return
+
+    await state.clear()
+    text, is_active, task_id = _build_subscription_task_card_text(detail)
+    await message.answer(
+        "✅ Задание подписки создано\n\n" + text,
+        reply_markup=admin_subscription_task_card_kb(task_id, is_active),
+    )
+
+
+@router.callback_query(F.data.startswith("adm:sub:open:"))
+async def adm_subscription_task_open(callback: CallbackQuery):
+    await callback.answer()
+    task_id = int((callback.data or "").rsplit(":", 1)[1])
+
+    try:
+        detail = await get_subscription_task_via_api(task_id)
+    except ApiClientError as e:
+        await safe_edit_text(
+            callback.message,
+            f"❌ Не удалось открыть задание подписки.\n\n{e.detail}",
+            reply_markup=admin_subscription_tasks_kb([]),
+        )
+        return
+
+    text, is_active, resolved_task_id = _build_subscription_task_card_text(detail)
+    await safe_edit_text(
+        callback.message,
+        text,
+        reply_markup=admin_subscription_task_card_kb(resolved_task_id, is_active),
+    )
+
+
+@router.callback_query(F.data.startswith("adm:sub:toggle:"))
+async def adm_subscription_task_toggle(callback: CallbackQuery):
+    await callback.answer()
+    parts = (callback.data or "").split(":")
+    task_id = int(parts[3])
+    next_active = bool(int(parts[4]))
+
+    try:
+        detail = await set_subscription_task_status_via_api(task_id, is_active=next_active)
+    except ApiClientError as e:
+        await safe_edit_text(
+            callback.message,
+            f"❌ Не удалось обновить задание подписки.\n\n{e.detail}",
+            reply_markup=admin_subscription_tasks_kb([]),
+        )
+        return
+
+    text, is_active, resolved_task_id = _build_subscription_task_card_text(detail)
+    await safe_edit_text(
+        callback.message,
+        text,
+        reply_markup=admin_subscription_task_card_kb(resolved_task_id, is_active),
+    )
+
 
 async def _render_task_channel_card(callback: CallbackQuery, channel_id: int):
     try:

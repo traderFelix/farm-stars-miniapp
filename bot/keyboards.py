@@ -71,6 +71,7 @@ def admin_menu_kb() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="🏆 Конкурсы", callback_data="adm:campaigns_menu")],
             [InlineKeyboardButton(text="🎟 Промокоды", callback_data="adm:promos_menu")],
             [InlineKeyboardButton(text="📺 Каналы просмотров", callback_data="adm:tch:list")],
+            [InlineKeyboardButton(text="📢 Задания подписок", callback_data="adm:sub:list")],
             [InlineKeyboardButton(text="📈 Рост пользователей", callback_data="adm:growth_png")],
             [InlineKeyboardButton(text="📜 Леджер (последние)", callback_data="adm:ledger_last")],
             [InlineKeyboardButton(text="🔎 Детали пользователя", callback_data="adm:user_balance")],
@@ -367,6 +368,41 @@ def admin_task_channel_manual_post_confirm_kb(channel_id: int) -> InlineKeyboard
         inline_keyboard=[
             [InlineKeyboardButton(text="✅ Добавить пост", callback_data="adm:tch:manual_post:add")],
             [InlineKeyboardButton(text="❌ Отмена", callback_data=f"adm:tch:manual_post:cancel:{int(channel_id)}")],
+        ]
+    )
+
+
+def admin_subscription_tasks_kb(rows) -> InlineKeyboardMarkup:
+    kb = []
+
+    for row in rows:
+        task_id = int(row["id"])
+        title = row.get("title") or row.get("chat_id") or f"#{task_id}"
+        is_active = bool(row.get("is_active"))
+        participants = int(row.get("participants_count") or 0)
+        max_subscribers = int(row.get("max_subscribers") or 0)
+        total_reward = float(row.get("total_reward") or 0)
+        status = "🟢" if is_active else "🔴"
+        kb.append([
+            InlineKeyboardButton(
+                text=f"{status} {title} • {participants}/{max_subscribers} • {total_reward:g}⭐",
+                callback_data=f"adm:sub:open:{task_id}",
+            )
+        ])
+
+    kb.append([InlineKeyboardButton(text="➕ Создать подписку", callback_data="adm:sub:new")])
+    kb.append([InlineKeyboardButton(text="⬅ Назад", callback_data="adm:back")])
+    return InlineKeyboardMarkup(inline_keyboard=kb)
+
+
+def admin_subscription_task_card_kb(task_id: int, is_active: bool) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(
+                text="🔴 Отключить" if is_active else "🟢 Включить",
+                callback_data=f"adm:sub:toggle:{int(task_id)}:{0 if is_active else 1}",
+            )],
+            [InlineKeyboardButton(text="⬅ Назад", callback_data="adm:sub:list")],
         ]
     )
 

@@ -129,6 +129,7 @@ async def get_audit(
     referral_bonus = await ledger_sum_by_reason(db, "referral_bonus")
     view_post_bonus = await ledger_sum_by_reason(db, "view_post_bonus")
     daily_bonus = await ledger_sum_by_reason(db, "daily_bonus")
+    subscription_bonus = await ledger_sum_by_reason(db, "subscription_bonus")
     battle_bonus = await ledger_sum_battle_net(db)
 
     return {
@@ -140,6 +141,7 @@ async def get_audit(
         "referral_bonus": float(referral_bonus),
         "view_post_bonus": float(view_post_bonus),
         "daily_bonus": float(daily_bonus),
+        "subscription_bonus": float(subscription_bonus),
         "battle_bonus": float(battle_bonus),
         "admin_adjust_net": float(admin_added - admin_removed),
         "total_withdrawn": float(total_withdrawn_sum),

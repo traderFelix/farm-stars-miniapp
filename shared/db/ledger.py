@@ -300,6 +300,7 @@ async def get_user_earnings_breakdown(db: aiosqlite.Connection, user_id: int) ->
             COALESCE(SUM(CASE WHEN reason = 'contest_bonus' THEN delta ELSE 0 END), 0) AS contest_bonus,
             COALESCE(SUM(CASE WHEN reason = 'promo_bonus' THEN delta ELSE 0 END), 0) AS promo_bonus,
             COALESCE(SUM(CASE WHEN reason = 'referral_bonus' THEN delta ELSE 0 END), 0) AS referral_bonus,
+            COALESCE(SUM(CASE WHEN reason = 'subscription_bonus' THEN delta ELSE 0 END), 0) AS subscription_bonus,
             COALESCE(
                 SUM(
                     CASE
@@ -335,6 +336,7 @@ async def get_user_earnings_breakdown(db: aiosqlite.Connection, user_id: int) ->
     contest_bonus = float(row["contest_bonus"] or 0)
     promo_bonus = float(row["promo_bonus"] or 0)
     referral_bonus = float(row["referral_bonus"] or 0)
+    subscription_bonus = float(row["subscription_bonus"] or 0)
     battle_net = float(row["battle_net"] or 0)
     admin_adjust = float(row["admin_adjust"] or 0)
     theft_net = float(row["theft_net"] or 0)
@@ -357,6 +359,8 @@ async def get_user_earnings_breakdown(db: aiosqlite.Connection, user_id: int) ->
         "promo_bonus_pct": pct(promo_bonus, total),
         "referral_bonus": referral_bonus,
         "referral_bonus_pct": pct(referral_bonus, total),
+        "subscription_bonus": subscription_bonus,
+        "subscription_bonus_pct": pct(subscription_bonus, total),
         "battle_net": battle_net,
         "battle_net_pct": pct(battle_net, total),
         "theft_net": theft_net,

@@ -47,3 +47,12 @@ class TaskChannelBindClient(StatesGroup):
 
 class TaskChannelManualPost(StatesGroup):
     post_url = State()
+
+
+class SubscriptionTaskCreate(StatesGroup):
+    chat_id = State()
+    channel_url = State()
+    instant_reward = State()
+    daily_reward_total = State()
+    daily_claim_days = State()
+    max_subscribers = State()

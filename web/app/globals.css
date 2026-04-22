@@ -1960,6 +1960,187 @@ textarea:focus {
   font-weight: 780;
 }
 
+.mining-subscriptions-slots {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 3.9rem;
+  min-height: 2rem;
+  border-radius: 999px;
+  border: 1px solid rgba(99, 240, 255, 0.24);
+  color: #c9f6ff;
+  background: rgba(9, 15, 29, 0.66);
+  font-size: 0.78rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  box-shadow: 0 0 18px rgba(55, 197, 255, 0.12);
+}
+
+.mining-subscriptions-list {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.mining-subscription-card {
+  position: relative;
+  overflow: visible;
+  border-radius: 24px;
+  border: 1px solid rgba(88, 108, 164, 0.3);
+  background:
+    radial-gradient(circle at 8% 12%, rgba(255, 199, 92, 0.1), transparent 28%),
+    radial-gradient(circle at 96% 0%, rgba(99, 240, 255, 0.1), transparent 34%),
+    linear-gradient(180deg, rgba(17, 23, 41, 0.96), rgba(10, 15, 27, 0.96));
+  padding: 1rem;
+  box-shadow: var(--shadow-soft);
+}
+
+.mining-subscription-card[data-active="true"] {
+  border-color: rgba(99, 240, 255, 0.24);
+  box-shadow: var(--shadow-soft), var(--shadow-glow-cyan);
+}
+
+.mining-subscription-card__top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.8rem;
+}
+
+.mining-subscription-card__title {
+  margin-top: 0.24rem;
+  color: #f7fbff;
+  font-size: 1.05rem;
+  line-height: 1.18;
+  font-weight: 820;
+}
+
+.mining-subscription-card__reward {
+  flex: 0 0 auto;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 201, 93, 0.34);
+  padding: 0.54rem 0.68rem;
+  color: #fff8d7;
+  background: rgba(255, 185, 58, 0.11);
+  font-size: 1rem;
+  font-weight: 850;
+  font-variant-numeric: tabular-nums;
+  box-shadow: var(--shadow-glow-gold);
+}
+
+.mining-subscription-card__limit {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-top: 0.9rem;
+  color: #a7b8df;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.mining-subscription-card__limit strong {
+  color: #f7fbff;
+  font-weight: 830;
+  font-variant-numeric: tabular-nums;
+}
+
+.mining-subscription-card__track {
+  overflow: hidden;
+  height: 0.72rem;
+  margin-top: 0.5rem;
+  border-radius: 999px;
+  background: rgba(18, 29, 51, 0.96);
+  box-shadow: inset 0 0 0 1px rgba(79, 102, 154, 0.24);
+}
+
+.mining-subscription-card__track span {
+  display: block;
+  height: 100%;
+  min-width: 0.7rem;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--gold-1), var(--gold-2), var(--cyan-1));
+  box-shadow: var(--shadow-glow-gold);
+  transition: width 260ms ease;
+}
+
+.mining-subscription-card__hint {
+  margin-top: 0.55rem;
+  color: #b9caeb;
+  font-size: 0.82rem;
+  font-weight: 650;
+}
+
+.mining-subscription-card__actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.7rem;
+  margin-top: 0.9rem;
+}
+
+.mining-subscription-delete {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.35rem;
+  height: 2.35rem;
+  border-radius: 15px;
+  border: 1px solid rgba(255, 123, 123, 0.28);
+  color: #ffc3c3;
+  background: rgba(255, 95, 95, 0.08);
+  transition:
+    transform 160ms ease,
+    opacity 160ms ease,
+    border-color 160ms ease;
+}
+
+.mining-subscription-delete:hover {
+  transform: translateY(-1px);
+  border-color: rgba(255, 159, 159, 0.5);
+}
+
+.mining-subscription-delete:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+  transform: none;
+}
+
+.mining-subscription-delete::after {
+  content: attr(data-tooltip);
+  pointer-events: none;
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 0.5rem);
+  z-index: 20;
+  width: max-content;
+  max-width: 13rem;
+  border-radius: 14px;
+  border: 1px solid rgba(88, 108, 164, 0.34);
+  padding: 0.45rem 0.6rem;
+  color: #dce7ff;
+  background: rgba(10, 15, 28, 0.96);
+  font-size: 0.74rem;
+  font-weight: 700;
+  line-height: 1.2;
+  box-shadow: var(--shadow-soft);
+  opacity: 0;
+  transform: translateY(4px);
+  transition:
+    opacity 140ms ease,
+    transform 140ms ease;
+}
+
+.mining-subscription-delete:hover::after,
+.mining-subscription-delete:focus-visible::after {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.mining-subscription-delete__icon {
+  width: 1.08rem;
+  height: 1.08rem;
+}
+
 @keyframes mining-battle-scan {
   0% {
     left: -32%;
@@ -2001,6 +2182,10 @@ textarea:focus {
   .mining-battle-lane__top {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .mining-subscription-card__actions {
+    grid-template-columns: 1fr;
   }
 
   .mining-hero__title {

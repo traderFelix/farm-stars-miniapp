@@ -230,6 +230,50 @@ export type TheftActionResponse = {
     status: TheftStatusResponse;
 };
 
+export type SubscriptionTaskItem = {
+    id: number;
+    title: string;
+    channel_url: string;
+    total_reward: number;
+    participants_count: number;
+    max_subscribers: number;
+};
+
+export type SubscriptionAssignmentItem = {
+    id: number;
+    task_id: number;
+    title: string;
+    channel_url: string;
+    daily_claims_done: number;
+    daily_claim_days: number;
+    daily_reward_claimed: number;
+    daily_reward_total: number;
+    remaining_reward: number;
+    can_claim_today: boolean;
+    last_daily_claim_day?: string | null;
+    can_abandon: boolean;
+    abandon_available_at?: string | null;
+    abandon_cooldown_days_left: number;
+};
+
+export type SubscriptionStatusResponse = {
+    available: SubscriptionTaskItem[];
+    active: SubscriptionAssignmentItem[];
+    slots_used: number;
+    slot_limit: number;
+    abandon_available_at?: string | null;
+    abandon_cooldown_days_left: number;
+};
+
+export type SubscriptionActionResponse = {
+    ok: boolean;
+    message: string;
+    reward_granted: number;
+    remaining_reward: number;
+    balance: number;
+    status: SubscriptionStatusResponse;
+};
+
 type RequestOptions = {
     method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
     body?: unknown;
@@ -550,6 +594,34 @@ export async function startTheft(): Promise<TheftActionResponse> {
 
 export async function startTheftProtection(): Promise<TheftActionResponse> {
     return apiRequest<TheftActionResponse>("/thefts/protect", {
+        method: "POST",
+        auth: true,
+    });
+}
+
+export async function getMySubscriptionStatus(): Promise<SubscriptionStatusResponse> {
+    return apiRequest<SubscriptionStatusResponse>("/subscriptions/me", {
+        method: "GET",
+        auth: true,
+    });
+}
+
+export async function joinSubscriptionTask(taskId: number): Promise<SubscriptionActionResponse> {
+    return apiRequest<SubscriptionActionResponse>(`/subscriptions/${taskId}/join`, {
+        method: "POST",
+        auth: true,
+    });
+}
+
+export async function claimSubscriptionDaily(assignmentId: number): Promise<SubscriptionActionResponse> {
+    return apiRequest<SubscriptionActionResponse>(`/subscriptions/assignments/${assignmentId}/claim`, {
+        method: "POST",
+        auth: true,
+    });
+}
+
+export async function abandonSubscriptionAssignment(assignmentId: number): Promise<SubscriptionActionResponse> {
+    return apiRequest<SubscriptionActionResponse>(`/subscriptions/assignments/${assignmentId}/abandon`, {
         method: "POST",
         auth: true,
     });
