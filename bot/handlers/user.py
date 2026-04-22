@@ -34,7 +34,7 @@ from bot.api_client import (
 from bot.keyboards import (
     MAIN_MENU_REPLY_BUTTON_TEXT,
     main_menu,
-    persistent_user_menu_kb,
+    miniapp_menu_button,
     task_after_view_kb,
     tasks_menu,
 )
@@ -54,7 +54,6 @@ logger = logging.getLogger(__name__)
 
 LAST_TASK_POST_MSG_ID_KEY = "last_task_post_message_id"
 LAST_TASK_MENU_MSG_ID_KEY = "last_task_menu_message_id"
-PERSISTENT_USER_MENU_ENABLED_KEY = "persistent_user_menu_enabled"
 TASK_VIEW_LOCKS: dict[int, asyncio.Lock] = {}
 TASK_UNAVAILABLE_MAX_RETRIES = 3
 USER_API_UNAVAILABLE_TEXT = "⚠️ Сервис временно недоступен. Попробуй еще раз чуть позже."
@@ -413,31 +412,23 @@ def _format_task_theft_progress(status: Optional[dict[str, Any]]) -> Optional[st
     return None
 
 
-async def _ensure_persistent_user_menu(message: Message, state: FSMContext) -> None:
-    data = await state.get_data()
-    if data.get(PERSISTENT_USER_MENU_ENABLED_KEY):
-        return
-
-    sent = await message.answer(
-        "🏠 Кнопка «Меню» закреплена снизу.",
-        reply_markup=persistent_user_menu_kb(),
-    )
+async def _ensure_chat_menu_button(bot: Bot, chat_id: int) -> None:
     try:
-        await sent.delete()
+        await bot.set_chat_menu_button(
+            chat_id=int(chat_id),
+            menu_button=miniapp_menu_button(),
+        )
     except TelegramBadRequest as e:
         logger.info(
-            "Could not delete persistent menu setup message chat_id=%s message_id=%s detail=%s",
-            sent.chat.id,
-            sent.message_id,
+            "Could not set chat menu button chat_id=%s detail=%s",
+            chat_id,
             e,
         )
     except Exception:
         logger.exception(
-            "Could not delete persistent menu setup message chat_id=%s message_id=%s",
-            sent.chat.id,
-            sent.message_id,
+            "Could not set chat menu button chat_id=%s",
+            chat_id,
         )
-    await state.update_data(**{PERSISTENT_USER_MENU_ENABLED_KEY: True})
 
 
 async def _send_start_screen(message: Message, role_level: int) -> None:
@@ -524,7 +515,7 @@ async def start(message: Message, bot: Bot, state: FSMContext):
         start_arg = parts[1].strip()
 
     logger.info("START user_id=%s text=%r start_arg=%r", user_id, message.text, start_arg)
-    await _ensure_persistent_user_menu(message, state)
+    await _ensure_chat_menu_button(bot, user_id)
 
     start_referrer_id = int(start_arg) if start_arg and start_arg.isdigit() else None
     try:
@@ -578,7 +569,7 @@ async def open_main_menu_from_reply(message: Message, bot: Bot, state: FSMContex
     from_user = _require_user(message.from_user)
     user_id = from_user.id
 
-    await _ensure_persistent_user_menu(message, state)
+    await _ensure_chat_menu_button(bot, user_id)
 
     try:
         menu_payload = await bootstrap_bot_user_via_api(
@@ -606,9 +597,8 @@ async def show_tasks(callback: CallbackQuery, bot: Bot, state: FSMContext):
     await safe_callback_answer(callback)
 
     user_id = callback.from_user.id
+    await _ensure_chat_menu_button(bot, user_id)
     current_message = _optional_message(callback.message)
-    if current_message is not None:
-        await _ensure_persistent_user_menu(current_message, state)
 
     try:
         tasks_screen_text = await _build_tasks_screen_text(user_id)

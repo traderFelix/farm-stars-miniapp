@@ -172,6 +172,17 @@ async def ledger_sum_by_reason(db: aiosqlite.Connection, reason: str) -> float:
         return float(row[0] or 0)
 
 
+async def ledger_count_by_reason(db: aiosqlite.Connection, reason: str) -> int:
+    query = """
+    SELECT COUNT(*)
+    FROM ledger
+    WHERE reason = ?
+    """
+    async with db.execute(query, (reason,)) as cur:
+        row = await cur.fetchone()
+        return int(row[0] or 0)
+
+
 async def ledger_sum_battle_net(db: aiosqlite.Connection) -> float:
     query = """
     SELECT COALESCE(SUM(delta), 0)

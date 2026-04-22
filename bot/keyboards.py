@@ -2,6 +2,7 @@ from aiogram.types import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     KeyboardButton,
+    MenuButtonWebApp,
     ReplyKeyboardMarkup,
     WebAppInfo,
 )
@@ -19,6 +20,16 @@ def _miniapp_button() -> InlineKeyboardButton:
 
     return InlineKeyboardButton(
         text="🚀 Открыть приложение",
+        web_app=WebAppInfo(url=WEB_ORIGIN_NGROK),
+    )
+
+
+def miniapp_menu_button() -> MenuButtonWebApp:
+    if not WEB_ORIGIN_NGROK:
+        raise RuntimeError("Environment variable WEB_ORIGIN_NGROK is required")
+
+    return MenuButtonWebApp(
+        text="Open",
         web_app=WebAppInfo(url=WEB_ORIGIN_NGROK),
     )
 

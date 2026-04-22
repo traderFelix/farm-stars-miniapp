@@ -685,54 +685,184 @@ textarea:focus {
 .mining-withdraw-selectWrap {
   position: relative;
   margin-top: 0.55rem;
+  z-index: 12;
 }
 
 .mining-withdraw-select {
-  appearance: none;
-  -webkit-appearance: none;
-  padding-right: 3.2rem;
+  width: 100%;
+  min-height: 4.4rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.95rem 1rem 0.95rem 1.15rem;
   border-radius: 20px;
-  border-color: rgba(86, 108, 164, 0.34);
+  border: 1px solid rgba(86, 108, 164, 0.34);
   background:
     radial-gradient(circle at top right, rgba(99, 240, 255, 0.1), transparent 30%),
     radial-gradient(circle at bottom left, rgba(255, 154, 46, 0.12), transparent 34%),
     linear-gradient(180deg, rgba(19, 27, 52, 0.98), rgba(10, 15, 28, 0.98));
+  color: #f7fbff;
   box-shadow:
     inset 0 0 0 1px rgba(255, 255, 255, 0.02),
     var(--shadow-soft);
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
 }
 
-.mining-withdraw-select:focus {
+.mining-withdraw-select:hover,
+.mining-withdraw-select:focus-visible,
+.mining-withdraw-select[data-open="true"] {
   border-color: rgba(99, 240, 255, 0.46);
   box-shadow:
     inset 0 0 0 1px rgba(255, 255, 255, 0.03),
     var(--shadow-glow-cyan);
+  outline: none;
+}
+
+.mining-withdraw-select[data-open="true"] {
+  border-bottom-left-radius: 16px;
+  border-bottom-right-radius: 16px;
+}
+
+.mining-withdraw-selectValue,
+.mining-withdraw-menuText {
+  min-width: 0;
+  display: grid;
+  gap: 0.18rem;
+}
+
+.mining-withdraw-selectLabel,
+.mining-withdraw-menuLabel {
+  color: #f8fbff;
+  font-size: 1.03rem;
+  font-weight: 800;
+  line-height: 1.15;
+}
+
+.mining-withdraw-selectDescription,
+.mining-withdraw-menuDescription {
+  color: #8fa3d0;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  line-height: 1.2;
+  text-transform: uppercase;
 }
 
 .mining-withdraw-selectIcon {
-  position: absolute;
-  top: 50%;
-  right: 1rem;
+  flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 1.1rem;
-  height: 1.1rem;
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: 999px;
+  border: 1px solid rgba(143, 163, 208, 0.22);
+  background: rgba(255, 255, 255, 0.035);
   color: #90a6d8;
-  pointer-events: none;
-  transform: translateY(-50%);
-  transition: color 160ms ease, transform 160ms ease;
+  transition: background 160ms ease, border-color 160ms ease, color 160ms ease, transform 160ms ease;
 }
 
-.mining-withdraw-selectWrap:focus-within .mining-withdraw-selectIcon {
+.mining-withdraw-select[data-open="true"] .mining-withdraw-selectIcon,
+.mining-withdraw-select:hover .mining-withdraw-selectIcon,
+.mining-withdraw-select:focus-visible .mining-withdraw-selectIcon {
+  background: rgba(99, 240, 255, 0.08);
+  border-color: rgba(99, 240, 255, 0.32);
   color: #f2f7ff;
-  transform: translateY(-50%) rotate(180deg);
+}
+
+.mining-withdraw-select[data-open="true"] .mining-withdraw-selectIcon {
+  transform: rotate(180deg);
 }
 
 .mining-withdraw-selectIcon svg {
-  width: 100%;
-  height: 100%;
+  width: 1.1rem;
+  height: 1.1rem;
   display: block;
+}
+
+.mining-withdraw-menu {
+  position: absolute;
+  z-index: 50;
+  top: calc(100% + 0.5rem);
+  left: 0;
+  right: 0;
+  display: grid;
+  gap: 0.45rem;
+  padding: 0.48rem;
+  border-radius: 18px;
+  border: 1px solid rgba(86, 108, 164, 0.34);
+  background:
+    radial-gradient(circle at top right, rgba(99, 240, 255, 0.14), transparent 34%),
+    radial-gradient(circle at bottom left, rgba(255, 154, 46, 0.14), transparent 38%),
+    linear-gradient(180deg, rgba(17, 25, 48, 0.98), rgba(7, 11, 22, 0.98));
+  box-shadow:
+    0 1.1rem 2.6rem rgba(0, 0, 0, 0.42),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.03);
+  backdrop-filter: blur(14px);
+  animation: mining-dropdown-in 140ms ease-out both;
+}
+
+.mining-withdraw-menuOption {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 2rem minmax(0, 1fr);
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.78rem 0.85rem;
+  border: 1px solid transparent;
+  border-radius: 14px;
+  background: transparent;
+  color: #f8fbff;
+  cursor: pointer;
+  text-align: left;
+  transition: background 150ms ease, border-color 150ms ease, transform 150ms ease;
+}
+
+.mining-withdraw-menuOption:hover,
+.mining-withdraw-menuOption:focus-visible {
+  border-color: rgba(99, 240, 255, 0.24);
+  background: rgba(99, 240, 255, 0.07);
+  outline: none;
+  transform: translateY(-1px);
+}
+
+.mining-withdraw-menuOption[data-selected="true"] {
+  border-color: rgba(99, 240, 255, 0.32);
+  background:
+    linear-gradient(90deg, rgba(99, 240, 255, 0.14), rgba(255, 154, 46, 0.08));
+}
+
+.mining-withdraw-menuCheck {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.72rem;
+  height: 1.72rem;
+  border-radius: 999px;
+  border: 1px solid rgba(143, 163, 208, 0.28);
+  color: #76ffd2;
+  font-size: 1rem;
+  font-weight: 900;
+}
+
+.mining-withdraw-menuOption[data-selected="true"] .mining-withdraw-menuCheck {
+  border-color: rgba(118, 255, 210, 0.42);
+  background: rgba(118, 255, 210, 0.1);
+}
+
+@keyframes mining-dropdown-in {
+  from {
+    opacity: 0;
+    transform: translateY(-0.35rem) scale(0.985);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
 }
 
 .mining-withdraw-input {

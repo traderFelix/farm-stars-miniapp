@@ -1724,8 +1724,6 @@ async def adm_audit_balances(callback: CallbackQuery):
     admin_adjust_net = float(audit.get("admin_adjust_net") or 0)
     total_withdrawn_sum = float(audit.get("total_withdrawn") or 0)
     pending_withdrawn_sum = float(audit.get("pending_withdrawn") or 0)
-    claimed_from_ledger = float(audit.get("campaign_claimed_from_ledger") or 0)
-    promo_claimed_from_ledger = float(audit.get("promo_claimed_from_ledger") or 0)
     referral_bonus = float(audit.get("referral_bonus") or 0)
     view_post_bonus = float(audit.get("view_post_bonus") or 0)
     daily_bonus = float(audit.get("daily_bonus") or 0)
@@ -1734,10 +1732,8 @@ async def adm_audit_balances(callback: CallbackQuery):
     lines = [
         "🧮 Сверка балансов\n",
         f"Баланс пользователей: {fmt_stars(total_balances_sum)}⭐\n",
-        f"Получено в конкурсах (база): {fmt_stars(total_claimed_all)}⭐",
-        f"Получено в конкурсах (леджер): {fmt_stars(claimed_from_ledger)}⭐",
-        f"Получено по промокодам (база): {fmt_stars(total_promo_claimed_all)}⭐",
-        f"Получено по промокодам (леджер): {fmt_stars(promo_claimed_from_ledger)}⭐",
+        f"Получено в конкурсах: {fmt_stars(total_claimed_all)}⭐",
+        f"Получено по промокодам: {fmt_stars(total_promo_claimed_all)}⭐",
         f"Получено за рефералов: {fmt_stars(referral_bonus)}⭐\n"
         f"Получено за просмотры постов: {fmt_stars(view_post_bonus)}⭐\n"
         f"Получено за ежедневный бонус: {fmt_stars(daily_bonus)}⭐\n"
