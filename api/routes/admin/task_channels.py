@@ -6,11 +6,14 @@ from api.schemas.admin.task_channels import (
     TaskChannelClientBindRequest,
     TaskChannelCreateRequest,
     TaskChannelDetailResponse,
+    TaskChannelManualPostRequest,
+    TaskChannelManualPostResponse,
     TaskChannelPostsResponse,
     TaskChannelsResponse,
     TaskChannelUpdateRequest,
 )
 from api.services.admin.task_channels import (
+    add_manual_channel_post,
     bind_channel_client,
     build_channel_detail,
     create_channel,
@@ -110,5 +113,22 @@ async def get_task_channel_posts_route(channel_id: int, limit: int = 20):
     db = await get_db()
     try:
         return await get_channel_posts(db, channel_id, limit=limit)
+    finally:
+        await db.close()
+
+
+@router.post("/{channel_id}/posts/manual", response_model=TaskChannelManualPostResponse)
+async def add_manual_task_channel_post_route(
+        channel_id: int,
+        payload: TaskChannelManualPostRequest,
+):
+    db = await get_db()
+    try:
+        return await add_manual_channel_post(
+            db,
+            channel_id,
+            channel_post_id=payload.channel_post_id,
+            added_by_admin_id=payload.added_by_admin_id,
+        )
     finally:
         await db.close()
