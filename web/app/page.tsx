@@ -240,7 +240,7 @@ export default function HomePage() {
       setTheftLoadState("ready");
       if (result.ok) {
         setTheftNoticeMessage(result.message);
-      } else if (result.status.can_attack) {
+      } else {
         setTheftErrorMessage(result.message);
       }
     } catch (error) {
@@ -1185,7 +1185,9 @@ function BattlePanel({
         : "Соперник"
       : "Плата за участие";
   const idleMessage = state === "idle" ? (status?.message || "").trim() : "";
-  const idleMessageTone: "default" | "error" = idleMessage.toLowerCase().includes("слишком част")
+  const idleMessageNormalized = idleMessage.toLowerCase();
+  const idleMessageTone: "default" | "error" =
+    idleMessageNormalized.includes("слишком част") || idleMessageNormalized.includes("не хватает")
     ? "error"
     : "default";
 

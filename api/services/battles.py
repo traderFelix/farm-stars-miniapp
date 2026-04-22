@@ -47,7 +47,7 @@ from shared.db.ledger import (
     has_battle_entry_lock,
     has_battle_refund_record,
 )
-from shared.db.tasks import count_completed_task_views_for_user
+from shared.db.tasks import count_available_view_post_tasks_for_user, count_completed_task_views_for_user
 from shared.db.users import add_user_risk_score, default_game_nickname_for_user_id, get_balance
 
 logger = logging.getLogger(__name__)
@@ -302,6 +302,10 @@ def _build_status_response(
         message=message or "",
         last_result=_battle_recent_result_from_row(latest_finished_battle, user_id),
     )
+
+
+def _not_enough_posts_message(*, activity_name: str) -> str:
+    return f"Не хватает доступных постов для {activity_name}. Попробуй чуть позже."
 
 
 def build_battle_snapshot_for_task(
@@ -796,6 +800,23 @@ async def join_battle_for_user(
                     can_join=False,
                 )
             if response is None:
+                available_posts = await count_available_view_post_tasks_for_user(db, user_id)
+                if available_posts < VIEW_BATTLE_TARGET_VIEWS:
+                    current_balance = await get_balance(db, user_id)
+                    total_completed_views = await count_completed_task_views_for_user(db, user_id)
+                    response = _build_status_response(
+                        user_id=user_id,
+                        current_balance=current_balance,
+                        total_completed_views=total_completed_views,
+                        open_battle=None,
+                        latest_finished_battle=_optional_battle_row(
+                            await get_user_latest_finished_battle(db, user_id)
+                        ),
+                        message=_not_enough_posts_message(
+                            activity_name="дуэли",
+                        ),
+                    )
+            if response is None:
                 candidate = cast(Optional[BattleRowLike], await get_waiting_battle_for_match(db, user_id))
                 if candidate:
                     battle_id = _row_int(candidate, "id")
@@ -805,7 +826,22 @@ async def join_battle_for_user(
                         user_id=creator_user_id,
                         battle_id=battle_id,
                     )
-                    if not creator_stake_locked:
+                    creator_available_posts = await count_available_view_post_tasks_for_user(db, creator_user_id)
+                    if creator_available_posts < VIEW_BATTLE_TARGET_VIEWS:
+                        cancelled = await cancel_waiting_battle(
+                            db,
+                            battle_id=battle_id,
+                            user_id=creator_user_id,
+                        )
+                        if cancelled:
+                            await _refund_waiting_battle_stake_if_locked(
+                                db,
+                                battle_id=battle_id,
+                                user_id=creator_user_id,
+                                stake_amount=_row_float(candidate, "stake_amount", VIEW_BATTLE_ENTRY_FEE),
+                                result="not_enough_posts",
+                            )
+                    elif not creator_stake_locked:
                         creator_debited = await apply_balance_debit_if_enough(
                             db,
                             user_id=creator_user_id,
@@ -822,7 +858,7 @@ async def join_battle_for_user(
                         else:
                             creator_stake_locked = True
 
-                    if creator_stake_locked:
+                    if creator_available_posts >= VIEW_BATTLE_TARGET_VIEWS and creator_stake_locked:
                         my_balance = await get_balance(db, user_id)
                         if my_balance < VIEW_BATTLE_ENTRY_FEE:
                             total_completed_views = await count_completed_task_views_for_user(db, user_id)

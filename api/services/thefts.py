@@ -36,7 +36,7 @@ from shared.db.battles import get_user_open_battle
 from shared.db.common import tx
 from shared.db.ledger import apply_balance_debit_if_enough, apply_balance_delta
 from shared.db.ledger import get_withdrawal_ability
-from shared.db.tasks import count_completed_task_views_for_user
+from shared.db.tasks import count_available_view_post_tasks_for_user, count_completed_task_views_for_user
 from shared.db.thefts import (
     create_theft_attempt,
     create_theft_protection_attempt,
@@ -262,6 +262,10 @@ def _build_protection_snapshot(row, *, result: Optional[str] = None) -> TheftAct
         target_views=int(row["target_views"] or VIEW_THEFT_PROTECTION_TARGET_VIEWS),
         seconds_left=_seconds_left(cast(TheftRowLike, row)),
     )
+
+
+def _not_enough_posts_message(*, activity_name: str) -> str:
+    return f"Не хватает доступных постов для {activity_name}. Попробуй чуть позже."
 
 
 def _telegram_api_url(method: str) -> str:
@@ -642,89 +646,99 @@ async def start_theft_for_user(
                     status=await _get_status_response(db, user_id),
                 )
             else:
-                candidates = await list_theft_victim_candidates(db, attacker_user_id=user_id)
-                eligible_candidates = []
-                for candidate in candidates:
-                    ability = await get_withdrawal_ability(db, int(candidate["user_id"]))
-                    if ability > VIEW_THEFT_MIN_WITHDRAWAL_ABILITY:
-                        eligible_candidates.append(candidate)
-
-                if not eligible_candidates:
+                available_posts = await count_available_view_post_tasks_for_user(db, user_id)
+                if available_posts < VIEW_THEFT_ATTACK_TARGET_VIEWS:
                     response = TheftActionResponse(
                         ok=False,
-                        message="Пока что не у кого воровать, попробуй чуть позже.",
+                        message=_not_enough_posts_message(
+                            activity_name="нападения",
+                        ),
                         status=await _get_status_response(db, user_id),
                     )
                 else:
-                    victim = random.choice(eligible_candidates)
-                    victim_balance = float(victim["balance"] or 0)
-                    raw_amount = round(
-                        random.uniform(VIEW_THEFT_MIN_AMOUNT, VIEW_THEFT_MAX_AMOUNT),
-                        2,
-                    )
-                    amount = round(min(raw_amount, victim_balance), 2)
-                    if amount < VIEW_THEFT_MIN_AMOUNT:
+                    candidates = await list_theft_victim_candidates(db, attacker_user_id=user_id)
+                    eligible_candidates = []
+                    for candidate in candidates:
+                        ability = await get_withdrawal_ability(db, int(candidate["user_id"]))
+                        if ability > VIEW_THEFT_MIN_WITHDRAWAL_ABILITY:
+                            eligible_candidates.append(candidate)
+
+                    if not eligible_candidates:
                         response = TheftActionResponse(
                             ok=False,
                             message="Пока что не у кого воровать, попробуй чуть позже.",
                             status=await _get_status_response(db, user_id),
                         )
                     else:
-                        theft_id = await create_theft_attempt(
-                            db,
-                            attacker_user_id=user_id,
-                            victim_user_id=int(victim["user_id"]),
-                            amount=amount,
-                            attacker_target_views=VIEW_THEFT_ATTACK_TARGET_VIEWS,
-                            victim_target_views=VIEW_THEFT_DEFENSE_TARGET_VIEWS,
-                            duration_seconds=VIEW_THEFT_DURATION_SECONDS,
+                        victim = random.choice(eligible_candidates)
+                        victim_balance = float(victim["balance"] or 0)
+                        raw_amount = round(
+                            random.uniform(VIEW_THEFT_MIN_AMOUNT, VIEW_THEFT_MAX_AMOUNT),
+                            2,
                         )
-                        locked = await apply_balance_debit_if_enough(
-                            db,
-                            user_id=int(victim["user_id"]),
-                            amount=amount,
-                            reason="theft_hold",
-                            meta=f"theft_id={theft_id}",
-                        )
-                        if not locked:
-                            await finish_theft(
-                                db,
-                                theft_id=theft_id,
-                                result="cancelled",
-                                winner_user_id=None,
-                            )
+                        amount = round(min(raw_amount, victim_balance), 2)
+                        if amount < VIEW_THEFT_MIN_AMOUNT:
                             response = TheftActionResponse(
                                 ok=False,
                                 message="Пока что не у кого воровать, попробуй чуть позже.",
                                 status=await _get_status_response(db, user_id),
                             )
                         else:
-                            notify_started_id = theft_id
-                            await log_abuse_event(
+                            theft_id = await create_theft_attempt(
                                 db,
-                                user_id,
-                                "theft_started",
+                                attacker_user_id=user_id,
+                                victim_user_id=int(victim["user_id"]),
                                 amount=amount,
-                                entity_type="theft",
-                                entity_id=str(theft_id),
+                                attacker_target_views=VIEW_THEFT_ATTACK_TARGET_VIEWS,
+                                victim_target_views=VIEW_THEFT_DEFENSE_TARGET_VIEWS,
+                                duration_seconds=VIEW_THEFT_DURATION_SECONDS,
                             )
-                            await log_abuse_event(
+                            locked = await apply_balance_debit_if_enough(
                                 db,
-                                int(victim["user_id"]),
-                                "theft_targeted",
+                                user_id=int(victim["user_id"]),
                                 amount=amount,
-                                entity_type="theft",
-                                entity_id=str(theft_id),
+                                reason="theft_hold",
+                                meta=f"theft_id={theft_id}",
                             )
-                            response = TheftActionResponse(
-                                ok=True,
-                                message=(
-                                    f"Цель найдена. Нужно сделать {VIEW_THEFT_ATTACK_TARGET_VIEWS} "
-                                    f"просмотров за {VIEW_THEFT_DURATION_SECONDS // 60} минуты, "
-                                    "чтобы украсть звезды."
-                                ),
-                                status=await _get_status_response(db, user_id),
-                            )
+                            if not locked:
+                                await finish_theft(
+                                    db,
+                                    theft_id=theft_id,
+                                    result="cancelled",
+                                    winner_user_id=None,
+                                )
+                                response = TheftActionResponse(
+                                    ok=False,
+                                    message="Пока что не у кого воровать, попробуй чуть позже.",
+                                    status=await _get_status_response(db, user_id),
+                                )
+                            else:
+                                notify_started_id = theft_id
+                                await log_abuse_event(
+                                    db,
+                                    user_id,
+                                    "theft_started",
+                                    amount=amount,
+                                    entity_type="theft",
+                                    entity_id=str(theft_id),
+                                )
+                                await log_abuse_event(
+                                    db,
+                                    int(victim["user_id"]),
+                                    "theft_targeted",
+                                    amount=amount,
+                                    entity_type="theft",
+                                    entity_id=str(theft_id),
+                                )
+                                response = TheftActionResponse(
+                                    ok=True,
+                                    message=(
+                                        f"Цель найдена. Нужно сделать {VIEW_THEFT_ATTACK_TARGET_VIEWS} "
+                                        f"просмотров за {VIEW_THEFT_DURATION_SECONDS // 60} минуты, "
+                                        "чтобы украсть звезды."
+                                    ),
+                                    status=await _get_status_response(db, user_id),
+                                )
     finally:
         await db.close()
 
@@ -775,27 +789,37 @@ async def start_theft_protection_for_user(
                     status=await _get_status_response(db, user_id),
                 )
             else:
-                attempt_id = await create_theft_protection_attempt(
-                    db,
-                    user_id=user_id,
-                    target_views=VIEW_THEFT_PROTECTION_TARGET_VIEWS,
-                    duration_seconds=VIEW_THEFT_DURATION_SECONDS,
-                )
-                await log_abuse_event(
-                    db,
-                    user_id,
-                    "theft_protection_started",
-                    entity_type="theft_protection",
-                    entity_id=str(attempt_id),
-                )
-                response = TheftActionResponse(
-                    ok=True,
-                    message=(
-                        f"Сделай {VIEW_THEFT_PROTECTION_TARGET_VIEWS} просмотров за "
-                        f"{VIEW_THEFT_DURATION_SECONDS // 60} минуты, чтобы включить защиту на сутки."
-                    ),
-                    status=await _get_status_response(db, user_id),
-                )
+                available_posts = await count_available_view_post_tasks_for_user(db, user_id)
+                if available_posts < VIEW_THEFT_PROTECTION_TARGET_VIEWS:
+                    response = TheftActionResponse(
+                        ok=False,
+                        message=_not_enough_posts_message(
+                            activity_name="защиты",
+                        ),
+                        status=await _get_status_response(db, user_id),
+                    )
+                else:
+                    attempt_id = await create_theft_protection_attempt(
+                        db,
+                        user_id=user_id,
+                        target_views=VIEW_THEFT_PROTECTION_TARGET_VIEWS,
+                        duration_seconds=VIEW_THEFT_DURATION_SECONDS,
+                    )
+                    await log_abuse_event(
+                        db,
+                        user_id,
+                        "theft_protection_started",
+                        entity_type="theft_protection",
+                        entity_id=str(attempt_id),
+                    )
+                    response = TheftActionResponse(
+                        ok=True,
+                        message=(
+                            f"Сделай {VIEW_THEFT_PROTECTION_TARGET_VIEWS} просмотров за "
+                            f"{VIEW_THEFT_DURATION_SECONDS // 60} минуты, чтобы включить защиту на сутки."
+                        ),
+                        status=await _get_status_response(db, user_id),
+                    )
     finally:
         await db.close()
 
