@@ -504,14 +504,23 @@ async def list_theft_opponent_stats(
             COALESCE(SUM(CASE
                 WHEN ut.attacker_user_id = ? AND ut.result = 'stolen'
                 THEN ut.amount ELSE 0 END), 0) AS stolen_amount,
+            SUM(CASE
+                WHEN ut.attacker_user_id = ? AND ut.result = 'stolen'
+                THEN 1 ELSE 0 END) AS stolen_count,
             COALESCE(SUM(CASE
                 WHEN ut.victim_user_id = ? AND ut.result = 'stolen'
                 THEN ut.amount ELSE 0 END), 0) AS lost_amount,
             SUM(CASE
+                WHEN ut.victim_user_id = ? AND ut.result = 'stolen'
+                THEN 1 ELSE 0 END) AS lost_count,
+            SUM(CASE
                 WHEN ut.victim_user_id = ? AND ut.result = 'defended'
                 THEN 1 ELSE 0 END) AS defended_count,
             SUM(CASE
-                WHEN ut.attacker_user_id = ? AND ut.result = 'defended'
+                WHEN ut.victim_user_id = ? AND ut.result = 'expired'
+                THEN 1 ELSE 0 END) AS survived_count,
+            SUM(CASE
+                WHEN ut.attacker_user_id = ? AND ut.result IN ('defended', 'expired')
                 THEN 1 ELSE 0 END) AS failed_count,
             COUNT(*) AS total
         FROM user_thefts ut
@@ -521,6 +530,9 @@ async def list_theft_opponent_stats(
         LIMIT ?
         """,
         (
+            int(user_id),
+            int(user_id),
+            int(user_id),
             int(user_id),
             int(user_id),
             int(user_id),

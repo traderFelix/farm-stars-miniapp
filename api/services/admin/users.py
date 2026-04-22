@@ -206,16 +206,21 @@ async def get_theft_stats(
         stolen_amount = float(row["stolen_amount"] or 0)
         lost_amount = float(row["lost_amount"] or 0)
         net_amount = stolen_amount - lost_amount
+        stolen_count = int(row["stolen_count"] or 0)
+        lost_count = int(row["lost_count"] or 0)
         defended_count = int(row["defended_count"] or 0)
+        survived_count = int(row["survived_count"] or 0)
         failed_count = int(row["failed_count"] or 0)
         total = int(row["total"] or 0)
         line = (
             f"{index}. {opponent_name} — украл +{stolen_amount:g}⭐, "
             f"потерял -{lost_amount:g}⭐, итог {net_amount:+g}⭐"
         )
-        if defended_count or failed_count:
-            line += f" · отбил {defended_count}, неудачных атак {failed_count}"
-        line += f" · всего {total}"
+        line += (
+            f" · события: украл {stolen_count}, потерял {lost_count}, "
+            f"отбил {defended_count}, сорвано по таймеру {survived_count}, "
+            f"неудачных атак {failed_count} · всего {total}"
+        )
         lines.append(line)
 
     return {

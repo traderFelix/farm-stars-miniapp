@@ -12,8 +12,8 @@ from shared.config import (
 
 JsonDict = dict[str, Any]
 
-API_BASE_URL = SHARED_API_BASE_URL or "http://127.0.0.1:8000"
-API_TIMEOUT = float(SHARED_API_TIMEOUT or 10)
+API_BASE_URL = SHARED_API_BASE_URL
+API_TIMEOUT = SHARED_API_TIMEOUT
 
 
 class ApiClientError(Exception):

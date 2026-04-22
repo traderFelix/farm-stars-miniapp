@@ -45,8 +45,8 @@ type TheftLoadState = "idle" | "loading" | "ready" | "working" | "error";
 type NicknameSaveState = "idle" | "saving";
 
 const HERO_BANNER_URL = ["/hero", "mining-hero-banner.png"].join("/");
-const BOT_USERNAME = process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME || "felix_farm_stars_bot";
-const BOT_TASKS_URL = `https://t.me/${BOT_USERNAME}?start=tasks`;
+const BOT_USERNAME = process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME || "";
+const BOT_TASKS_URL = BOT_USERNAME ? `https://t.me/${BOT_USERNAME}?start=tasks` : "";
 const HERO_BANNER_STYLE = {
   backgroundImage: `linear-gradient(180deg, rgba(7, 10, 18, 0.04), rgba(7, 10, 18, 0.1)), url("${HERO_BANNER_URL}")`,
 };
@@ -317,11 +317,13 @@ export default function HomePage() {
       await openBotTasks();
 
       const closed = closeTelegramMiniApp();
-      if (!closed) {
+      if (!closed && BOT_TASKS_URL) {
         openTelegramLink(BOT_TASKS_URL);
       }
     } catch {
-      openTelegramLink(BOT_TASKS_URL);
+      if (BOT_TASKS_URL) {
+        openTelegramLink(BOT_TASKS_URL);
+      }
     } finally {
       setBotTasksOpening(false);
     }

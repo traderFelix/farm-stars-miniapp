@@ -1,11 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
 
-const API_BASE = process.env.API_INTERNAL_BASE_URL || "http://127.0.0.1:8000";
+const API_BASE = process.env.API_INTERNAL_BASE_URL;
 
 async function proxyRequest(
     request: NextRequest,
     params: { path: string[] },
 ) {
+    if (!API_BASE) {
+        return NextResponse.json(
+            { detail: "API_INTERNAL_BASE_URL is required" },
+            { status: 500 },
+        );
+    }
+
     const path = params.path.join("/");
     const search = request.nextUrl.search || "";
     const targetUrl = `${API_BASE}/${path}${search}`;
