@@ -484,6 +484,14 @@ class TaskChannelsApi(ApiSection):
             },
         )
 
+    async def update_title(self, channel_id: int, *, title: str) -> JsonDict:
+        return await self._post(
+            f"/admin/task-channels/{int(channel_id)}/title",
+            json={
+                "title": title,
+            },
+        )
+
     async def get_posts(self, channel_id: int, *, limit: int = 20) -> JsonDict:
         return await self._get(
             f"/admin/task-channels/{int(channel_id)}/posts",
@@ -918,6 +926,17 @@ async def bind_task_channel_client_via_api(
     )
 
 
+async def update_task_channel_title_via_api(
+        channel_id: int,
+        *,
+        title: str,
+) -> JsonDict:
+    return await api_client.task_channels.update_title(
+        channel_id,
+        title=title,
+    )
+
+
 async def get_task_channel_posts_via_api(channel_id: int, *, limit: int = 20) -> JsonDict:
     return await api_client.task_channels.get_posts(channel_id, limit=limit)
 
@@ -1057,6 +1076,7 @@ __all__ = [
     "get_task_channel_via_api",
     "create_task_channel_via_api",
     "bind_task_channel_client_via_api",
+    "update_task_channel_title_via_api",
     "toggle_task_channel_via_api",
     "update_task_channel_params_via_api",
     "get_task_channel_posts_via_api",

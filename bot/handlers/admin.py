@@ -53,6 +53,7 @@ from bot.api_client import (
     set_promo_status_via_api,
     set_user_role,
     toggle_task_channel_via_api,
+    update_task_channel_title_via_api,
     update_task_channel_params_via_api,
 )
 from bot.profile_texts import format_user_profile_card
@@ -167,6 +168,37 @@ async def _get_channel_title_for_admin(bot: Bot, chat_id: str) -> Optional[str]:
 
     title = (chat.title or "").strip()
     return title or None
+
+
+async def _refresh_task_channel_title_if_missing(bot: Bot, channel: dict) -> dict:
+    title = (channel.get("title") or "").strip()
+    if title:
+        return channel
+
+    channel_id = _to_optional_int(channel.get("id"))
+    chat_id = str(channel.get("chat_id") or "").strip()
+    if channel_id is None or not chat_id:
+        return channel
+
+    refreshed_title = await _get_channel_title_for_admin(bot, chat_id)
+    if not refreshed_title:
+        return channel
+
+    try:
+        updated = await update_task_channel_title_via_api(
+            int(channel_id),
+            title=refreshed_title,
+        )
+    except ApiClientError as e:
+        logger.warning(
+            "Could not persist task channel title channel_id=%s title=%r detail=%s",
+            channel_id,
+            refreshed_title,
+            e.detail,
+        )
+        return {**channel, "title": refreshed_title}
+
+    return updated.get("channel") or {**channel, "title": refreshed_title}
 
 
 async def _resolve_task_post_chat_id(
@@ -2308,6 +2340,12 @@ async def _render_task_channel_card(callback: CallbackQuery, channel_id: int):
         )
         return
 
+    if callback.bot:
+        detail = {
+            **detail,
+            "channel": await _refresh_task_channel_title_if_missing(callback.bot, detail["channel"]),
+        }
+
     text, is_active, resolved_channel_id = _build_task_channel_card_text(detail)
     await safe_edit_text(
         callback.message,
@@ -2330,6 +2368,11 @@ async def adm_task_channels_list(callback: CallbackQuery):
         return
 
     rows = result.get("items") or []
+    if rows and callback.bot:
+        rows = [
+            await _refresh_task_channel_title_if_missing(callback.bot, row)
+            for row in rows
+        ]
 
     if not rows:
         await safe_edit_text(

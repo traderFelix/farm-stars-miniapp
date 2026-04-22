@@ -10,6 +10,7 @@ from api.schemas.admin.task_channels import (
     TaskChannelManualPostResponse,
     TaskChannelPostsResponse,
     TaskChannelsResponse,
+    TaskChannelTitleUpdateRequest,
     TaskChannelUpdateRequest,
 )
 from api.services.admin.task_channels import (
@@ -21,6 +22,7 @@ from api.services.admin.task_channels import (
     list_channels,
     toggle_channel,
     update_channel,
+    update_channel_title,
 )
 
 router = APIRouter(
@@ -103,6 +105,22 @@ async def bind_task_channel_client_route(
             db,
             channel_id=channel_id,
             client_user_id=payload.client_user_id,
+        )
+    finally:
+        await db.close()
+
+
+@router.post("/{channel_id}/title", response_model=TaskChannelDetailResponse)
+async def update_task_channel_title_route(
+        channel_id: int,
+        payload: TaskChannelTitleUpdateRequest,
+):
+    db = await get_db()
+    try:
+        return await update_channel_title(
+            db,
+            channel_id=channel_id,
+            title=payload.title,
         )
     finally:
         await db.close()

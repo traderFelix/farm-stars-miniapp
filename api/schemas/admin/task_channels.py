@@ -71,6 +71,10 @@ class TaskChannelClientBindRequest(BaseModel):
     client_user_id: int
 
 
+class TaskChannelTitleUpdateRequest(BaseModel):
+    title: str
+
+
 class TaskChannelManualPostRequest(BaseModel):
     channel_post_id: int
     added_by_admin_id: int
