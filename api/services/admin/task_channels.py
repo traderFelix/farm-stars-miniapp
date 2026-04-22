@@ -6,13 +6,16 @@ from fastapi import HTTPException
 
 from shared.db.common import tx
 from shared.db.tasks import (
+    allocate_task_post_from_channel_post,
     create_task_channel,
     ensure_task_channels_client_schema,
+    get_task_post_by_channel_post,
     get_task_channel,
     get_task_channel_allocated_views,
     list_task_channels,
     list_task_posts_by_channel,
     set_task_channel_client,
+    set_task_channel_title,
     set_task_channel_active,
     task_channel_stats,
     update_task_channel_params,
@@ -54,6 +57,12 @@ def _serialize_post(row: Any) -> dict[str, Any]:
         "required_views": int(row["required_views"] or 0),
         "current_views": int(row["current_views"] or 0),
         "is_active": bool(row["is_active"] or 0),
+        "source": row["source"] if "source" in row.keys() else "auto",
+        "added_by_admin_id": (
+            int(row["added_by_admin_id"])
+            if "added_by_admin_id" in row.keys() and row["added_by_admin_id"] is not None
+            else None
+        ),
         "created_at": row["created_at"],
         "completed_at": row["completed_at"],
     }
@@ -215,6 +224,23 @@ async def bind_channel_client(
     return await build_channel_detail(db, int(channel_id))
 
 
+async def update_channel_title(
+        db: aiosqlite.Connection,
+        channel_id: int,
+        *,
+        title: str,
+) -> dict[str, Any]:
+    await _get_channel_row(db, int(channel_id))
+    normalized_title = (title or "").strip()
+    if not normalized_title:
+        raise HTTPException(status_code=400, detail="Название канала не может быть пустым.")
+
+    async with tx(db):
+        await set_task_channel_title(db, int(channel_id), normalized_title)
+
+    return await build_channel_detail(db, int(channel_id))
+
+
 async def get_channel_posts(
         db: aiosqlite.Connection,
         channel_id: int,
@@ -226,4 +252,57 @@ async def get_channel_posts(
     return {
         "channel": _serialize_channel(row),
         "items": [_serialize_post(post) for post in posts],
+    }
+
+
+async def add_manual_channel_post(
+        db: aiosqlite.Connection,
+        channel_id: int,
+        *,
+        channel_post_id: int,
+        added_by_admin_id: int,
+) -> dict[str, Any]:
+    row = await _get_channel_row(db, int(channel_id))
+    channel_post_id = _validate_positive_int(channel_post_id, field_name="channel_post_id")
+
+    if int(row["is_active"] or 0) != 1:
+        raise HTTPException(status_code=400, detail="Канал отключен. Сначала включи канал.")
+
+    if int(row["remaining_views"] or 0) <= 0:
+        raise HTTPException(status_code=400, detail="У канала закончились купленные просмотры.")
+
+    existing = await get_task_post_by_channel_post(
+        db,
+        channel_id=int(channel_id),
+        channel_post_id=int(channel_post_id),
+    )
+    if existing:
+        raise HTTPException(status_code=409, detail="Этот пост уже есть в базе.")
+
+    async with tx(db, immediate=True):
+        allocated = await allocate_task_post_from_channel_post(
+            db=db,
+            chat_id=str(row["chat_id"]),
+            channel_post_id=int(channel_post_id),
+            title=row["title"] or None,
+            reward=0.01,
+            source="manual",
+            added_by_admin_id=int(added_by_admin_id),
+        )
+        if not allocated:
+            raise HTTPException(
+                status_code=409,
+                detail="Не удалось добавить пост. Возможно, он уже есть или закончились просмотры.",
+            )
+
+        post = await get_task_post_by_channel_post(
+            db,
+            channel_id=int(channel_id),
+            channel_post_id=int(channel_post_id),
+        )
+
+    detail = await build_channel_detail(db, int(channel_id))
+    return {
+        **detail,
+        "post": _serialize_post(post),
     }

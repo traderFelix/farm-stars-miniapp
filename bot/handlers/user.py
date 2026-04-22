@@ -32,7 +32,6 @@ from bot.api_client import (
     report_task_unavailable,
 )
 from bot.keyboards import (
-    MAIN_MENU_REPLY_BUTTON_TEXT,
     main_menu,
     miniapp_menu_button,
     task_after_view_kb,
@@ -562,34 +561,6 @@ async def start(message: Message, bot: Bot, state: FSMContext):
     await _delete_last_task_menu(bot, user_id, state)
 
     await _send_start_screen(message, role_level)
-
-
-@router.message(F.text == MAIN_MENU_REPLY_BUTTON_TEXT)
-async def open_main_menu_from_reply(message: Message, bot: Bot, state: FSMContext):
-    from_user = _require_user(message.from_user)
-    user_id = from_user.id
-
-    await _ensure_chat_menu_button(bot, user_id)
-
-    try:
-        menu_payload = await bootstrap_bot_user_via_api(
-            user_id=user_id,
-            username=from_user.username,
-            first_name=from_user.first_name,
-            last_name=from_user.last_name,
-            start_referrer_id=None,
-        )
-    except ApiClientError as e:
-        await _reply_user_api_error(
-            message,
-            e,
-            context="reply_menu.bootstrap",
-        )
-        return
-
-    await _delete_last_task_post(bot, user_id, state)
-    await _delete_last_task_menu(bot, user_id, state)
-    await _send_start_screen(message, int(menu_payload.get("role_level") or 0))
 
 
 @router.callback_query(F.data == "tasks")

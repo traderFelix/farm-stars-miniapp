@@ -41,6 +41,8 @@ class TaskChannelPostItem(BaseModel):
     required_views: int
     current_views: int
     is_active: bool
+    source: str = "auto"
+    added_by_admin_id: Optional[int] = None
     created_at: Optional[str] = None
     completed_at: Optional[str] = None
 
@@ -67,3 +69,16 @@ class TaskChannelUpdateRequest(BaseModel):
 
 class TaskChannelClientBindRequest(BaseModel):
     client_user_id: int
+
+
+class TaskChannelTitleUpdateRequest(BaseModel):
+    title: str
+
+
+class TaskChannelManualPostRequest(BaseModel):
+    channel_post_id: int
+    added_by_admin_id: int
+
+
+class TaskChannelManualPostResponse(TaskChannelDetailResponse):
+    post: TaskChannelPostItem

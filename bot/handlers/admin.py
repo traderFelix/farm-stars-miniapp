@@ -7,6 +7,7 @@ import matplotlib
 
 from bot.api_client import (
     ApiClientError,
+    add_task_channel_manual_post_via_api,
     add_campaign_winners_via_api,
     adjust_user_balance,
     bind_task_channel_client_via_api,
@@ -52,6 +53,7 @@ from bot.api_client import (
     set_promo_status_via_api,
     set_user_role,
     toggle_task_channel_via_api,
+    update_task_channel_title_via_api,
     update_task_channel_params_via_api,
 )
 from bot.profile_texts import format_user_profile_card
@@ -67,7 +69,7 @@ from aiogram.types import Message, CallbackQuery, TelegramObject, BufferedInputF
 from aiogram.fsm.context import FSMContext
 from aiogram.filters import Filter, StateFilter
 from aiogram.methods import RefundStarPayment
-from aiogram.exceptions import TelegramBadRequest
+from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
 
 from shared.config import ADMIN_IDS, LEDGER_PAGE_SIZE, OWNER_ID, ROLE_ADMIN
 
@@ -80,10 +82,11 @@ from bot.keyboards import (
     campaign_created_kb, user_actions_kb, admin_withdraw_list_kb, admin_withdraw_actions_kb, campaign_delete_confirm_kb,
     admin_task_channels_kb, admin_task_channel_card_kb, admin_growth_photo_kb, promos_list_kb, promo_manage_kb,
     promo_delete_confirm_kb, promo_created_kb, promo_stats_list_kb, admin_campaigns_menu_kb, admin_promos_menu_kb,
+    admin_task_channel_manual_post_confirm_kb,
 )
 
 from bot.states import (
-    CampaignCreate, PromoCreate, AddWinners, DeleteWinner, UserLookup, AdminAdjust, AdminRefundFee, TaskChannelBindClient, TaskChannelCreate, TaskChannelEdit,
+    CampaignCreate, PromoCreate, AddWinners, DeleteWinner, UserLookup, AdminAdjust, AdminRefundFee, TaskChannelBindClient, TaskChannelCreate, TaskChannelEdit, TaskChannelManualPost,
 )
 
 router = Router()
@@ -130,6 +133,89 @@ def _to_optional_int(value: Any) -> Optional[int]:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _parse_task_post_reference(value: str) -> tuple[Optional[str], Optional[str], int]:
+    raw = (value or "").strip()
+    if raw.isdigit():
+        return None, None, int(raw)
+
+    candidate = raw if "://" in raw else f"https://{raw}"
+    parsed = urlparse(candidate)
+    host = (parsed.netloc or "").lower()
+    if host not in {"t.me", "telegram.me"}:
+        raise ValueError("Нужна ссылка на пост t.me или номер поста.")
+
+    parts = [part for part in parsed.path.strip("/").split("/") if part]
+    if len(parts) >= 3 and parts[0] == "c" and parts[1].isdigit() and parts[2].isdigit():
+        return f"-100{parts[1]}", None, int(parts[2])
+
+    if len(parts) >= 3 and parts[0] == "s" and parts[2].isdigit():
+        return None, parts[1].lstrip("@"), int(parts[2])
+
+    if len(parts) >= 2 and parts[1].isdigit():
+        return None, parts[0].lstrip("@"), int(parts[1])
+
+    raise ValueError("Не смог определить post_id из ссылки. Пример: https://t.me/channel/123")
+
+
+async def _get_channel_title_for_admin(bot: Bot, chat_id: str) -> Optional[str]:
+    try:
+        chat = await bot.get_chat(int(chat_id))
+    except TelegramAPIError as e:
+        logger.warning("Could not fetch task channel title chat_id=%s detail=%s", chat_id, e)
+        return None
+
+    title = (chat.title or "").strip()
+    return title or None
+
+
+async def _refresh_task_channel_title_if_missing(bot: Bot, channel: dict) -> dict:
+    title = (channel.get("title") or "").strip()
+    if title:
+        return channel
+
+    channel_id = _to_optional_int(channel.get("id"))
+    chat_id = str(channel.get("chat_id") or "").strip()
+    if channel_id is None or not chat_id:
+        return channel
+
+    refreshed_title = await _get_channel_title_for_admin(bot, chat_id)
+    if not refreshed_title:
+        return channel
+
+    try:
+        updated = await update_task_channel_title_via_api(
+            int(channel_id),
+            title=refreshed_title,
+        )
+    except ApiClientError as e:
+        logger.warning(
+            "Could not persist task channel title channel_id=%s title=%r detail=%s",
+            channel_id,
+            refreshed_title,
+            e.detail,
+        )
+        return {**channel, "title": refreshed_title}
+
+    return updated.get("channel") or {**channel, "title": refreshed_title}
+
+
+async def _resolve_task_post_chat_id(
+        bot: Bot,
+        *,
+        raw_chat_id: Optional[str],
+        username: Optional[str],
+        fallback_chat_id: str,
+) -> tuple[str, str]:
+    if raw_chat_id:
+        return raw_chat_id, raw_chat_id
+
+    if username:
+        chat = await bot.get_chat(f"@{username}")
+        return str(chat.id), str(chat.id)
+
+    return fallback_chat_id, fallback_chat_id
 
 
 async def _get_admin_guard_status(
@@ -216,6 +302,7 @@ async def admin_api_unavailable_myrole(message: Message):
         TaskChannelEdit.total_bought_views,
         TaskChannelEdit.views_per_post,
         TaskChannelEdit.view_seconds,
+        TaskChannelManualPost.post_url,
     )
 )
 async def admin_api_unavailable_state_message(message: Message):
@@ -2253,6 +2340,12 @@ async def _render_task_channel_card(callback: CallbackQuery, channel_id: int):
         )
         return
 
+    if callback.bot:
+        detail = {
+            **detail,
+            "channel": await _refresh_task_channel_title_if_missing(callback.bot, detail["channel"]),
+        }
+
     text, is_active, resolved_channel_id = _build_task_channel_card_text(detail)
     await safe_edit_text(
         callback.message,
@@ -2275,6 +2368,11 @@ async def adm_task_channels_list(callback: CallbackQuery):
         return
 
     rows = result.get("items") or []
+    if rows and callback.bot:
+        rows = [
+            await _refresh_task_channel_title_if_missing(callback.bot, row)
+            for row in rows
+        ]
 
     if not rows:
         await safe_edit_text(
@@ -2508,6 +2606,159 @@ async def adm_task_channel_edit_views_per_post(message: Message, state: FSMConte
     await message.answer("Теперь введи новое количество секунд просмотра:")
 
 
+@router.callback_query(F.data.startswith("adm:tch:manual_post_start:"))
+async def adm_task_channel_manual_post_start(callback: CallbackQuery, state: FSMContext):
+    data = callback.data or ""
+    await callback.answer()
+    channel_id = int(data.rsplit(":", 1)[1])
+
+    try:
+        detail = await get_task_channel_via_api(channel_id)
+    except ApiClientError as e:
+        await safe_edit_text(
+            callback.message,
+            f"❌ Не удалось загрузить канал из API.\n\n{e.detail}",
+            reply_markup=admin_back_kb(),
+        )
+        return
+
+    channel = detail["channel"]
+    title = channel.get("title") or channel["chat_id"]
+
+    await state.clear()
+    await state.update_data(channel_id=channel_id)
+    await state.set_state(TaskChannelManualPost.post_url)
+    await safe_edit_text(
+        callback.message,
+        "➕ Добавить пост вручную\n\n"
+        f"Канал: {title}\n\n"
+        "Пришли ссылку на пост:\n"
+        "https://t.me/channel/123\n\n"
+        "Для приватного канала можно так:\n"
+        "https://t.me/c/1234567890/123\n\n"
+        "Если пост из этого же канала, можно просто прислать номер поста.",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="⬅ Назад к каналу", callback_data=f"adm:tch:manual_post:cancel:{channel_id}")],
+            ]
+        ),
+    )
+
+
+@router.callback_query(F.data.startswith("adm:tch:manual_post:cancel:"))
+async def adm_task_channel_manual_post_cancel(callback: CallbackQuery, state: FSMContext):
+    await callback.answer("Отменено")
+    channel_id = int((callback.data or "").rsplit(":", 1)[1])
+    await state.clear()
+    await _render_task_channel_card(callback, channel_id)
+
+
+@router.message(TaskChannelManualPost.post_url)
+async def adm_task_channel_manual_post_link(message: Message, bot: Bot, state: FSMContext):
+    data = await state.get_data()
+    channel_id = _to_optional_int(data.get("channel_id"))
+    if channel_id is None:
+        await state.clear()
+        await message.answer("❌ Не удалось определить канал, открой его заново.")
+        return
+
+    try:
+        detail = await get_task_channel_via_api(channel_id)
+    except ApiClientError as e:
+        await message.answer(f"❌ {e.detail}")
+        return
+
+    channel = detail["channel"]
+    selected_chat_id = str(channel["chat_id"])
+    try:
+        raw_chat_id, username, channel_post_id = _parse_task_post_reference(message.text or "")
+        resolved_chat_id, copy_from_chat_id = await _resolve_task_post_chat_id(
+            bot,
+            raw_chat_id=raw_chat_id,
+            username=username,
+            fallback_chat_id=selected_chat_id,
+        )
+    except (ValueError, TelegramAPIError) as e:
+        await message.answer(f"❌ {e}")
+        return
+
+    if str(resolved_chat_id) != selected_chat_id:
+        await message.answer(
+            "❌ Эта ссылка ведет на другой канал.\n\n"
+            f"Выбранный канал: {selected_chat_id}\n"
+            f"Канал из ссылки: {resolved_chat_id}"
+        )
+        return
+
+    try:
+        await bot.copy_message(
+            chat_id=message.chat.id,
+            from_chat_id=int(copy_from_chat_id),
+            message_id=int(channel_post_id),
+        )
+    except TelegramAPIError as e:
+        await message.answer(
+            "❌ Не удалось показать пост.\n"
+            "Проверь, что бот есть в канале и видит этот пост.\n\n"
+            f"Детали: {e.message}"
+        )
+        return
+
+    title = channel.get("title") or selected_chat_id
+    await state.update_data(channel_post_id=int(channel_post_id))
+    await message.answer(
+        "Пост найден ✅\n\n"
+        f"Канал: {title}\n"
+        f"Post ID: {int(channel_post_id)}\n"
+        f"Будет выделено просмотров: {int(channel.get('views_per_post') or 0)}\n"
+        "Награда: 0.01⭐\n\n"
+        "Добавить этот пост в просмотры?",
+        reply_markup=admin_task_channel_manual_post_confirm_kb(int(channel_id)),
+    )
+
+
+@router.callback_query(F.data == "adm:tch:manual_post:add")
+async def adm_task_channel_manual_post_add(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    data = await state.get_data()
+    channel_id = _to_optional_int(data.get("channel_id"))
+    channel_post_id = _to_optional_int(data.get("channel_post_id"))
+    if channel_id is None or channel_post_id is None:
+        await state.clear()
+        await safe_edit_text(
+            callback.message,
+            "❌ Не удалось определить пост. Начни добавление заново.",
+            reply_markup=admin_back_kb(),
+        )
+        return
+
+    try:
+        detail = await add_task_channel_manual_post_via_api(
+            int(channel_id),
+            channel_post_id=int(channel_post_id),
+            added_by_admin_id=int(callback.from_user.id),
+        )
+    except ApiClientError as e:
+        await safe_edit_text(
+            callback.message,
+            f"❌ Не удалось добавить пост.\n\n{e.detail}",
+            reply_markup=admin_task_channel_card_kb(int(channel_id), True),
+        )
+        return
+
+    await state.clear()
+    post = detail["post"]
+    text, is_active, resolved_channel_id = _build_task_channel_card_text(detail)
+    await safe_edit_text(
+        callback.message,
+        "✅ Пост добавлен вручную\n\n"
+        f"Post ID: {int(post['channel_post_id'])}\n"
+        f"Просмотры: 0/{int(post['required_views'])}\n\n"
+        + text,
+        reply_markup=admin_task_channel_card_kb(resolved_channel_id, is_active),
+    )
+
+
 @router.callback_query(F.data.startswith("adm:tch:posts:"))
 async def adm_task_channel_posts(callback: CallbackQuery):
     await callback.answer()
@@ -2550,13 +2801,14 @@ async def adm_task_channel_posts(callback: CallbackQuery):
         post_id = int(row["channel_post_id"])
         current_views = int(row["current_views"] or 0)
         required_views = int(row["required_views"] or 0)
+        source_label = "ручной" if row.get("source") == "manual" else "авто"
 
         done = current_views >= required_views and required_views > 0
         status = "✅" if done else "🔄"
 
         created_at = row["created_at"] or "-"
         lines.append(
-            f"📝 Пост #{post_id} ({created_at}) — {current_views}/{required_views} {status}\n"
+            f"📝 Пост #{post_id} ({source_label}, {created_at}) — {current_views}/{required_views} {status}\n"
         )
 
     text = (
@@ -2651,11 +2903,12 @@ async def adm_task_channel_new_view_seconds(message: Message, state: FSMContext)
     client_user_id = int(data["client_user_id"])
     total_bought_views = int(data["total_bought_views"])
     views_per_post = int(data["views_per_post"])
+    channel_title = await _get_channel_title_for_admin(message.bot, str(chat_id))
 
     try:
         detail = await create_task_channel_via_api(
             chat_id=chat_id,
-            title=None,
+            title=channel_title,
             client_user_id=client_user_id,
             total_bought_views=total_bought_views,
             views_per_post=views_per_post,
@@ -2670,6 +2923,7 @@ async def adm_task_channel_new_view_seconds(message: Message, state: FSMContext)
 
     await message.answer(
         "✅ Канал подключен\n\n"
+        f"Название: {channel_title or 'не удалось определить'}\n"
         f"chat_id: {chat_id}\n"
         f"Клиент user_id: {client_user_id}\n"
         f"Куплено просмотров: {total_bought_views}\n"

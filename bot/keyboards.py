@@ -1,9 +1,7 @@
 from aiogram.types import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
-    KeyboardButton,
     MenuButtonWebApp,
-    ReplyKeyboardMarkup,
     WebAppInfo,
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -11,7 +9,7 @@ from shared.config import WEB_ORIGIN_NGROK, ROLE_ADMIN, ROLE_CLIENT, ROLE_PARTNE
 
 # ---------- USER KEYBOARDS ----------
 
-MAIN_MENU_REPLY_BUTTON_TEXT = "🏠 Меню"
+MINIAPP_MENU_BUTTON_TEXT = "🏠 Меню"
 
 
 def _miniapp_button() -> InlineKeyboardButton:
@@ -29,7 +27,7 @@ def miniapp_menu_button() -> MenuButtonWebApp:
         raise RuntimeError("Environment variable WEB_ORIGIN_NGROK is required")
 
     return MenuButtonWebApp(
-        text="Open",
+        text=MINIAPP_MENU_BUTTON_TEXT,
         web_app=WebAppInfo(url=WEB_ORIGIN_NGROK),
     )
 
@@ -47,18 +45,6 @@ def main_menu(role_level: int = 0) -> InlineKeyboardMarkup:
         rows.append([InlineKeyboardButton(text="🔐 Админка", callback_data="adm:home")])
 
     return InlineKeyboardMarkup(inline_keyboard=rows)
-
-
-def persistent_user_menu_kb() -> ReplyKeyboardMarkup:
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text=MAIN_MENU_REPLY_BUTTON_TEXT)],
-        ],
-        resize_keyboard=True,
-        is_persistent=True,
-        input_field_placeholder="Выбери действие",
-    )
-
 
 def tasks_menu() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
@@ -363,6 +349,7 @@ def admin_task_channels_kb(rows) -> InlineKeyboardMarkup:
 def admin_task_channel_card_kb(channel_id: int, is_active: bool) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
+            [InlineKeyboardButton(text="➕ Добавить пост вручную", callback_data=f"adm:tch:manual_post_start:{channel_id}")],
             [InlineKeyboardButton(text="📊 Статус по постам", callback_data=f"adm:tch:posts:{channel_id}")],
             [InlineKeyboardButton(text="👤 Привязать клиента", callback_data=f"adm:tch:client:{channel_id}")],
             [InlineKeyboardButton(text="⚙️ Редактировать параметры", callback_data=f"adm:tch:edit:{channel_id}")],
@@ -371,6 +358,15 @@ def admin_task_channel_card_kb(channel_id: int, is_active: bool) -> InlineKeyboa
                 callback_data=f"adm:tch:toggle:{channel_id}",
             )],
             [InlineKeyboardButton(text="⬅ Назад", callback_data="adm:tch:list")],
+        ]
+    )
+
+
+def admin_task_channel_manual_post_confirm_kb(channel_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Добавить пост", callback_data="adm:tch:manual_post:add")],
+            [InlineKeyboardButton(text="❌ Отмена", callback_data=f"adm:tch:manual_post:cancel:{int(channel_id)}")],
         ]
     )
 

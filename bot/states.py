@@ -43,3 +43,7 @@ class TaskChannelEdit(StatesGroup):
 
 class TaskChannelBindClient(StatesGroup):
     client_ref = State()
+
+
+class TaskChannelManualPost(StatesGroup):
+    post_url = State()

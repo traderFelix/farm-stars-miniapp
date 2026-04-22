@@ -484,10 +484,33 @@ class TaskChannelsApi(ApiSection):
             },
         )
 
+    async def update_title(self, channel_id: int, *, title: str) -> JsonDict:
+        return await self._post(
+            f"/admin/task-channels/{int(channel_id)}/title",
+            json={
+                "title": title,
+            },
+        )
+
     async def get_posts(self, channel_id: int, *, limit: int = 20) -> JsonDict:
         return await self._get(
             f"/admin/task-channels/{int(channel_id)}/posts",
             params={"limit": int(limit)},
+        )
+
+    async def add_manual_post(
+            self,
+            channel_id: int,
+            *,
+            channel_post_id: int,
+            added_by_admin_id: int,
+    ) -> JsonDict:
+        return await self._post(
+            f"/admin/task-channels/{int(channel_id)}/posts/manual",
+            json={
+                "channel_post_id": int(channel_post_id),
+                "added_by_admin_id": int(added_by_admin_id),
+            },
         )
 
 
@@ -903,8 +926,32 @@ async def bind_task_channel_client_via_api(
     )
 
 
+async def update_task_channel_title_via_api(
+        channel_id: int,
+        *,
+        title: str,
+) -> JsonDict:
+    return await api_client.task_channels.update_title(
+        channel_id,
+        title=title,
+    )
+
+
 async def get_task_channel_posts_via_api(channel_id: int, *, limit: int = 20) -> JsonDict:
     return await api_client.task_channels.get_posts(channel_id, limit=limit)
+
+
+async def add_task_channel_manual_post_via_api(
+        channel_id: int,
+        *,
+        channel_post_id: int,
+        added_by_admin_id: int,
+) -> JsonDict:
+    return await api_client.task_channels.add_manual_post(
+        channel_id,
+        channel_post_id=channel_post_id,
+        added_by_admin_id=added_by_admin_id,
+    )
 
 
 async def bootstrap_bot_user_via_api(
@@ -1029,9 +1076,11 @@ __all__ = [
     "get_task_channel_via_api",
     "create_task_channel_via_api",
     "bind_task_channel_client_via_api",
+    "update_task_channel_title_via_api",
     "toggle_task_channel_via_api",
     "update_task_channel_params_via_api",
     "get_task_channel_posts_via_api",
+    "add_task_channel_manual_post_via_api",
     "bootstrap_bot_user_via_api",
     "get_bot_main_menu_for_user_context_via_api",
     "get_bot_main_menu_via_api",

@@ -23,6 +23,17 @@ async def ensure_task_channels_client_schema(db: aiosqlite.Connection) -> None:
         )
 
 
+async def ensure_task_posts_manual_schema(db: aiosqlite.Connection) -> None:
+    if not await _column_exists(db, "task_posts", "source"):
+        await db.execute(
+            "ALTER TABLE task_posts ADD COLUMN source TEXT NOT NULL DEFAULT 'auto'"
+        )
+    if not await _column_exists(db, "task_posts", "added_by_admin_id"):
+        await db.execute(
+            "ALTER TABLE task_posts ADD COLUMN added_by_admin_id INTEGER"
+        )
+
+
 async def ensure_task_post_open_sessions_schema(db: aiosqlite.Connection) -> None:
     await db.execute(
         """
@@ -528,6 +539,21 @@ async def set_task_channel_client(
     )
 
 
+async def set_task_channel_title(
+        db: aiosqlite.Connection,
+        channel_id: int,
+        title: Optional[str],
+) -> None:
+    await db.execute(
+        """
+        UPDATE task_channels
+        SET title = ?
+        WHERE id = ?
+        """,
+        (title, int(channel_id)),
+    )
+
+
 async def set_task_channel_active(db: aiosqlite.Connection, channel_id: int, is_active: int) -> None:
     await db.execute(
         """
@@ -595,6 +621,7 @@ async def get_task_channel_allocated_views(db: aiosqlite.Connection, channel_id:
 
 
 async def list_task_posts_by_channel(db: aiosqlite.Connection, channel_id: int, limit: int = 20):
+    await ensure_task_posts_manual_schema(db)
     async with db.execute(
             """
         SELECT
@@ -603,6 +630,8 @@ async def list_task_posts_by_channel(db: aiosqlite.Connection, channel_id: int, 
             required_views,
             current_views,
             is_active,
+            source,
+            added_by_admin_id,
             created_at,
             completed_at
         FROM task_posts
@@ -613,6 +642,37 @@ async def list_task_posts_by_channel(db: aiosqlite.Connection, channel_id: int, 
             (int(channel_id), int(limit)),
     ) as cur:
         return await cur.fetchall()
+
+
+async def get_task_post_by_channel_post(
+        db: aiosqlite.Connection,
+        *,
+        channel_id: int,
+        channel_post_id: int,
+):
+    await ensure_task_posts_manual_schema(db)
+    async with db.execute(
+            """
+        SELECT
+            id,
+            channel_id,
+            channel_post_id,
+            reward,
+            required_views,
+            current_views,
+            is_active,
+            source,
+            added_by_admin_id,
+            created_at,
+            completed_at
+        FROM task_posts
+        WHERE channel_id = ?
+          AND channel_post_id = ?
+        LIMIT 1
+        """,
+            (int(channel_id), int(channel_post_id)),
+    ) as cur:
+        return await cur.fetchone()
 
 
 async def auto_disable_task_channel_if_exhausted(
@@ -638,7 +698,10 @@ async def allocate_task_post_from_channel_post(
         channel_post_id: int,
         title: Optional[str] = None,
         reward: float = 0.01,
+        source: str = "auto",
+        added_by_admin_id: Optional[int] = None,
 ) -> bool:
+    await ensure_task_posts_manual_schema(db)
     channel = await get_task_channel_by_chat_id(db, chat_id)
     if not channel:
         return False
@@ -661,15 +724,18 @@ async def allocate_task_post_from_channel_post(
     cur = await db.execute(
         """
         INSERT OR IGNORE INTO task_posts (
-            channel_id, channel_post_id, reward, required_views, current_views, is_active, created_at
+            channel_id, channel_post_id, reward, required_views, current_views, is_active,
+            source, added_by_admin_id, created_at
         )
-        VALUES (?, ?, ?, ?, 0, 1, datetime('now'))
+        VALUES (?, ?, ?, ?, 0, 1, ?, ?, datetime('now'))
         """,
         (
             int(channel["id"]),
             int(channel_post_id),
             float(reward),
             int(alloc),
+            source,
+            int(added_by_admin_id) if added_by_admin_id is not None else None,
         ),
     )
 
