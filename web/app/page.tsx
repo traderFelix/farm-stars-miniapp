@@ -50,6 +50,10 @@ type CheckinState = "idle" | "loading" | "ready" | "claiming" | "error";
 type BattleLoadState = "idle" | "loading" | "ready" | "working" | "error";
 type TheftLoadState = "idle" | "loading" | "ready" | "working" | "error";
 type SubscriptionLoadState = "idle" | "loading" | "ready" | "working" | "error";
+type SubscriptionActionContext =
+  | { type: "task"; id: number }
+  | { type: "assignment"; id: number }
+  | { type: "abandon" };
 type NicknameSaveState = "idle" | "saving";
 
 const HERO_BANNER_URL = ["/hero", "mining-hero-banner.png"].join("/");
@@ -90,6 +94,10 @@ export default function HomePage() {
     amount: number;
     remaining: number;
   } | null>(null);
+  const [subscriptionUnavailableTaskIds, setSubscriptionUnavailableTaskIds] = useState<Set<number>>(() => new Set());
+  const [subscriptionTaskErrors, setSubscriptionTaskErrors] = useState<Record<number, string>>({});
+  const [subscriptionAssignmentErrors, setSubscriptionAssignmentErrors] = useState<Record<number, string>>({});
+  const [subscriptionAbandonError, setSubscriptionAbandonError] = useState("");
   const [subscriptionAbandonTarget, setSubscriptionAbandonTarget] = useState<SubscriptionAssignmentItem | null>(null);
   const [nicknameModalOpen, setNicknameModalOpen] = useState(false);
   const [nicknameDraft, setNicknameDraft] = useState("");
@@ -304,6 +312,10 @@ export default function HomePage() {
     try {
       const status = await getMySubscriptionStatus();
       setSubscriptionStatus(status);
+      setSubscriptionUnavailableTaskIds(new Set());
+      setSubscriptionTaskErrors({});
+      setSubscriptionAssignmentErrors({});
+      setSubscriptionAbandonError("");
       setSubscriptionLoadState("ready");
       if (!options?.silent) {
         setSubscriptionMessage("");
@@ -329,9 +341,13 @@ export default function HomePage() {
     remaining_reward: number;
     message: string;
     ok: boolean;
-  }) {
+  }, context?: SubscriptionActionContext) {
     setSubscriptionStatus(result.status);
     setSubscriptionLoadState("ready");
+    setSubscriptionTaskErrors({});
+    setSubscriptionAssignmentErrors({});
+    setSubscriptionAbandonError("");
+    setSubscriptionMessage("");
     setProfile((prev) =>
       prev
         ? {
@@ -342,13 +358,21 @@ export default function HomePage() {
     );
 
     if (result.ok) {
-      setSubscriptionMessage(result.message);
       if (Number(result.reward_granted) > 0 || Number(result.remaining_reward) > 0) {
         setSubscriptionRewardPopup({
           amount: Number(result.reward_granted),
           remaining: Number(result.remaining_reward || 0),
         });
       }
+      return;
+    }
+
+    if (context?.type === "task") {
+      setSubscriptionTaskErrors({ [context.id]: result.message });
+    } else if (context?.type === "assignment") {
+      setSubscriptionAssignmentErrors({ [context.id]: result.message });
+    } else if (context?.type === "abandon") {
+      setSubscriptionAbandonError(result.message);
     } else {
       setSubscriptionMessage(result.message);
     }
@@ -360,12 +384,24 @@ export default function HomePage() {
     try {
       setSubscriptionLoadState("working");
       setSubscriptionMessage("");
+      setSubscriptionTaskErrors((prev) => {
+        const next = { ...prev };
+        delete next[task.id];
+        return next;
+      });
       const result = await joinSubscriptionTask(task.id);
-      applySubscriptionActionResult(result);
+      applySubscriptionActionResult(result, { type: "task", id: task.id });
     } catch (error) {
       const message = toUserErrorMessage(error, "Не удалось проверить подписку");
+      if (message.includes("Это задание временно недоступно")) {
+        setSubscriptionUnavailableTaskIds((prev) => new Set(prev).add(task.id));
+      }
       setSubscriptionLoadState("error");
-      setSubscriptionMessage(message);
+      setSubscriptionMessage("");
+      setSubscriptionTaskErrors((prev) => ({
+        ...prev,
+        [task.id]: message,
+      }));
     }
   }
 
@@ -375,12 +411,24 @@ export default function HomePage() {
     try {
       setSubscriptionLoadState("working");
       setSubscriptionMessage("");
+      setSubscriptionAssignmentErrors((prev) => {
+        const next = { ...prev };
+        delete next[assignment.id];
+        return next;
+      });
       const result = await claimSubscriptionDaily(assignment.id);
-      applySubscriptionActionResult(result);
+      applySubscriptionActionResult(result, { type: "assignment", id: assignment.id });
     } catch (error) {
       const message = toUserErrorMessage(error, "Не удалось забрать награду");
+      if (message.includes("Это задание временно недоступно")) {
+        setSubscriptionUnavailableTaskIds((prev) => new Set(prev).add(assignment.task_id));
+      }
       setSubscriptionLoadState("error");
-      setSubscriptionMessage(message);
+      setSubscriptionMessage("");
+      setSubscriptionAssignmentErrors((prev) => ({
+        ...prev,
+        [assignment.id]: message,
+      }));
     }
   }
 
@@ -390,14 +438,26 @@ export default function HomePage() {
     try {
       setSubscriptionLoadState("working");
       setSubscriptionMessage("");
+      setSubscriptionAbandonError("");
       const result = await abandonSubscriptionAssignment(subscriptionAbandonTarget.id);
       setSubscriptionAbandonTarget(null);
-      applySubscriptionActionResult(result);
+      applySubscriptionActionResult(result, { type: "abandon" });
     } catch (error) {
       const message = toUserErrorMessage(error, "Не удалось удалить задание");
       setSubscriptionLoadState("error");
-      setSubscriptionMessage(message);
+      setSubscriptionMessage("");
+      setSubscriptionAbandonError(message);
     }
+  }
+
+  function openSubscriptionAbandonModal(assignment: SubscriptionAssignmentItem) {
+    setSubscriptionAbandonError("");
+    setSubscriptionAbandonTarget(assignment);
+  }
+
+  function closeSubscriptionAbandonModal() {
+    setSubscriptionAbandonError("");
+    setSubscriptionAbandonTarget(null);
   }
 
   async function handleClaimCheckin() {
@@ -700,7 +760,7 @@ export default function HomePage() {
             <div
               className="mining-modal-backdrop"
               role="presentation"
-              onClick={() => setSubscriptionAbandonTarget(null)}
+              onClick={closeSubscriptionAbandonModal}
             >
               <div
                 className="mining-modal"
@@ -717,21 +777,30 @@ export default function HomePage() {
                   Слот освободится сразу, но оставшаяся награда по этому заданию сгорит.
                 </p>
                 <div className="mining-modal__actions">
-                  <button
-                    type="button"
-                    className="mining-ghost-button"
-                    onClick={() => setSubscriptionAbandonTarget(null)}
-                  >
-                    Отмена
-                  </button>
-                  <button
-                    type="button"
-                    className="mining-primary-button"
-                    disabled={subscriptionLoadState === "working"}
-                    onClick={() => void handleConfirmAbandonSubscription()}
-                  >
-                    {subscriptionLoadState === "working" ? "Удаляю..." : "Удалить"}
-                  </button>
+                  <div className="mining-modal__action">
+                    <button
+                      type="button"
+                      className="mining-ghost-button"
+                      onClick={closeSubscriptionAbandonModal}
+                    >
+                      Отмена
+                    </button>
+                  </div>
+                  <div className="mining-modal__action">
+                    <button
+                      type="button"
+                      className="mining-primary-button"
+                      disabled={subscriptionLoadState === "working"}
+                      onClick={() => void handleConfirmAbandonSubscription()}
+                    >
+                      {subscriptionLoadState === "working" ? "Удаляю..." : "Удалить"}
+                    </button>
+                    {subscriptionAbandonError ? (
+                      <div className="mining-subscription-card__action-note" data-tone="error">
+                        {subscriptionAbandonError}
+                      </div>
+                    ) : null}
+                  </div>
                 </div>
               </div>
             </div>,
@@ -793,7 +862,8 @@ export default function HomePage() {
                   <div className="mining-profile-panel__balance">
                     <div className="mining-profile-panel__balanceLabel">Баланс</div>
                     <div className="mining-profile-panel__balanceValue">
-                      {formatBalance(profile.balance)} <span>⭐</span>
+                      <span>{formatBalance(profile.balance)}</span>
+                      <span>⭐</span>
                     </div>
                   </div>
 
@@ -927,10 +997,13 @@ export default function HomePage() {
                     status={subscriptionStatus}
                     loadState={subscriptionLoadState}
                     message={subscriptionMessage}
+                    unavailableTaskIds={subscriptionUnavailableTaskIds}
+                    taskErrors={subscriptionTaskErrors}
+                    assignmentErrors={subscriptionAssignmentErrors}
                     onOpenChannel={(url) => openTelegramLink(url)}
                     onJoin={(task) => void handleJoinSubscription(task)}
                     onClaim={(assignment) => void handleClaimSubscription(assignment)}
-                    onAbandon={(assignment) => setSubscriptionAbandonTarget(assignment)}
+                    onAbandon={openSubscriptionAbandonModal}
                   />
                 </section>
               </>
@@ -1368,6 +1441,9 @@ function SubscriptionsPanel({
   status,
   loadState,
   message,
+  unavailableTaskIds,
+  taskErrors,
+  assignmentErrors,
   onOpenChannel,
   onJoin,
   onClaim,
@@ -1376,6 +1452,9 @@ function SubscriptionsPanel({
   status: SubscriptionStatusResponse | null;
   loadState: SubscriptionLoadState;
   message: string;
+  unavailableTaskIds: Set<number>;
+  taskErrors: Record<number, string>;
+  assignmentErrors: Record<number, string>;
   onOpenChannel: (url: string) => void;
   onJoin: (task: SubscriptionTaskItem) => void;
   onClaim: (assignment: SubscriptionAssignmentItem) => void;
@@ -1384,6 +1463,27 @@ function SubscriptionsPanel({
   const isBusy = loadState === "loading" || loadState === "working";
   const active = status?.active ?? [];
   const available = status?.available ?? [];
+  const [expanded, setExpanded] = useState(false);
+  const items = [
+    ...active.map((assignment) => ({
+      type: "active" as const,
+      id: `active-${assignment.id}`,
+      assignment,
+    })),
+    ...available.map((task) => ({
+      type: "available" as const,
+      id: `available-${task.id}`,
+      task,
+    })),
+  ];
+  const visibleItems = expanded ? items : items.slice(0, 1);
+  const hiddenCount = Math.max(items.length - visibleItems.length, 0);
+
+  useEffect(() => {
+    if (items.length <= 1 && expanded) {
+      setExpanded(false);
+    }
+  }, [expanded, items.length]);
 
   if (loadState === "loading" && !status) {
     return <StatusNote>Ищу доступные задания подписки...</StatusNote>;
@@ -1391,37 +1491,46 @@ function SubscriptionsPanel({
 
   return (
     <div className="mt-4 space-y-4">
-      {active.length > 0 ? (
+      {items.length > 0 ? (
         <div className="mining-subscriptions-list">
-          {active.map((assignment) => (
-            <SubscriptionActiveCard
-              key={assignment.id}
-              assignment={assignment}
-              disabled={isBusy}
-              onOpenChannel={onOpenChannel}
-              onClaim={onClaim}
-              onAbandon={onAbandon}
-            />
-          ))}
+          {visibleItems.map((item) =>
+            item.type === "active" ? (
+              <SubscriptionActiveCard
+                key={item.id}
+                assignment={item.assignment}
+                disabled={isBusy}
+                unavailable={unavailableTaskIds.has(item.assignment.task_id)}
+                errorMessage={assignmentErrors[item.assignment.id] || ""}
+                onOpenChannel={onOpenChannel}
+                onClaim={onClaim}
+                onAbandon={onAbandon}
+              />
+            ) : (
+              <SubscriptionTaskCard
+                key={item.id}
+                task={item.task}
+                disabled={isBusy}
+                unavailable={unavailableTaskIds.has(item.task.id)}
+                errorMessage={taskErrors[item.task.id] || ""}
+                slotsFull={Boolean(status && status.slots_used >= status.slot_limit)}
+                onOpenChannel={onOpenChannel}
+                onJoin={onJoin}
+              />
+            ),
+          )}
+          {items.length > 1 ? (
+            <button
+              type="button"
+              className="mining-subscriptions-toggle"
+              onClick={() => setExpanded((value) => !value)}
+            >
+              {expanded ? "Свернуть подписки" : `Показать еще ${hiddenCount}`}
+            </button>
+          ) : null}
         </div>
-      ) : null}
-
-      {available.length > 0 ? (
-        <div className="mining-subscriptions-list">
-          {available.map((task) => (
-            <SubscriptionTaskCard
-              key={task.id}
-              task={task}
-              disabled={isBusy}
-              slotsFull={Boolean(status && status.slots_used >= status.slot_limit)}
-              onOpenChannel={onOpenChannel}
-              onJoin={onJoin}
-            />
-          ))}
-        </div>
-      ) : active.length === 0 ? (
+      ) : (
         <StatusNote>Пока нет подписок для добычи. Новые задания появятся здесь.</StatusNote>
-      ) : null}
+      )}
 
       {message ? (
         <StatusNote tone={loadState === "error" ? "error" : "success"}>{message}</StatusNote>
@@ -1433,12 +1542,16 @@ function SubscriptionsPanel({
 function SubscriptionTaskCard({
   task,
   disabled,
+  unavailable,
+  errorMessage,
   slotsFull,
   onOpenChannel,
   onJoin,
 }: {
   task: SubscriptionTaskItem;
   disabled: boolean;
+  unavailable: boolean;
+  errorMessage: string;
   slotsFull: boolean;
   onOpenChannel: (url: string) => void;
   onJoin: (task: SubscriptionTaskItem) => void;
@@ -1466,23 +1579,36 @@ function SubscriptionTaskCard({
       </div>
 
       <div className="mining-subscription-card__actions">
-        <button
-          type="button"
-          className="mining-secondary-button"
-          disabled={disabled}
-          onClick={() => onOpenChannel(task.channel_url)}
-        >
-          Открыть канал
-        </button>
-        <button
-          type="button"
-          className="mining-primary-button"
-          disabled={disabled}
-          onClick={() => onJoin(task)}
-          title={slotsFull ? "Все слоты заняты, но одноразовые задания не занимают слот" : undefined}
-        >
-          Проверить подписку
-        </button>
+        <div className="mining-subscription-card__action">
+          <button
+            type="button"
+            className="mining-secondary-button"
+            disabled={disabled || unavailable || slotsFull}
+            onClick={() => onOpenChannel(task.channel_url)}
+          >
+            Подписаться
+          </button>
+        </div>
+        <div className="mining-subscription-card__action">
+          <button
+            type="button"
+            className="mining-primary-button"
+            disabled={disabled || unavailable || slotsFull}
+            onClick={() => onJoin(task)}
+            title={slotsFull ? "Все слоты подписок заняты" : undefined}
+          >
+            {slotsFull ? "Слоты заняты" : "Забрать награду"}
+          </button>
+          {slotsFull ? (
+            <div className="mining-subscription-card__action-note" data-tone="info">
+              Освободи слот, чтобы взять новое задание.
+            </div>
+          ) : errorMessage ? (
+            <div className="mining-subscription-card__action-note" data-tone="error">
+              {errorMessage}
+            </div>
+          ) : null}
+        </div>
       </div>
     </article>
   );
@@ -1491,12 +1617,16 @@ function SubscriptionTaskCard({
 function SubscriptionActiveCard({
   assignment,
   disabled,
+  unavailable,
+  errorMessage,
   onOpenChannel,
   onClaim,
   onAbandon,
 }: {
   assignment: SubscriptionAssignmentItem;
   disabled: boolean;
+  unavailable: boolean;
+  errorMessage: string;
   onOpenChannel: (url: string) => void;
   onClaim: (assignment: SubscriptionAssignmentItem) => void;
   onAbandon: (assignment: SubscriptionAssignmentItem) => void;
@@ -1540,22 +1670,31 @@ function SubscriptionActiveCard({
       </p>
 
       <div className="mining-subscription-card__actions">
-        <button
-          type="button"
-          className="mining-secondary-button"
-          disabled={disabled}
-          onClick={() => onOpenChannel(assignment.channel_url)}
-        >
-          Открыть канал
-        </button>
-        <button
-          type="button"
-          className="mining-primary-button"
-          disabled={disabled || !assignment.can_claim_today}
-          onClick={() => onClaim(assignment)}
-        >
-          {assignment.can_claim_today ? "Забрать сегодня" : "Сегодня забрано"}
-        </button>
+        <div className="mining-subscription-card__action">
+          <button
+            type="button"
+            className="mining-secondary-button"
+            disabled={disabled || unavailable}
+            onClick={() => onOpenChannel(assignment.channel_url)}
+          >
+            Подписаться
+          </button>
+        </div>
+        <div className="mining-subscription-card__action">
+          <button
+            type="button"
+            className="mining-primary-button"
+            disabled={disabled || unavailable || !assignment.can_claim_today}
+            onClick={() => onClaim(assignment)}
+          >
+            {assignment.can_claim_today ? "Забрать награду" : "Сегодня забрано"}
+          </button>
+          {errorMessage ? (
+            <div className="mining-subscription-card__action-note" data-tone="error">
+              {errorMessage}
+            </div>
+          ) : null}
+        </div>
       </div>
     </article>
   );

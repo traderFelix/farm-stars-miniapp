@@ -63,6 +63,8 @@ class AuditResponse(BaseModel):
     daily_bonus: float
     subscription_bonus: float
     battle_bonus: float
+    theft_bonus: float
+    other_ledger_net: float
     admin_adjust_net: float
     total_withdrawn: float
     pending_withdrawn: float

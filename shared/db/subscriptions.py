@@ -5,6 +5,29 @@ from typing import Any, Optional
 import aiosqlite
 
 
+async def _column_exists(db: aiosqlite.Connection, table_name: str, column_name: str) -> bool:
+    async with db.execute(f"PRAGMA table_info({table_name})") as cur:
+        rows = await cur.fetchall()
+
+    for row in rows:
+        name = row["name"] if isinstance(row, aiosqlite.Row) else row[1]
+        if name == column_name:
+            return True
+    return False
+
+
+async def _add_column_if_missing(
+        db: aiosqlite.Connection,
+        table_name: str,
+        column_name: str,
+        column_type: str,
+) -> None:
+    if await _column_exists(db, table_name, column_name):
+        return
+
+    await db.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}")
+
+
 async def ensure_subscription_tasks_schema(db: aiosqlite.Connection) -> None:
     await db.execute(
         """
@@ -18,11 +41,17 @@ async def ensure_subscription_tasks_schema(db: aiosqlite.Connection) -> None:
             daily_claim_days INTEGER NOT NULL DEFAULT 0,
             max_subscribers INTEGER NOT NULL,
             participants_count INTEGER NOT NULL DEFAULT 0,
-            is_active INTEGER NOT NULL DEFAULT 1,
+            is_active INTEGER NOT NULL DEFAULT 0,
             created_at TEXT NOT NULL DEFAULT (datetime('now')),
             updated_at TEXT
         )
         """
+    )
+    await _add_column_if_missing(
+        db,
+        "subscription_tasks",
+        "admin_unavailable_notified_at",
+        "TEXT",
     )
     await db.execute(
         """
@@ -93,6 +122,7 @@ async def create_subscription_task(
         daily_reward_total: float,
         daily_claim_days: int,
         max_subscribers: int,
+        is_active: bool = False,
 ) -> int:
     await ensure_subscription_tasks_schema(db)
     cur = await db.execute(
@@ -101,7 +131,7 @@ async def create_subscription_task(
             chat_id, title, channel_url, instant_reward, daily_reward_total,
             daily_claim_days, max_subscribers, is_active, created_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, 1, datetime('now'))
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
         """,
         (
             str(chat_id),
@@ -111,6 +141,7 @@ async def create_subscription_task(
             float(daily_reward_total),
             int(daily_claim_days),
             int(max_subscribers),
+            1 if is_active else 0,
         ),
     )
     return int(cur.lastrowid)
@@ -162,6 +193,63 @@ async def set_subscription_task_active(
         WHERE id = ?
         """,
         (1 if is_active else 0, int(task_id)),
+    )
+
+
+async def set_subscription_task_title(
+        db: aiosqlite.Connection,
+        *,
+        task_id: int,
+        title: str,
+) -> None:
+    await ensure_subscription_tasks_schema(db)
+    await db.execute(
+        """
+        UPDATE subscription_tasks
+        SET title = ?, updated_at = datetime('now')
+        WHERE id = ?
+        """,
+        (str(title or "").strip(), int(task_id)),
+    )
+
+
+async def mark_subscription_task_unavailable_for_admin(
+        db: aiosqlite.Connection,
+        *,
+        task_id: int,
+) -> bool:
+    await ensure_subscription_tasks_schema(db)
+    row = await get_subscription_task(db, int(task_id))
+    should_notify = bool(row and row["admin_unavailable_notified_at"] is None)
+
+    await db.execute(
+        """
+        UPDATE subscription_tasks
+        SET
+            is_active = 0,
+            admin_unavailable_notified_at = COALESCE(admin_unavailable_notified_at, datetime('now')),
+            updated_at = datetime('now')
+        WHERE id = ?
+        """,
+        (int(task_id),),
+    )
+    return should_notify
+
+
+async def reset_subscription_task_unavailable_notification(
+        db: aiosqlite.Connection,
+        *,
+        task_id: int,
+) -> None:
+    await ensure_subscription_tasks_schema(db)
+    await db.execute(
+        """
+        UPDATE subscription_tasks
+        SET admin_unavailable_notified_at = NULL,
+            updated_at = datetime('now')
+        WHERE id = ?
+        """,
+        (int(task_id),),
     )
 
 
@@ -291,6 +379,7 @@ async def create_subscription_assignment(
         user_id: int,
         status: str,
         instant_claimed_at: bool,
+        first_daily_available_next_utc_day: bool = False,
 ) -> int:
     await ensure_subscription_tasks_schema(db)
     cur = await db.execute(
@@ -298,11 +387,12 @@ async def create_subscription_assignment(
         INSERT INTO subscription_assignments (
             task_id, user_id, status, title_snapshot, channel_url_snapshot,
             instant_reward, daily_reward_total, daily_claim_days,
-            instant_claimed_at, created_at, completed_at
+            instant_claimed_at, last_daily_claim_day, created_at, completed_at
         )
         VALUES (
             ?, ?, ?, ?, ?, ?, ?, ?,
             CASE WHEN ? THEN datetime('now') ELSE NULL END,
+            CASE WHEN ? THEN date('now') ELSE NULL END,
             datetime('now'),
             CASE WHEN ? THEN datetime('now') ELSE NULL END
         )
@@ -317,6 +407,7 @@ async def create_subscription_assignment(
             float(task["daily_reward_total"] or 0),
             int(task["daily_claim_days"] or 0),
             1 if instant_claimed_at else 0,
+            1 if first_daily_available_next_utc_day else 0,
             1 if status == "completed" else 0,
         ),
     )

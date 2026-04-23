@@ -160,7 +160,7 @@ def _parse_task_post_reference(value: str) -> tuple[Optional[str], Optional[str]
     if len(parts) >= 2 and parts[1].isdigit():
         return None, parts[0].lstrip("@"), int(parts[1])
 
-    raise ValueError("Не смог определить post_id из ссылки. Пример: https://t.me/channel/123")
+    raise ValueError("Не смог определить post_id из ссылки. Пример: https://t.me/.../123")
 
 
 async def _get_channel_title_for_admin(bot: Bot, chat_id: str) -> Optional[str]:
@@ -1409,17 +1409,19 @@ async def adm_growth_png(callback: CallbackQuery):
         xs = [(date.today() - timedelta(days=days - 1 - i)).isoformat() for i in range(days)]
         ys = [data.get(d, 0) for d in xs]
 
-        ax.bar(xs, ys)
+        x_positions = list(range(len(xs)))
+        ax.bar(x_positions, ys)
         ax.yaxis.set_major_locator(ticker.MaxNLocator(integer=True))
         ax.yaxis.set_major_formatter(ticker.FormatStrFormatter("%d"))
 
         ax.set_ylim(bottom=0)
-        ax.set_xticks(xs[::max(1, len(xs) // 15)])
+        tick_step = max(1, len(xs) // 15)
+        tick_positions = x_positions[::tick_step]
+        ax.set_xticks(tick_positions)
+        ax.set_xticklabels([xs[i] for i in tick_positions], rotation=45, ha="right")
         ax.set_xlabel("Date")
         ax.set_ylabel("New users")
         ax.set_title(f"User growth (last {days} days)")
-
-        fig.autofmt_xdate(rotation=45)
     else:
         ax.text(0.5, 0.5, "No data yet", ha="center", va="center")
         ax.set_axis_off()
@@ -1862,6 +1864,8 @@ async def adm_audit_balances(callback: CallbackQuery):
     daily_bonus = float(audit.get("daily_bonus") or 0)
     subscription_bonus = float(audit.get("subscription_bonus") or 0)
     battle_bonus = float(audit.get("battle_bonus") or 0)
+    theft_bonus = float(audit.get("theft_bonus") or 0)
+    other_ledger_net = float(audit.get("other_ledger_net") or 0)
 
     lines = [
         "🧮 Сверка балансов\n",
@@ -1873,10 +1877,13 @@ async def adm_audit_balances(callback: CallbackQuery):
         f"Получено за ежедневный бонус: {fmt_stars(daily_bonus)}⭐\n"
         f"Получено за подписки: {fmt_stars(subscription_bonus)}⭐\n"
         f"Результат батлов: {fmt_stars(battle_bonus)}⭐\n"
+        f"Результат воровства: {fmt_stars(theft_bonus)}⭐\n"
         f"Получено от админа: {fmt_stars(admin_adjust_net)}⭐\n",
         f"Выведено: {fmt_stars(total_withdrawn_sum)}⭐",
         f"В обработке: {fmt_stars(pending_withdrawn_sum)}⭐\n",
     ]
+    if abs(other_ledger_net) > 0.000001:
+        lines.append(f"⚠️ Прочее в леджере: {fmt_stars(other_ledger_net)}⭐\n")
 
     if not mismatches:
         lines.append("✅ Расхождений не найдено")
@@ -2393,7 +2400,7 @@ async def adm_subscription_tasks_list(callback: CallbackQuery, state: FSMContext
     if not rows:
         await safe_edit_text(
             callback.message,
-            "📢 Задания подписок\n\n"
+            "📢 Подписки\n\n"
             "Пока нет заданий подписаться на канал.",
             reply_markup=admin_subscription_tasks_kb([]),
         )
@@ -2401,7 +2408,7 @@ async def adm_subscription_tasks_list(callback: CallbackQuery, state: FSMContext
 
     await safe_edit_text(
         callback.message,
-        "📢 Задания подписок\n\n"
+        "📢 Подписки\n\n"
         "Выбери задание:",
         reply_markup=admin_subscription_tasks_kb(rows),
     )
@@ -2432,10 +2439,14 @@ async def adm_subscription_task_new_chat_id(message: Message, state: FSMContext)
     title = await _get_channel_title_for_admin(message.bot, chat_id) if message.bot else None
     await state.update_data(chat_id=chat_id, title=title)
     await state.set_state(SubscriptionTaskCreate.channel_url)
+    channel_label = f"Канал: {title}" if title else (
+        "Название канала пока не определилось.\n"
+        "Задание создадим выключенным, а при включении проверим, что бот есть в канале."
+    )
     await message.answer(
-        f"Канал: {title or chat_id}\n\n"
+        f"{channel_label}\n\n"
         "Теперь пришли ссылку, которую пользователь будет открывать для подписки.\n"
-        "Например: https://t.me/channel или invite-link."
+        "Например: https://t.me/... или invite-link."
     )
 
 
@@ -2902,7 +2913,7 @@ async def adm_task_channel_manual_post_start(callback: CallbackQuery, state: FSM
         "➕ Добавить пост вручную\n\n"
         f"Канал: {title}\n\n"
         "Пришли ссылку на пост:\n"
-        "https://t.me/channel/123\n\n"
+        "https://t.me/.../123\n\n"
         "Для приватного канала можно так:\n"
         "https://t.me/c/1234567890/123\n\n"
         "Если пост из этого же канала, можно просто прислать номер поста.",
@@ -3274,8 +3285,27 @@ async def adm_growth_back(callback: CallbackQuery):
             reply_markup=admin_menu_kb(),
         )
     except TelegramBadRequest as e:
-        if "message is not modified" not in str(e):
-            raise
+        error_text = str(e)
+        if "message is not modified" in error_text:
+            return
+        if "there is no text in the message to edit" in error_text:
+            try:
+                await callback.bot.edit_message_caption(
+                    chat_id=callback.from_user.id,
+                    message_id=origin_message_id,
+                    caption="🔐 Админ-панель",
+                    reply_markup=admin_menu_kb(),
+                )
+                return
+            except TelegramBadRequest as caption_error:
+                if "message is not modified" in str(caption_error):
+                    return
+
+        await callback.bot.send_message(
+            chat_id=callback.from_user.id,
+            text="🔐 Админ-панель",
+            reply_markup=admin_menu_kb(),
+        )
 
 @router.message(F.text.startswith("/myrole"))
 async def adm_my_role(message: Message):

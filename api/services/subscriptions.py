@@ -22,6 +22,8 @@ from api.schemas.subscriptions import (
 from api.security.request_fingerprint import RequestFingerprint
 from api.services.antiabuse import log_user_action_with_fingerprint
 from shared.config import (
+    ADMIN_IDS,
+    OWNER_ID,
     SUBSCRIPTION_ABANDON_COOLDOWN_DAYS,
     SUBSCRIPTION_ACTIVE_SLOT_LIMIT,
     TELEGRAM_BOT_TOKEN,
@@ -42,8 +44,10 @@ from shared.db.subscriptions import (
     increment_subscription_task_participants,
     list_available_subscription_tasks_for_user,
     list_user_active_subscription_assignments,
+    mark_subscription_task_unavailable_for_admin,
     mark_subscription_daily_claimed,
     set_subscription_abandon_cooldown,
+    set_subscription_task_title,
 )
 from shared.db.users import get_user_by_id
 
@@ -77,7 +81,105 @@ def _get_chat_member_sync(*, chat_id: str, user_id: int) -> dict[str, Any]:
     return result
 
 
-async def _is_user_subscribed(*, chat_id: str, user_id: int) -> bool:
+def _get_chat_title_sync(chat_id: str) -> str:
+    query = urllib_parse.urlencode({"chat_id": str(chat_id)})
+    request = urllib_request.Request(
+        f"{_telegram_api_url('getChat')}?{query}",
+        method="GET",
+    )
+
+    with urllib_request.urlopen(request, timeout=12) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+
+    if not payload.get("ok"):
+        raise RuntimeError(str(payload.get("description") or "Telegram API request failed"))
+
+    result = payload.get("result")
+    if not isinstance(result, dict):
+        raise RuntimeError("Telegram API returned an empty chat result")
+
+    title = str(result.get("title") or result.get("username") or "").strip()
+    return title or "Канал подписки"
+
+
+def _send_telegram_message_sync(*, user_id: int, text: str) -> None:
+    payload = json.dumps(
+        {
+            "chat_id": int(user_id),
+            "text": text,
+        },
+        ensure_ascii=False,
+    ).encode("utf-8")
+    request = urllib_request.Request(
+        _telegram_api_url("sendMessage"),
+        data=payload,
+        headers={"Content-Type": "application/json; charset=utf-8"},
+        method="POST",
+    )
+
+    with urllib_request.urlopen(request, timeout=12) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+
+    if not payload.get("ok"):
+        raise RuntimeError(str(payload.get("description") or "Telegram API request failed"))
+
+
+def _admin_notification_user_ids() -> list[int]:
+    ids = {int(admin_id) for admin_id in ADMIN_IDS}
+    if OWNER_ID:
+        ids.add(int(OWNER_ID))
+    return sorted(ids)
+
+
+async def _notify_admins_subscription_unavailable_once(
+        db,
+        *,
+        task_id: int,
+        chat_id: str,
+        title: str,
+        channel_url: str,
+        source_user_id: int,
+) -> None:
+    should_notify = await mark_subscription_task_unavailable_for_admin(db, task_id=int(task_id))
+    if not should_notify:
+        return
+
+    title_label = (title or "").strip() or "без названия"
+    text = (
+        "⚠️ Подписка временно недоступна\n\n"
+        f"Задание #{int(task_id)}: {title_label}\n"
+        f"chat_id: {chat_id}\n"
+        f"Ссылка: {channel_url or '-'}\n"
+        f"Первый user_id: {int(source_user_id)}\n\n"
+        "Пользователь не смог забрать награду, потому что бот не видит канал/участников. "
+        "Я автоматически выключил задание. Добавь бота в канал и включи задание заново."
+    )
+
+    for admin_id in _admin_notification_user_ids():
+        try:
+            await asyncio.to_thread(
+                _send_telegram_message_sync,
+                user_id=int(admin_id),
+                text=text,
+            )
+        except (urllib_error.HTTPError, urllib_error.URLError, RuntimeError, json.JSONDecodeError) as exc:
+            logger.warning(
+                "Failed to notify admin about unavailable subscription task_id=%s admin_id=%s detail=%s",
+                task_id,
+                admin_id,
+                exc,
+            )
+
+
+async def _is_user_subscribed(
+        *,
+        chat_id: str,
+        user_id: int,
+        db=None,
+        task_id: Optional[int] = None,
+        title: str = "",
+        channel_url: str = "",
+) -> bool:
     try:
         member = await asyncio.to_thread(_get_chat_member_sync, chat_id=chat_id, user_id=user_id)
     except urllib_error.HTTPError as exc:
@@ -89,9 +191,18 @@ async def _is_user_subscribed(*, chat_id: str, user_id: int) -> bool:
             exc.code,
             detail,
         )
+        if db is not None and task_id is not None:
+            await _notify_admins_subscription_unavailable_once(
+                db,
+                task_id=int(task_id),
+                chat_id=str(chat_id),
+                title=title,
+                channel_url=channel_url,
+                source_user_id=int(user_id),
+            )
         raise HTTPException(
             status_code=400,
-            detail="Не удалось проверить подписку. Проверь, что бот добавлен в канал и видит участников.",
+            detail="Это задание временно недоступно. Попробуй другое.",
         ) from exc
     except (urllib_error.URLError, RuntimeError, json.JSONDecodeError) as exc:
         logger.warning(
@@ -155,18 +266,95 @@ def _task_title(row: Any) -> str:
     title = str(row["title"] or "").strip()
     if title:
         return title
-    return str(row["chat_id"])
+    return "Канал подписки"
 
 
 def _assignment_title(row: Any) -> str:
     title = str(row["title_snapshot"] or row["task_title"] or "").strip()
     if title:
         return title
-    return str(row["chat_id"])
+    return "Канал подписки"
+
+
+async def _fill_missing_task_titles(
+        db,
+        rows: list[Any],
+        *,
+        task_title_key: str = "title",
+) -> list[Any]:
+    prepared: list[Any] = []
+
+    for row in rows:
+        title = str(row[task_title_key] or "").strip()
+        if title:
+            prepared.append(row)
+            continue
+
+        task_id = int(row["id"] if task_title_key == "title" else row["task_id"])
+        chat_id = str(row["chat_id"])
+        try:
+            fetched_title = await asyncio.to_thread(_get_chat_title_sync, chat_id)
+        except (urllib_error.HTTPError, urllib_error.URLError, RuntimeError, json.JSONDecodeError) as exc:
+            logger.warning(
+                "Skipping subscription task with missing title task_id=%s chat_id=%s detail=%s",
+                task_id,
+                chat_id,
+                exc,
+            )
+            if task_title_key == "title":
+                continue
+            prepared.append(row)
+            continue
+
+        await set_subscription_task_title(db, task_id=task_id, title=fetched_title)
+
+        row_dict = {key: row[key] for key in row.keys()}
+        row_dict[task_title_key] = fetched_title
+        if task_title_key != "title":
+            row_dict["task_title"] = fetched_title
+        prepared.append(row_dict)
+
+    return prepared
 
 
 def _assignment_url(row: Any) -> str:
-    return str(row["channel_url_snapshot"] or row["task_channel_url"] or "")
+    return _normalize_subscription_channel_url(str(row["channel_url_snapshot"] or row["task_channel_url"] or ""))
+
+
+def _normalize_subscription_channel_url(value: str) -> str:
+    raw = (value or "").strip()
+    if not raw:
+        return raw
+
+    if raw.startswith("@"):
+        username = raw.lstrip("@").strip("/")
+        return f"https://t.me/{username}" if username else raw
+
+    if raw.startswith("t.me/") or raw.startswith("telegram.me/") or raw.startswith("telegram.dog/"):
+        raw = f"https://{raw}"
+
+    if raw.startswith("tg://"):
+        return raw
+
+    try:
+        parsed = urllib_parse.urlparse(raw)
+    except ValueError:
+        return raw
+
+    if parsed.scheme in {"http", "https"} and parsed.netloc:
+        host = parsed.netloc.lower()
+        if host in {"t.me", "www.t.me", "telegram.me", "telegram.dog"}:
+            path = parsed.path.rstrip("/")
+            if path.startswith("/s/"):
+                path = path[2:]
+            query = f"?{parsed.query}" if parsed.query else ""
+            return f"https://t.me{path}{query}"
+        return raw
+
+    username = raw.strip().strip("/")
+    if username:
+        return f"https://t.me/{username.lstrip('@')}"
+    return raw
 
 
 def _remaining_daily_reward(row: Any) -> float:
@@ -199,7 +387,7 @@ def _serialize_task(row: Any) -> SubscriptionTaskItem:
     return SubscriptionTaskItem(
         id=int(row["id"]),
         title=_task_title(row),
-        channel_url=str(row["channel_url"]),
+        channel_url=_normalize_subscription_channel_url(str(row["channel_url"])),
         total_reward=_total_reward(row),
         participants_count=int(row["participants_count"] or 0),
         max_subscribers=int(row["max_subscribers"] or 0),
@@ -247,6 +435,8 @@ async def get_subscription_status_for_user(user_id: int) -> SubscriptionStatusRe
         abandon_available_at = await get_subscription_abandon_available_at(db, int(user_id))
         available_rows = await list_available_subscription_tasks_for_user(db, int(user_id))
         active_rows = await list_user_active_subscription_assignments(db, int(user_id))
+        available_rows = await _fill_missing_task_titles(db, available_rows)
+        active_rows = await _fill_missing_task_titles(db, active_rows, task_title_key="task_title")
         slots_used = await count_user_active_subscription_slots(db, int(user_id))
 
         return SubscriptionStatusResponse(
@@ -317,15 +507,21 @@ async def join_subscription_task_for_user(
             raise HTTPException(status_code=400, detail="Лимит подписчиков уже заполнен.")
 
         has_daily = float(task["daily_reward_total"] or 0) > 0 and int(task["daily_claim_days"] or 0) > 0
-        if has_daily:
-            slots_used = await count_user_active_subscription_slots(db, int(user_id))
-            if slots_used >= int(SUBSCRIPTION_ACTIVE_SLOT_LIMIT):
-                raise HTTPException(
-                    status_code=400,
-                    detail="Все слоты подписок заняты. Забери награды или удали одно задание.",
-                )
+        slots_used = await count_user_active_subscription_slots(db, int(user_id))
+        if slots_used >= int(SUBSCRIPTION_ACTIVE_SLOT_LIMIT):
+            raise HTTPException(
+                status_code=400,
+                detail="Все слоты подписок заняты. Забери награды или удали одно задание.",
+            )
 
-        subscribed = await _is_user_subscribed(chat_id=str(task["chat_id"]), user_id=int(user_id))
+        subscribed = await _is_user_subscribed(
+            chat_id=str(task["chat_id"]),
+            user_id=int(user_id),
+            db=db,
+            task_id=int(task["id"]),
+            title=str(task["title"] or ""),
+            channel_url=str(task["channel_url"] or ""),
+        )
         if not subscribed:
             await log_user_action_with_fingerprint(
                 db,
@@ -356,6 +552,12 @@ async def join_subscription_task_for_user(
                 task_id=int(task_id),
             ):
                 raise HTTPException(status_code=409, detail="Ты уже заходил в это задание подписки.")
+            locked_slots_used = await count_user_active_subscription_slots(db, int(user_id))
+            if locked_slots_used >= int(SUBSCRIPTION_ACTIVE_SLOT_LIMIT):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Все слоты подписок заняты. Забери награды или удали одно задание.",
+                )
 
             locked_has_daily = (
                 float(locked_task["daily_reward_total"] or 0) > 0
@@ -367,6 +569,9 @@ async def join_subscription_task_for_user(
                 user_id=int(user_id),
                 status="active" if locked_has_daily else "completed",
                 instant_claimed_at=True,
+                first_daily_available_next_utc_day=(
+                    locked_has_daily and round(float(locked_task["instant_reward"] or 0), 2) > 0
+                ),
             )
             await increment_subscription_task_participants(db, int(task_id))
             if instant_reward > 0:
@@ -448,7 +653,14 @@ async def claim_subscription_daily_for_user(
         if int(assignment["daily_claims_done"] or 0) >= int(assignment["daily_claim_days"] or 0):
             raise HTTPException(status_code=400, detail="Все награды уже забраны.")
 
-        subscribed = await _is_user_subscribed(chat_id=str(assignment["chat_id"]), user_id=int(user_id))
+        subscribed = await _is_user_subscribed(
+            chat_id=str(assignment["chat_id"]),
+            user_id=int(user_id),
+            db=db,
+            task_id=int(assignment["task_id"]),
+            title=_assignment_title(assignment),
+            channel_url=_assignment_url(assignment),
+        )
         if not subscribed:
             await log_user_action_with_fingerprint(
                 db,
@@ -619,6 +831,8 @@ async def _status_with_existing_db(db, user_id: int) -> SubscriptionStatusRespon
     abandon_available_at = await get_subscription_abandon_available_at(db, int(user_id))
     available_rows = await list_available_subscription_tasks_for_user(db, int(user_id))
     active_rows = await list_user_active_subscription_assignments(db, int(user_id))
+    available_rows = await _fill_missing_task_titles(db, available_rows)
+    active_rows = await _fill_missing_task_titles(db, active_rows, task_title_key="task_title")
     slots_used = await count_user_active_subscription_slots(db, int(user_id))
     cooldown_days_left = _cooldown_days_left(abandon_available_at)
     return SubscriptionStatusResponse(

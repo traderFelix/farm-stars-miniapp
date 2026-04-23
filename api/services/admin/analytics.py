@@ -8,6 +8,8 @@ from shared.db.ledger import (
     ledger_count_by_reason,
     ledger_sum_battle_net,
     ledger_sum_by_reason,
+    ledger_sum_theft_net,
+    ledger_sum_unknown_audit_net,
     list_global_ledger_page,
 )
 from shared.db.users import (
@@ -131,6 +133,8 @@ async def get_audit(
     daily_bonus = await ledger_sum_by_reason(db, "daily_bonus")
     subscription_bonus = await ledger_sum_by_reason(db, "subscription_bonus")
     battle_bonus = await ledger_sum_battle_net(db)
+    theft_bonus = await ledger_sum_theft_net(db)
+    other_ledger_net = await ledger_sum_unknown_audit_net(db)
 
     return {
         "total_balances": float(total_balances_sum),
@@ -143,6 +147,8 @@ async def get_audit(
         "daily_bonus": float(daily_bonus),
         "subscription_bonus": float(subscription_bonus),
         "battle_bonus": float(battle_bonus),
+        "theft_bonus": float(theft_bonus),
+        "other_ledger_net": float(other_ledger_net),
         "admin_adjust_net": float(admin_added - admin_removed),
         "total_withdrawn": float(total_withdrawn_sum),
         "pending_withdrawn": float(pending_withdrawn_sum),

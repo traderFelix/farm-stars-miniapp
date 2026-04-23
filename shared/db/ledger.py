@@ -194,6 +194,44 @@ async def ledger_sum_battle_net(db: aiosqlite.Connection) -> float:
         return float(row[0] or 0)
 
 
+async def ledger_sum_theft_net(db: aiosqlite.Connection) -> float:
+    query = """
+    SELECT COALESCE(SUM(delta), 0)
+    FROM ledger
+    WHERE reason IN ('theft_win', 'theft_loss')
+    """
+    async with db.execute(query) as cur:
+        row = await cur.fetchone()
+        return float(row[0] or 0)
+
+
+async def ledger_sum_unknown_audit_net(db: aiosqlite.Connection) -> float:
+    known_reasons = {
+        *SYSTEM_REASONS,
+        "admin_adjust",
+        "battle_bonus",
+        "battle_entry",
+        "battle_refund",
+        "contest_bonus",
+        "daily_bonus",
+        "promo_bonus",
+        "referral_bonus",
+        "subscription_bonus",
+        "theft_loss",
+        "theft_win",
+        "view_post_bonus",
+    }
+    placeholders = ",".join("?" for _ in known_reasons)
+    query = f"""
+    SELECT COALESCE(SUM(delta), 0)
+    FROM ledger
+    WHERE reason NOT IN ({placeholders})
+    """
+    async with db.execute(query, tuple(sorted(known_reasons))) as cur:
+        row = await cur.fetchone()
+        return float(row[0] or 0)
+
+
 async def apply_balance_delta(
         db: aiosqlite.Connection,
         user_id: int,

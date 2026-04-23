@@ -9,7 +9,7 @@ from shared.config import WEB_ORIGIN_NGROK, ROLE_ADMIN, ROLE_CLIENT, ROLE_PARTNE
 
 # ---------- USER KEYBOARDS ----------
 
-MINIAPP_MENU_BUTTON_TEXT = "🏠 Меню"
+MINIAPP_MENU_BUTTON_TEXT = "Запустить"
 
 
 def _miniapp_button() -> InlineKeyboardButton:
@@ -70,10 +70,10 @@ def admin_menu_kb() -> InlineKeyboardMarkup:
         inline_keyboard=[
             [InlineKeyboardButton(text="🏆 Конкурсы", callback_data="adm:campaigns_menu")],
             [InlineKeyboardButton(text="🎟 Промокоды", callback_data="adm:promos_menu")],
+            [InlineKeyboardButton(text="📢 Подписки", callback_data="adm:sub:list")],
             [InlineKeyboardButton(text="📺 Каналы просмотров", callback_data="adm:tch:list")],
-            [InlineKeyboardButton(text="📢 Задания подписок", callback_data="adm:sub:list")],
             [InlineKeyboardButton(text="📈 Рост пользователей", callback_data="adm:growth_png")],
-            [InlineKeyboardButton(text="📜 Леджер (последние)", callback_data="adm:ledger_last")],
+            [InlineKeyboardButton(text="📜 Леджер", callback_data="adm:ledger_last")],
             [InlineKeyboardButton(text="🔎 Детали пользователя", callback_data="adm:user_balance")],
             [InlineKeyboardButton(text="🏆 Топ по балансу", callback_data="adm:top")],
             [InlineKeyboardButton(text="💸 Заявки на вывод", callback_data="adm:wd:list")],
