@@ -119,6 +119,12 @@ async def current_utc_day(db: aiosqlite.Connection) -> str:
     return str(row[0])
 
 
+async def current_utc_timestamp(db: aiosqlite.Connection) -> str:
+    async with db.execute("SELECT datetime('now')") as cur:
+        row = await cur.fetchone()
+    return str(row[0])
+
+
 async def create_subscription_task(
         db: aiosqlite.Connection,
         *,

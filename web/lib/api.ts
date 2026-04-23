@@ -263,6 +263,7 @@ export type SubscriptionStatusResponse = {
     slot_limit: number;
     abandon_available_at?: string | null;
     abandon_cooldown_days_left: number;
+    server_time: string;
 };
 
 export type SubscriptionActionResponse = {

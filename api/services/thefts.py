@@ -22,12 +22,13 @@ from api.services.antiabuse import log_user_action_with_fingerprint
 from api.security.request_fingerprint import RequestFingerprint
 from shared.config import (
     TELEGRAM_BOT_TOKEN,
+    VIEW_THEFT_ATTACK_DURATION_SECONDS,
     VIEW_THEFT_ATTACK_TARGET_VIEWS,
     VIEW_THEFT_DEFENSE_TARGET_VIEWS,
-    VIEW_THEFT_DURATION_SECONDS,
     VIEW_THEFT_MAX_AMOUNT,
     VIEW_THEFT_MIN_AMOUNT,
     VIEW_THEFT_MIN_WITHDRAWAL_ABILITY,
+    VIEW_THEFT_PROTECTION_ACTIVATION_SECONDS,
     VIEW_THEFT_PROTECTION_SECONDS,
     VIEW_THEFT_PROTECTION_TARGET_VIEWS,
 )
@@ -316,7 +317,7 @@ def _safe_notify_theft_started(theft_row: TheftRowLike) -> None:
                 "🚨 На тебя напали\n\n"
                 f"{attacker_name} пытается украсть {_row_float(theft_row, 'amount'):g}⭐\n"
                 f"Чтобы отбить атаку, сделай {VIEW_THEFT_DEFENSE_TARGET_VIEWS} просмотра за "
-                f"{VIEW_THEFT_DURATION_SECONDS // 60} минуты быстрее, чем вор сделает "
+                f"{VIEW_THEFT_ATTACK_DURATION_SECONDS // 60} минуты быстрее, чем вор сделает "
                 f"{VIEW_THEFT_ATTACK_TARGET_VIEWS} просмотров."
             ),
             reply_markup=_task_reply_markup(),
@@ -513,19 +514,19 @@ async def get_active_theft_activity_for_user_db(
     theft_row = await get_user_active_theft(db, user_id)
     if theft_row:
         role = _theft_role(cast(TheftRowLike, theft_row), user_id)
-        return {
+        return cast(ActiveTheftActivity, {
             "activity_type": "theft_attack" if role == "attacker" else "theft_defense",
             "activity_id": int(theft_row["id"]),
             "snapshot": _build_theft_snapshot(cast(TheftRowLike, theft_row), user_id),
-        }
+        })
 
     protection_row = await get_user_active_protection_attempt(db, user_id)
     if protection_row:
-        return {
+        return cast(ActiveTheftActivity, {
             "activity_type": "theft_protection",
             "activity_id": int(protection_row["id"]),
             "snapshot": _build_protection_snapshot(protection_row),
-        }
+        })
 
     return None
 
@@ -691,7 +692,7 @@ async def start_theft_for_user(
                                 amount=amount,
                                 attacker_target_views=VIEW_THEFT_ATTACK_TARGET_VIEWS,
                                 victim_target_views=VIEW_THEFT_DEFENSE_TARGET_VIEWS,
-                                duration_seconds=VIEW_THEFT_DURATION_SECONDS,
+                                duration_seconds=VIEW_THEFT_ATTACK_DURATION_SECONDS,
                             )
                             locked = await apply_balance_debit_if_enough(
                                 db,
@@ -734,7 +735,7 @@ async def start_theft_for_user(
                                     ok=True,
                                     message=(
                                         f"Цель найдена. Нужно сделать {VIEW_THEFT_ATTACK_TARGET_VIEWS} "
-                                        f"просмотров за {VIEW_THEFT_DURATION_SECONDS // 60} минуты, "
+                                        f"просмотров за {VIEW_THEFT_ATTACK_DURATION_SECONDS // 60} минуты, "
                                         "чтобы украсть звезды."
                                     ),
                                     status=await _get_status_response(db, user_id),
@@ -803,7 +804,7 @@ async def start_theft_protection_for_user(
                         db,
                         user_id=user_id,
                         target_views=VIEW_THEFT_PROTECTION_TARGET_VIEWS,
-                        duration_seconds=VIEW_THEFT_DURATION_SECONDS,
+                        duration_seconds=VIEW_THEFT_PROTECTION_ACTIVATION_SECONDS,
                     )
                     await log_abuse_event(
                         db,
@@ -816,7 +817,8 @@ async def start_theft_protection_for_user(
                         ok=True,
                         message=(
                             f"Сделай {VIEW_THEFT_PROTECTION_TARGET_VIEWS} просмотров за "
-                            f"{VIEW_THEFT_DURATION_SECONDS // 60} минуты, чтобы включить защиту на сутки."
+                            f"{VIEW_THEFT_PROTECTION_ACTIVATION_SECONDS // 60} минуты, "
+                            "чтобы включить защиту на сутки."
                         ),
                         status=await _get_status_response(db, user_id),
                     )

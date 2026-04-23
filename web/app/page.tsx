@@ -987,7 +987,7 @@ export default function HomePage() {
                     action={
                       subscriptionStatus ? (
                         <span className="mining-subscriptions-slots">
-                          {subscriptionStatus.slots_used}/{subscriptionStatus.slot_limit}
+                          Занято слотов {subscriptionStatus.slots_used}/{subscriptionStatus.slot_limit}
                         </span>
                       ) : null
                     }
@@ -1416,10 +1416,37 @@ function buildCheckinPopupDescription(nextCycleDay: number, nextReward: number):
 
 function buildSubscriptionPopupDescription(remaining: number): string {
   if (remaining > 0) {
-    return `Клейми каждый день, чтобы забрать оставшиеся ${formatCompactBalance(remaining)} ⭐`;
+    return `Забирай награду каждый день, чтобы получить оставшиеся ${formatCompactBalance(remaining)} ⭐`;
   }
 
   return "Вся награда по этой подписке уже забрана";
+}
+
+function parseUtcTimestamp(value?: string | null): number | null {
+  if (!value) return null;
+  const normalized = value.includes("T") ? value : `${value.replace(" ", "T")}Z`;
+  const parsed = Date.parse(normalized.endsWith("Z") ? normalized : `${normalized}Z`);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function nextUtcMidnightMs(nowMs: number): number {
+  const date = new Date(nowMs);
+  return Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate() + 1);
+}
+
+function formatCountdown(totalMs: number): string {
+  const totalSeconds = Math.max(Math.ceil(totalMs / 1000), 0);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return `${pad(hours)}:${pad(minutes)}:${pad(seconds)}`;
+}
+
+function getSubscriptionClaimWaitMs(assignment: SubscriptionAssignmentItem, nowMs: number): number {
+  if (assignment.can_claim_today) return 0;
+  if (assignment.daily_claims_done >= assignment.daily_claim_days) return 0;
+  return Math.max(nextUtcMidnightMs(nowMs) - nowMs, 0);
 }
 
 function RewardInline({
@@ -1463,27 +1490,52 @@ function SubscriptionsPanel({
   const isBusy = loadState === "loading" || loadState === "working";
   const active = status?.active ?? [];
   const available = status?.available ?? [];
-  const [expanded, setExpanded] = useState(false);
-  const items = [
-    ...active.map((assignment) => ({
-      type: "active" as const,
-      id: `active-${assignment.id}`,
-      assignment,
-    })),
-    ...available.map((task) => ({
-      type: "available" as const,
-      id: `available-${task.id}`,
-      task,
-    })),
-  ];
-  const visibleItems = expanded ? items : items.slice(0, 1);
-  const hiddenCount = Math.max(items.length - visibleItems.length, 0);
+  const [activeExpanded, setActiveExpanded] = useState(false);
+  const [availableExpanded, setAvailableExpanded] = useState(false);
+  const [timerNowMs, setTimerNowMs] = useState(() => Date.now());
+  const serverClockRef = useRef<{ source: string; serverMs: number; clientMs: number } | null>(null);
+  const shouldRunCountdown = active.some(
+    (assignment) => !assignment.can_claim_today && assignment.daily_claims_done < assignment.daily_claim_days,
+  );
+  const serverTime = status?.server_time || "";
+  const parsedServerMs = parseUtcTimestamp(serverTime);
+
+  if (serverTime && parsedServerMs !== null && serverClockRef.current?.source !== serverTime) {
+    serverClockRef.current = {
+      source: serverTime,
+      serverMs: parsedServerMs,
+      clientMs: Date.now(),
+    };
+  }
+
+  const countdownNowMs = serverClockRef.current
+    ? serverClockRef.current.serverMs + (timerNowMs - serverClockRef.current.clientMs)
+    : timerNowMs;
+  const visibleActive = activeExpanded ? active : active.slice(0, 1);
+  const visibleAvailable = availableExpanded ? available : available.slice(0, 1);
+  const hiddenActiveCount = Math.max(active.length - visibleActive.length, 0);
+  const hiddenAvailableCount = Math.max(available.length - visibleAvailable.length, 0);
 
   useEffect(() => {
-    if (items.length <= 1 && expanded) {
-      setExpanded(false);
+    if (active.length <= 1 && activeExpanded) {
+      setActiveExpanded(false);
     }
-  }, [expanded, items.length]);
+  }, [active.length, activeExpanded]);
+
+  useEffect(() => {
+    if (available.length <= 1 && availableExpanded) {
+      setAvailableExpanded(false);
+    }
+  }, [available.length, availableExpanded]);
+
+  useEffect(() => {
+    if (!shouldRunCountdown) return;
+    setTimerNowMs(Date.now());
+    const timerId = window.setInterval(() => {
+      setTimerNowMs(Date.now());
+    }, 1000);
+    return () => window.clearInterval(timerId);
+  }, [shouldRunCountdown]);
 
   if (loadState === "loading" && !status) {
     return <StatusNote>Ищу доступные задания подписки...</StatusNote>;
@@ -1491,41 +1543,75 @@ function SubscriptionsPanel({
 
   return (
     <div className="mt-4 space-y-4">
-      {items.length > 0 ? (
-        <div className="mining-subscriptions-list">
-          {visibleItems.map((item) =>
-            item.type === "active" ? (
-              <SubscriptionActiveCard
-                key={item.id}
-                assignment={item.assignment}
-                disabled={isBusy}
-                unavailable={unavailableTaskIds.has(item.assignment.task_id)}
-                errorMessage={assignmentErrors[item.assignment.id] || ""}
-                onOpenChannel={onOpenChannel}
-                onClaim={onClaim}
-                onAbandon={onAbandon}
-              />
-            ) : (
-              <SubscriptionTaskCard
-                key={item.id}
-                task={item.task}
-                disabled={isBusy}
-                unavailable={unavailableTaskIds.has(item.task.id)}
-                errorMessage={taskErrors[item.task.id] || ""}
-                slotsFull={Boolean(status && status.slots_used >= status.slot_limit)}
-                onOpenChannel={onOpenChannel}
-                onJoin={onJoin}
-              />
-            ),
-          )}
-          {items.length > 1 ? (
-            <button
-              type="button"
-              className="mining-subscriptions-toggle"
-              onClick={() => setExpanded((value) => !value)}
-            >
-              {expanded ? "Свернуть подписки" : `Показать еще ${hiddenCount}`}
-            </button>
+      {active.length > 0 || available.length > 0 ? (
+        <div className="mining-subscriptions-board">
+          {active.length > 0 ? (
+            <section className="mining-subscriptions-section" data-kind="active">
+              <div className="mining-subscriptions-section__head">
+                <div>
+                  <div className="mining-kicker">Мои подписки</div>
+                  <h3>Забирай ежедневные награды</h3>
+                </div>
+              </div>
+              <div className="mining-subscriptions-list">
+                {visibleActive.map((assignment) => (
+                  <SubscriptionActiveCard
+                    key={assignment.id}
+                    assignment={assignment}
+                    nowMs={countdownNowMs}
+                    disabled={isBusy}
+                    unavailable={unavailableTaskIds.has(assignment.task_id)}
+                    errorMessage={assignmentErrors[assignment.id] || ""}
+                    onOpenChannel={onOpenChannel}
+                    onClaim={onClaim}
+                    onAbandon={onAbandon}
+                  />
+                ))}
+                {active.length > 1 ? (
+                  <button
+                    type="button"
+                    className="mining-subscriptions-toggle"
+                    onClick={() => setActiveExpanded((value) => !value)}
+                  >
+                    {activeExpanded ? "Свернуть мои подписки" : `Показать еще ${hiddenActiveCount}`}
+                  </button>
+                ) : null}
+              </div>
+            </section>
+          ) : null}
+
+          {available.length > 0 ? (
+            <section className="mining-subscriptions-section" data-kind="available">
+              <div className="mining-subscriptions-section__head">
+                <div>
+                  <div className="mining-kicker">Новые подписки</div>
+                  <h3>Выбери новое задание</h3>
+                </div>
+              </div>
+              <div className="mining-subscriptions-list">
+                {visibleAvailable.map((task) => (
+                  <SubscriptionTaskCard
+                    key={task.id}
+                    task={task}
+                    disabled={isBusy}
+                    unavailable={unavailableTaskIds.has(task.id)}
+                    errorMessage={taskErrors[task.id] || ""}
+                    slotsFull={Boolean(status && status.slots_used >= status.slot_limit)}
+                    onOpenChannel={onOpenChannel}
+                    onJoin={onJoin}
+                  />
+                ))}
+                {available.length > 1 ? (
+                  <button
+                    type="button"
+                    className="mining-subscriptions-toggle"
+                    onClick={() => setAvailableExpanded((value) => !value)}
+                  >
+                    {availableExpanded ? "Свернуть новые подписки" : `Показать еще ${hiddenAvailableCount}`}
+                  </button>
+                ) : null}
+              </div>
+            </section>
           ) : null}
         </div>
       ) : (
@@ -1616,6 +1702,7 @@ function SubscriptionTaskCard({
 
 function SubscriptionActiveCard({
   assignment,
+  nowMs,
   disabled,
   unavailable,
   errorMessage,
@@ -1624,6 +1711,7 @@ function SubscriptionActiveCard({
   onAbandon,
 }: {
   assignment: SubscriptionAssignmentItem;
+  nowMs: number;
   disabled: boolean;
   unavailable: boolean;
   errorMessage: string;
@@ -1638,6 +1726,9 @@ function SubscriptionActiveCard({
   const deleteTooltip = assignment.can_abandon
     ? "Удалить задание"
     : `Удаление доступно через ${Math.max(assignment.abandon_cooldown_days_left, 1)}д`;
+  const claimWaitMs = getSubscriptionClaimWaitMs(assignment, nowMs);
+  const canClaimNow = assignment.can_claim_today || claimWaitMs <= 0;
+  const claimTimerLabel = canClaimNow ? "доступно" : formatCountdown(claimWaitMs);
 
   return (
     <article className="mining-subscription-card" data-active="true">
@@ -1659,14 +1750,15 @@ function SubscriptionActiveCard({
       </div>
 
       <div className="mining-subscription-card__limit">
-        <span>Клейм</span>
-        <strong>{assignment.daily_claims_done}/{assignment.daily_claim_days}</strong>
+        <span>До следующего клейма</span>
+        <strong>{claimTimerLabel}</strong>
       </div>
       <div className="mining-subscription-card__track" aria-hidden="true">
         <span style={{ width: `${percent}%` }} />
       </div>
       <p className="mining-subscription-card__hint">
-        Осталось забрать {formatCompactBalance(assignment.remaining_reward)} ⭐
+        Получено дней {assignment.daily_claims_done}/{assignment.daily_claim_days}. Осталось забрать{" "}
+        {formatCompactBalance(assignment.remaining_reward)} ⭐
       </p>
 
       <div className="mining-subscription-card__actions">
@@ -1684,10 +1776,10 @@ function SubscriptionActiveCard({
           <button
             type="button"
             className="mining-primary-button"
-            disabled={disabled || unavailable || !assignment.can_claim_today}
+            disabled={disabled || unavailable || !canClaimNow}
             onClick={() => onClaim(assignment)}
           >
-            {assignment.can_claim_today ? "Забрать награду" : "Сегодня забрано"}
+            {canClaimNow ? "Забрать награду" : "Ждет таймер"}
           </button>
           {errorMessage ? (
             <div className="mining-subscription-card__action-note" data-tone="error">

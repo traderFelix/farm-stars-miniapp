@@ -2454,7 +2454,8 @@ async def adm_subscription_task_new_chat_id(message: Message, state: FSMContext)
         await message.answer("❌ Нужен chat_id канала.")
         return
 
-    title = await _get_channel_title_for_admin(message.bot, chat_id) if message.bot else None
+    bot = message.bot
+    title = await _get_channel_title_for_admin(bot, chat_id) if bot is not None else None
     await state.update_data(chat_id=chat_id, title=title)
     await state.set_state(SubscriptionTaskCreate.channel_url)
     channel_label = f"Канал: {title}" if title else (
@@ -2700,10 +2701,11 @@ async def _render_task_channel_card(callback: CallbackQuery, channel_id: int):
         )
         return
 
-    if callback.bot:
+    bot = callback.bot
+    if bot is not None:
         detail = {
             **detail,
-            "channel": await _refresh_task_channel_title_if_missing(callback.bot, detail["channel"]),
+            "channel": await _refresh_task_channel_title_if_missing(bot, detail["channel"]),
         }
 
     text, is_active, resolved_channel_id = _build_task_channel_card_text(detail)
@@ -2728,9 +2730,10 @@ async def adm_task_channels_list(callback: CallbackQuery):
         return
 
     rows = result.get("items") or []
-    if rows and callback.bot:
+    bot = callback.bot
+    if rows and bot is not None:
         rows = [
-            await _refresh_task_channel_title_if_missing(callback.bot, row)
+            await _refresh_task_channel_title_if_missing(bot, row)
             for row in rows
         ]
 
@@ -3263,7 +3266,8 @@ async def adm_task_channel_new_view_seconds(message: Message, state: FSMContext)
     client_user_id = int(data["client_user_id"])
     total_bought_views = int(data["total_bought_views"])
     views_per_post = int(data["views_per_post"])
-    channel_title = await _get_channel_title_for_admin(message.bot, str(chat_id))
+    bot = message.bot
+    channel_title = await _get_channel_title_for_admin(bot, str(chat_id)) if bot is not None else None
 
     try:
         detail = await create_task_channel_via_api(

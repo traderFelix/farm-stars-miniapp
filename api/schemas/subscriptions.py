@@ -36,6 +36,7 @@ class SubscriptionStatusResponse(BaseModel):
     slot_limit: int
     abandon_available_at: Optional[str] = None
     abandon_cooldown_days_left: int
+    server_time: str
 
 
 class SubscriptionActionResponse(BaseModel):

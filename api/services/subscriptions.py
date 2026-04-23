@@ -36,6 +36,7 @@ from shared.db.subscriptions import (
     count_user_active_subscription_slots,
     create_subscription_assignment,
     current_utc_day,
+    current_utc_timestamp,
     ensure_subscription_tasks_schema,
     get_subscription_abandon_available_at,
     get_subscription_assignment_with_task,
@@ -432,6 +433,7 @@ async def get_subscription_status_for_user(user_id: int) -> SubscriptionStatusRe
     try:
         await ensure_subscription_tasks_schema(db)
         today = await current_utc_day(db)
+        server_time = await current_utc_timestamp(db)
         abandon_available_at = await get_subscription_abandon_available_at(db, int(user_id))
         available_rows = await list_available_subscription_tasks_for_user(db, int(user_id))
         active_rows = await list_user_active_subscription_assignments(db, int(user_id))
@@ -455,6 +457,7 @@ async def get_subscription_status_for_user(user_id: int) -> SubscriptionStatusRe
                 abandon_available_at if _cooldown_days_left(abandon_available_at) > 0 else None
             ),
             abandon_cooldown_days_left=_cooldown_days_left(abandon_available_at),
+            server_time=server_time,
         )
     finally:
         await db.close()
@@ -832,6 +835,7 @@ async def _action_response(
 
 async def _status_with_existing_db(db, user_id: int) -> SubscriptionStatusResponse:
     today = await current_utc_day(db)
+    server_time = await current_utc_timestamp(db)
     abandon_available_at = await get_subscription_abandon_available_at(db, int(user_id))
     available_rows = await list_available_subscription_tasks_for_user(db, int(user_id))
     active_rows = await list_user_active_subscription_assignments(db, int(user_id))
@@ -853,4 +857,5 @@ async def _status_with_existing_db(db, user_id: int) -> SubscriptionStatusRespon
         slot_limit=int(SUBSCRIPTION_ACTIVE_SLOT_LIMIT),
         abandon_available_at=abandon_available_at if cooldown_days_left > 0 else None,
         abandon_cooldown_days_left=cooldown_days_left,
+        server_time=server_time,
     )
