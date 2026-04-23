@@ -1452,6 +1452,38 @@ function getSubscriptionClaimWaitMs(assignment: SubscriptionAssignmentItem, nowM
   return Math.max(nextUtcMidnightMs(nowMs) - nowMs, 0);
 }
 
+function renderSubscriptionActionError(
+  message: string,
+  channelUrl: string,
+  onOpenChannel: (url: string) => void,
+): React.ReactNode {
+  const trigger = "Подпишись";
+  const index = message.indexOf(trigger);
+  if (index < 0) {
+    return message;
+  }
+
+  const before = message.slice(0, index);
+  const after = message.slice(index + trigger.length);
+
+  return (
+    <>
+      {before}
+      <a
+        href={channelUrl}
+        className="mining-subscription-card__action-note-link"
+        onClick={(event) => {
+          event.preventDefault();
+          onOpenChannel(channelUrl);
+        }}
+      >
+        {trigger}
+      </a>
+      {after}
+    </>
+  );
+}
+
 function RewardInline({
   value,
   compact = false,
@@ -1769,17 +1801,7 @@ function SubscriptionActiveCard({
         Осталось забрать {formatCompactBalance(assignment.remaining_reward)} ⭐
       </p>
 
-      <div className="mining-subscription-card__actions">
-        <div className="mining-subscription-card__action">
-          <button
-            type="button"
-            className="mining-secondary-button"
-            disabled={disabled || unavailable}
-            onClick={() => onOpenChannel(assignment.channel_url)}
-          >
-            Подписаться
-          </button>
-        </div>
+      <div className="mining-subscription-card__actions" data-single-action="true">
         <div className="mining-subscription-card__action">
           <button
             type="button"
@@ -1791,7 +1813,7 @@ function SubscriptionActiveCard({
           </button>
           {errorMessage ? (
             <div className="mining-subscription-card__action-note" data-tone="error">
-              {errorMessage}
+              {renderSubscriptionActionError(errorMessage, assignment.channel_url, onOpenChannel)}
             </div>
           ) : null}
         </div>

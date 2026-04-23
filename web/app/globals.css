@@ -2208,6 +2208,10 @@ textarea:focus {
   margin-top: 0.9rem;
 }
 
+.mining-subscription-card__actions[data-single-action="true"] {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .mining-subscription-card__action {
   min-width: 0;
 }
@@ -2233,6 +2237,21 @@ textarea:focus {
   border-color: rgba(99, 240, 255, 0.28);
   background: linear-gradient(180deg, rgba(18, 33, 54, 0.72), rgba(11, 17, 31, 0.8));
   color: #c9f6ff;
+}
+
+.mining-subscription-card__action-note-link {
+  color: #77c8ff;
+  font-weight: 820;
+  text-decoration: underline;
+  text-decoration-color: rgba(119, 200, 255, 0.96);
+  text-decoration-thickness: 0.14em;
+  text-underline-offset: 0.14em;
+}
+
+.mining-subscription-card__action-note-link:hover,
+.mining-subscription-card__action-note-link:focus-visible {
+  color: #b8e6ff;
+  text-decoration-color: rgba(184, 230, 255, 0.98);
 }
 
 .mining-subscription-delete {
