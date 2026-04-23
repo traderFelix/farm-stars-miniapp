@@ -853,7 +853,18 @@ export default function HomePage() {
               <>
                 <section className="mining-panel mining-profile-panel">
                   <div className="mining-profile-panel__header">
-                    <div className="mining-profile-panel__name">{operatorName}</div>
+                    <div className="mining-profile-panel__identity">
+                      <div className="mining-profile-panel__name">{operatorName}</div>
+                      {profile.can_change_game_nickname ? (
+                        <button
+                          type="button"
+                          className="mining-profile-panel__edit"
+                          onClick={openNicknameModal}
+                        >
+                          Сменить ник
+                        </button>
+                      ) : null}
+                    </div>
                     <span className="mining-profile-panel__role">
                       {profile.role || "пользователь"}
                     </span>
@@ -866,16 +877,6 @@ export default function HomePage() {
                       <span>⭐</span>
                     </div>
                   </div>
-
-                  {profile.can_change_game_nickname ? (
-                    <button
-                      type="button"
-                      className="mining-profile-panel__edit"
-                      onClick={openNicknameModal}
-                    >
-                      Сменить ник
-                    </button>
-                  ) : null}
                 </section>
 
                 <section className="mining-panel">
@@ -1550,6 +1551,7 @@ function SubscriptionsPanel({
   const visibleAvailable = availableExpanded ? available : available.slice(0, 1);
   const hiddenActiveCount = Math.max(active.length - visibleActive.length, 0);
   const hiddenAvailableCount = Math.max(available.length - visibleAvailable.length, 0);
+  const slotsFull = Boolean(status && status.slots_used >= status.slot_limit);
 
   useEffect(() => {
     if (active.length <= 1 && activeExpanded) {
@@ -1584,8 +1586,8 @@ function SubscriptionsPanel({
             <section className="mining-subscriptions-section" data-kind="active">
               <div className="mining-subscriptions-section__head">
                 <div>
-                  <div className="mining-kicker">Мои подписки</div>
-                  <h3>Забирай ежедневные награды</h3>
+                  <div className="mining-kicker">Активные подписки</div>
+                  <h3>Забирай ежедневные награды!</h3>
                 </div>
               </div>
               <div className="mining-subscriptions-list">
@@ -1608,7 +1610,7 @@ function SubscriptionsPanel({
                     className="mining-subscriptions-toggle"
                     onClick={() => setActiveExpanded((value) => !value)}
                   >
-                    {activeExpanded ? "Свернуть мои подписки" : `Показать еще ${hiddenActiveCount}`}
+                    {activeExpanded ? "Свернуть активные подписки" : `Показать еще ${hiddenActiveCount}`}
                   </button>
                 ) : null}
               </div>
@@ -1619,8 +1621,16 @@ function SubscriptionsPanel({
             <section className="mining-subscriptions-section" data-kind="available">
               <div className="mining-subscriptions-section__head">
                 <div>
-                  <div className="mining-kicker">Новые подписки</div>
-                  <h3>Выбери новое задание</h3>
+                  <div className="mining-kicker">Доступные подписки</div>
+                  <h3>Выбирай новые задания!</h3>
+                  {slotsFull ? (
+                    <div className="mining-status-note mining-subscriptions-section__warning" data-tone="warning">
+                      <div className="mining-subscriptions-section__warning-content">
+                        <span>Чтобы взять новое задание, необходимо сперва освободить слот</span>
+                        <InfoHint text="Для освобождения слота необходимо завершить или удалить минимум одно из активных заданий" />
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
               </div>
               <div className="mining-subscriptions-list">
@@ -1631,7 +1641,7 @@ function SubscriptionsPanel({
                     disabled={isBusy}
                     unavailable={unavailableTaskIds.has(task.id)}
                     errorMessage={taskErrors[task.id] || ""}
-                    slotsFull={Boolean(status && status.slots_used >= status.slot_limit)}
+                    slotsFull={slotsFull}
                     onOpenChannel={onOpenChannel}
                     onJoin={onJoin}
                   />
@@ -1642,7 +1652,7 @@ function SubscriptionsPanel({
                     className="mining-subscriptions-toggle"
                     onClick={() => setAvailableExpanded((value) => !value)}
                   >
-                    {availableExpanded ? "Свернуть новые подписки" : `Показать еще ${hiddenAvailableCount}`}
+                    {availableExpanded ? "Свернуть доступные подписки" : `Показать еще ${hiddenAvailableCount}`}
                   </button>
                 ) : null}
               </div>
@@ -1683,8 +1693,18 @@ function SubscriptionTaskCard({
     <article className="mining-subscription-card">
       <div className="mining-subscription-card__top">
         <div>
-          <div className="mining-kicker">Доступная подписка</div>
-          <h3 className="mining-subscription-card__title">{task.title}</h3>
+          <h3 className="mining-subscription-card__title">
+            <a
+              href={task.channel_url}
+              className="mining-subscription-card__title-link"
+              onClick={(event) => {
+                event.preventDefault();
+                onOpenChannel(task.channel_url);
+              }}
+            >
+              {task.title}
+            </a>
+          </h3>
         </div>
         <div className="mining-subscription-card__reward">
           {formatCompactBalance(task.total_reward)} ⭐
@@ -1720,11 +1740,7 @@ function SubscriptionTaskCard({
           >
             {slotsFull ? "Слоты заняты" : "Забрать награду"}
           </button>
-          {slotsFull ? (
-            <div className="mining-subscription-card__action-note" data-tone="info">
-              Освободи слот, чтобы взять новое задание.
-            </div>
-          ) : errorMessage ? (
+          {errorMessage && !slotsFull ? (
             <div className="mining-subscription-card__action-note" data-tone="error">
               {errorMessage}
             </div>
@@ -1769,8 +1785,18 @@ function SubscriptionActiveCard({
     <article className="mining-subscription-card" data-active="true">
       <div className="mining-subscription-card__top">
         <div>
-          <div className="mining-kicker">Активная подписка</div>
-          <h3 className="mining-subscription-card__title">{assignment.title}</h3>
+          <h3 className="mining-subscription-card__title">
+            <a
+              href={assignment.channel_url}
+              className="mining-subscription-card__title-link"
+              onClick={(event) => {
+                event.preventDefault();
+                onOpenChannel(assignment.channel_url);
+              }}
+            >
+              {assignment.title}
+            </a>
+          </h3>
         </div>
         <button
           type="button"
