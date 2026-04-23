@@ -472,6 +472,8 @@ async def join_subscription_task_for_user(
         task = await get_subscription_task(db, int(task_id))
         if not task:
             raise HTTPException(status_code=404, detail="Задание подписки не найдено.")
+        if int(task["is_archived"] or 0) == 1:
+            raise HTTPException(status_code=404, detail="Задание подписки не найдено.")
 
         await log_user_action_with_fingerprint(
             db,
@@ -541,6 +543,8 @@ async def join_subscription_task_for_user(
         async with tx(db, immediate=True):
             locked_task = await get_subscription_task(db, int(task_id))
             if not locked_task:
+                raise HTTPException(status_code=404, detail="Задание подписки не найдено.")
+            if int(locked_task["is_archived"] or 0) == 1:
                 raise HTTPException(status_code=404, detail="Задание подписки не найдено.")
             if int(locked_task["is_active"] or 0) != 1:
                 raise HTTPException(status_code=400, detail="Это задание сейчас отключено.")

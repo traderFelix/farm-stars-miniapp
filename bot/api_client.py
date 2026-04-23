@@ -356,7 +356,10 @@ class CampaignsAdminApi(ApiSection):
         )
 
     async def delete(self, campaign_key: str) -> JsonDict:
-        return await self._post(f"/admin/campaigns/{campaign_key}/delete", json={})
+        return await self.archive(campaign_key)
+
+    async def archive(self, campaign_key: str) -> JsonDict:
+        return await self._post(f"/admin/campaigns/{campaign_key}/archive", json={})
 
     async def add_winners(self, campaign_key: str, *, usernames: Sequence[str]) -> JsonDict:
         return await self._post(
@@ -415,7 +418,10 @@ class PromosAdminApi(ApiSection):
         )
 
     async def delete(self, promo_code: str) -> JsonDict:
-        return await self._post(f"/admin/promos/{promo_code}/delete", json={})
+        return await self.archive(promo_code)
+
+    async def archive(self, promo_code: str) -> JsonDict:
+        return await self._post(f"/admin/promos/{promo_code}/archive", json={})
 
     async def get_summary(self, *, latest_limit: int = 5) -> JsonDict:
         return await self._get(
@@ -550,6 +556,9 @@ class SubscriptionTasksApi(ApiSection):
             f"/admin/subscription-tasks/{int(task_id)}/status",
             json={"is_active": bool(is_active)},
         )
+
+    async def archive(self, task_id: int) -> JsonDict:
+        return await self._post(f"/admin/subscription-tasks/{int(task_id)}/archive", json={})
 
 
 class AnalyticsApi(ApiSection):
@@ -787,6 +796,10 @@ async def delete_campaign_via_api(campaign_key: str) -> JsonDict:
     return await api_client.admin_campaigns.delete(campaign_key)
 
 
+async def archive_campaign_via_api(campaign_key: str) -> JsonDict:
+    return await api_client.admin_campaigns.archive(campaign_key)
+
+
 async def add_campaign_winners_via_api(campaign_key: str, usernames: Sequence[str]) -> JsonDict:
     return await api_client.admin_campaigns.add_winners(campaign_key, usernames=usernames)
 
@@ -836,6 +849,10 @@ async def set_promo_status_via_api(promo_code: str, *, status: str) -> JsonDict:
 
 async def delete_promo_via_api(promo_code: str) -> JsonDict:
     return await api_client.admin_promos.delete(promo_code)
+
+
+async def archive_promo_via_api(promo_code: str) -> JsonDict:
+    return await api_client.admin_promos.archive(promo_code)
 
 
 async def get_promos_summary_via_api(*, latest_limit: int = 5) -> JsonDict:
@@ -1026,6 +1043,10 @@ async def set_subscription_task_status_via_api(task_id: int, *, is_active: bool)
     return await api_client.subscription_tasks.set_status(task_id, is_active=is_active)
 
 
+async def archive_subscription_task_via_api(task_id: int) -> JsonDict:
+    return await api_client.subscription_tasks.archive(task_id)
+
+
 async def bootstrap_bot_user_via_api(
         *,
         user_id: int,
@@ -1121,6 +1142,7 @@ __all__ = [
     "create_campaign_via_api",
     "set_campaign_status_via_api",
     "delete_campaign_via_api",
+    "archive_campaign_via_api",
     "add_campaign_winners_via_api",
     "get_campaigns_summary_via_api",
     "get_campaign_stats_via_api",
@@ -1131,6 +1153,7 @@ __all__ = [
     "create_promo_via_api",
     "set_promo_status_via_api",
     "delete_promo_via_api",
+    "archive_promo_via_api",
     "get_promos_summary_via_api",
     "get_promo_stats_via_api",
     "get_top_balances_via_api",
@@ -1157,6 +1180,7 @@ __all__ = [
     "get_subscription_task_via_api",
     "create_subscription_task_via_api",
     "set_subscription_task_status_via_api",
+    "archive_subscription_task_via_api",
     "bootstrap_bot_user_via_api",
     "get_bot_main_menu_for_user_context_via_api",
     "get_bot_main_menu_via_api",

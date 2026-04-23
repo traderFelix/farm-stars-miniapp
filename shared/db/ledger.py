@@ -194,6 +194,27 @@ async def ledger_sum_battle_net(db: aiosqlite.Connection) -> float:
         return float(row[0] or 0)
 
 
+async def ledger_sum_unrefunded_battle_entries(db: aiosqlite.Connection) -> float:
+    query = """
+    SELECT COALESCE(SUM(entry.delta), 0)
+    FROM ledger entry
+    WHERE entry.reason = 'battle_entry'
+      AND NOT EXISTS (
+          SELECT 1
+          FROM ledger refund
+          WHERE refund.user_id = entry.user_id
+            AND refund.reason = 'battle_refund'
+            AND (
+                refund.meta = entry.meta
+                OR refund.meta LIKE entry.meta || ';%'
+            )
+      )
+    """
+    async with db.execute(query) as cur:
+        row = await cur.fetchone()
+        return float(row[0] or 0)
+
+
 async def ledger_sum_theft_net(db: aiosqlite.Connection) -> float:
     query = """
     SELECT COALESCE(SUM(delta), 0)

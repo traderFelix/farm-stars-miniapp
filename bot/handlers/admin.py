@@ -9,6 +9,9 @@ from bot.api_client import (
     ApiClientError,
     add_task_channel_manual_post_via_api,
     add_campaign_winners_via_api,
+    archive_campaign_via_api,
+    archive_promo_via_api,
+    archive_subscription_task_via_api,
     adjust_user_balance,
     bind_task_channel_client_via_api,
     clear_user_suspicious,
@@ -16,9 +19,7 @@ from bot.api_client import (
     create_promo_via_api,
     create_subscription_task_via_api,
     create_task_channel_via_api,
-    delete_campaign_via_api,
     delete_campaign_winner_via_api,
-    delete_promo_via_api,
     get_admin_ledger_page_via_api,
     get_audit_via_api,
     get_campaign_stats_via_api,
@@ -86,7 +87,8 @@ from bot.keyboards import (
     campaign_created_kb, user_actions_kb, admin_withdraw_list_kb, admin_withdraw_actions_kb, campaign_delete_confirm_kb,
     admin_task_channels_kb, admin_task_channel_card_kb, admin_growth_photo_kb, promos_list_kb, promo_manage_kb,
     promo_delete_confirm_kb, promo_created_kb, promo_stats_list_kb, admin_campaigns_menu_kb, admin_promos_menu_kb,
-    admin_task_channel_manual_post_confirm_kb, admin_subscription_tasks_kb, admin_subscription_task_card_kb,
+    admin_task_channel_manual_post_confirm_kb, admin_subscription_tasks_kb, admin_subscription_task_archive_confirm_kb,
+    admin_subscription_task_card_kb,
 )
 
 from bot.states import (
@@ -547,6 +549,8 @@ def _build_campaign_card_text(detail: dict) -> tuple[str, str]:
         status_text = "🟡 Черновик"
     elif status == "ended":
         status_text = "🔴 Завершен"
+    elif status == "archived":
+        status_text = "🗃 Архив"
     else:
         status_text = f"⚪ {status}"
 
@@ -576,6 +580,8 @@ def _build_promo_card_text(detail: dict) -> tuple[str, str]:
         status_text = "🟡 Черновик"
     elif status == "ended":
         status_text = "🔴 Завершен"
+    elif status == "archived":
+        status_text = "🗃 Архив"
     else:
         status_text = f"⚪ {status}"
 
@@ -763,11 +769,12 @@ async def adm_delete_ask(callback: CallbackQuery):
 
     await safe_edit_text(
         callback.message,
-        f"⚠️ Ты точно хочешь удалить конкурс?\n\n"
+        f"⚠️ Зархивировать конкурс?\n\n"
         f"KEY: {key}\n"
         f"Название: {title}\n"
         f"Награда: {amount}⭐\n"
-        f"Статус: {status}",
+        f"Статус: {status}\n\n"
+        "Он исчезнет из списков, но клеймы, победители и леджер останутся.",
         reply_markup=campaign_delete_confirm_kb(key),
     )
 
@@ -778,7 +785,7 @@ async def adm_delete_do(callback: CallbackQuery):
     key = callback.data.split(":", 3)[3]
 
     try:
-        await delete_campaign_via_api(key)
+        await archive_campaign_via_api(key)
     except ApiClientError as e:
         await callback.answer(f"❌ {e.detail}", show_alert=True)
         return
@@ -1109,7 +1116,9 @@ async def adm_promo_delete_ask(callback: CallbackQuery):
     text, _ = _build_promo_card_text(detail)
     await safe_edit_text(
         callback.message,
-        f"{text}\n\n❓ Удалить этот промокод?",
+        f"{text}\n\n"
+        "❓ Заархивировать этот промокод?\n\n"
+        "Он исчезнет из списков, но активации и леджер останутся.",
         reply_markup=promo_delete_confirm_kb(code),
     )
 
@@ -1120,14 +1129,14 @@ async def adm_promo_delete_do(callback: CallbackQuery):
     code = callback.data.split(":")[4]
 
     try:
-        await delete_promo_via_api(code)
+        await archive_promo_via_api(code)
     except ApiClientError as e:
         await callback.answer(f"❌ {e.detail}", show_alert=True)
         return
 
     await safe_edit_text(
         callback.message,
-        f"✅ Промокод {code} удален",
+        f"✅ Промокод {code} отправлен в архив",
         reply_markup=admin_back_kb("adm:promos_menu"),
     )
 
@@ -1864,8 +1873,15 @@ async def adm_audit_balances(callback: CallbackQuery):
     daily_bonus = float(audit.get("daily_bonus") or 0)
     subscription_bonus = float(audit.get("subscription_bonus") or 0)
     battle_bonus = float(audit.get("battle_bonus") or 0)
+    battle_negative = float(audit.get("battle_negative") or 0)
+    battle_positive = float(audit.get("battle_positive") or 0)
     theft_bonus = float(audit.get("theft_bonus") or 0)
+    theft_negative = float(audit.get("theft_negative") or 0)
+    theft_positive = float(audit.get("theft_positive") or 0)
     other_ledger_net = float(audit.get("other_ledger_net") or 0)
+
+    def fmt_signed(value: float) -> str:
+        return f"+{fmt_stars(value)}" if float(value) > 0 else fmt_stars(value)
 
     lines = [
         "🧮 Сверка балансов\n",
@@ -1876,8 +1892,10 @@ async def adm_audit_balances(callback: CallbackQuery):
         f"Получено за просмотры постов: {fmt_stars(view_post_bonus)}⭐\n"
         f"Получено за ежедневный бонус: {fmt_stars(daily_bonus)}⭐\n"
         f"Получено за подписки: {fmt_stars(subscription_bonus)}⭐\n"
-        f"Результат батлов: {fmt_stars(battle_bonus)}⭐\n"
-        f"Результат воровства: {fmt_stars(theft_bonus)}⭐\n"
+        f"Результат батлов: {fmt_stars(battle_bonus)}⭐ "
+        f"({fmt_signed(battle_negative)} и {fmt_signed(battle_positive)})\n"
+        f"Результат воровства: {fmt_stars(theft_bonus)}⭐ "
+        f"({fmt_signed(theft_negative)} и {fmt_signed(theft_positive)})\n"
         f"Получено от админа: {fmt_stars(admin_adjust_net)}⭐\n",
         f"Выведено: {fmt_stars(total_withdrawn_sum)}⭐",
         f"В обработке: {fmt_stars(pending_withdrawn_sum)}⭐\n",
@@ -2602,6 +2620,68 @@ async def adm_subscription_task_toggle(callback: CallbackQuery):
         callback.message,
         text,
         reply_markup=admin_subscription_task_card_kb(resolved_task_id, is_active),
+    )
+
+
+@router.callback_query(F.data.startswith("adm:sub:archive:ask:"))
+async def adm_subscription_task_archive_ask(callback: CallbackQuery):
+    await callback.answer()
+    task_id = int((callback.data or "").rsplit(":", 1)[1])
+
+    try:
+        detail = await get_subscription_task_via_api(task_id)
+    except ApiClientError as e:
+        await safe_edit_text(
+            callback.message,
+            f"❌ Не удалось открыть задание подписки.\n\n{e.detail}",
+            reply_markup=admin_subscription_tasks_kb([]),
+        )
+        return
+
+    text, _, resolved_task_id = _build_subscription_task_card_text(detail)
+    await safe_edit_text(
+        callback.message,
+        f"{text}\n\n"
+        "⚠️ Заархивировать это задание подписки?\n\n"
+        "Оно исчезнет из админского списка и новых заданий для пользователей. "
+        "Те, кто уже вошел в задание, смогут доклеймить ежедневные награды.",
+        reply_markup=admin_subscription_task_archive_confirm_kb(resolved_task_id),
+    )
+
+
+@router.callback_query(F.data.startswith("adm:sub:archive:do:"))
+async def adm_subscription_task_archive_do(callback: CallbackQuery):
+    await callback.answer()
+    task_id = int((callback.data or "").rsplit(":", 1)[1])
+
+    try:
+        await archive_subscription_task_via_api(task_id)
+        result = await list_subscription_tasks_via_api()
+    except ApiClientError as e:
+        await safe_edit_text(
+            callback.message,
+            f"❌ Не удалось заархивировать задание подписки.\n\n{e.detail}",
+            reply_markup=admin_subscription_tasks_kb([]),
+        )
+        return
+
+    rows = result.get("items") or []
+    if not rows:
+        await safe_edit_text(
+            callback.message,
+            "✅ Задание подписки отправлено в архив.\n\n"
+            "📢 Подписки\n\n"
+            "Пока нет заданий подписаться на канал.",
+            reply_markup=admin_subscription_tasks_kb([]),
+        )
+        return
+
+    await safe_edit_text(
+        callback.message,
+        "✅ Задание подписки отправлено в архив.\n\n"
+        "📢 Подписки\n\n"
+        "Выбери задание:",
+        reply_markup=admin_subscription_tasks_kb(rows),
     )
 
 

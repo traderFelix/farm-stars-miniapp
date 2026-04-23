@@ -14,6 +14,7 @@ from fastapi import HTTPException
 from shared.config import TELEGRAM_BOT_TOKEN
 from shared.db.common import tx
 from shared.db.subscriptions import (
+    archive_subscription_task,
     create_subscription_task,
     get_subscription_task,
     list_subscription_tasks,
@@ -126,6 +127,7 @@ def _serialize_task(row: Any) -> dict[str, Any]:
         "max_subscribers": int(row["max_subscribers"] or 0),
         "participants_count": int(row["participants_count"] or 0),
         "is_active": bool(row["is_active"] or 0),
+        "is_archived": bool(row["is_archived"] or 0) if "is_archived" in row.keys() else False,
         "assignment_count": int(row["assignment_count"] or 0) if "assignment_count" in row.keys() else 0,
         "active_count": int(row["active_count"] or 0) if "active_count" in row.keys() else 0,
         "completed_count": int(row["completed_count"] or 0) if "completed_count" in row.keys() else 0,
@@ -274,6 +276,8 @@ async def set_admin_subscription_task_status(
     row = await get_subscription_task(db, int(task_id))
     if not row:
         raise HTTPException(status_code=404, detail="Задание подписки не найдено.")
+    if int(row["is_archived"] or 0) == 1:
+        raise HTTPException(status_code=404, detail="Задание подписки уже в архиве.")
 
     verified_title: Optional[str] = None
     if is_active:
@@ -297,3 +301,26 @@ async def set_admin_subscription_task_status(
         )
 
     return await build_admin_subscription_task_detail(db, int(task_id))
+
+
+async def archive_admin_subscription_task(
+        db: aiosqlite.Connection,
+        *,
+        task_id: int,
+) -> dict[str, Any]:
+    row = await get_subscription_task(db, int(task_id))
+    if not row:
+        raise HTTPException(status_code=404, detail="Задание подписки не найдено.")
+    if int(row["is_archived"] or 0) == 1:
+        return {
+            "ok": True,
+            "task_id": int(task_id),
+        }
+
+    async with tx(db, immediate=True):
+        await archive_subscription_task(db, task_id=int(task_id))
+
+    return {
+        "ok": True,
+        "task_id": int(task_id),
+    }

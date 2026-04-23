@@ -42,6 +42,7 @@ async def ensure_subscription_tasks_schema(db: aiosqlite.Connection) -> None:
             max_subscribers INTEGER NOT NULL,
             participants_count INTEGER NOT NULL DEFAULT 0,
             is_active INTEGER NOT NULL DEFAULT 0,
+            is_archived INTEGER NOT NULL DEFAULT 0,
             created_at TEXT NOT NULL DEFAULT (datetime('now')),
             updated_at TEXT
         )
@@ -52,6 +53,12 @@ async def ensure_subscription_tasks_schema(db: aiosqlite.Connection) -> None:
         "subscription_tasks",
         "admin_unavailable_notified_at",
         "TEXT",
+    )
+    await _add_column_if_missing(
+        db,
+        "subscription_tasks",
+        "is_archived",
+        "INTEGER NOT NULL DEFAULT 0",
     )
     await db.execute(
         """
@@ -172,6 +179,7 @@ async def list_subscription_tasks(db: aiosqlite.Connection) -> list[Any]:
             COALESCE(SUM(CASE WHEN a.status = 'abandoned' THEN 1 ELSE 0 END), 0) AS abandoned_count
         FROM subscription_tasks t
         LEFT JOIN subscription_assignments a ON a.task_id = t.id
+        WHERE COALESCE(t.is_archived, 0) = 0
         GROUP BY t.id
         ORDER BY t.id DESC
         """
@@ -210,6 +218,24 @@ async def set_subscription_task_title(
         WHERE id = ?
         """,
         (str(title or "").strip(), int(task_id)),
+    )
+
+
+async def archive_subscription_task(
+        db: aiosqlite.Connection,
+        *,
+        task_id: int,
+) -> None:
+    await ensure_subscription_tasks_schema(db)
+    await db.execute(
+        """
+        UPDATE subscription_tasks
+        SET is_archived = 1,
+            is_active = 0,
+            updated_at = datetime('now')
+        WHERE id = ?
+        """,
+        (int(task_id),),
     )
 
 
@@ -265,6 +291,7 @@ async def list_available_subscription_tasks_for_user(
         LEFT JOIN subscription_assignments a
           ON a.task_id = t.id AND a.user_id = ?
         WHERE t.is_active = 1
+          AND COALESCE(t.is_archived, 0) = 0
           AND t.participants_count < t.max_subscribers
           AND a.id IS NULL
         ORDER BY t.id DESC

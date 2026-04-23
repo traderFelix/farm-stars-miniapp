@@ -9,6 +9,7 @@ from api.schemas.admin.subscriptions import (
     AdminSubscriptionTaskToggleRequest,
 )
 from api.services.admin.subscriptions import (
+    archive_admin_subscription_task,
     build_admin_subscription_task_detail,
     create_admin_subscription_task,
     list_admin_subscription_tasks,
@@ -27,6 +28,15 @@ async def list_subscription_tasks_route():
     db = await get_db()
     try:
         return await list_admin_subscription_tasks(db)
+    finally:
+        await db.close()
+
+
+@router.post("/{task_id}/archive")
+async def archive_subscription_task_route(task_id: int):
+    db = await get_db()
+    try:
+        return await archive_admin_subscription_task(db, task_id=int(task_id))
     finally:
         await db.close()
 

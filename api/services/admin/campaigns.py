@@ -7,10 +7,10 @@ from fastapi import HTTPException
 
 from shared.db.campaigns import (
     add_winners,
+    archive_campaign,
     campaign_stats,
     campaigns_status_counts,
     claimed_usernames,
-    delete_campaign,
     delete_winner_if_not_claimed,
     get_campaign,
     global_claims_stats,
@@ -84,7 +84,7 @@ def _normalize_campaign_post_url(value: Optional[str]) -> Optional[str]:
 
 def _normalize_status(value: str) -> str:
     normalized = (value or "").strip().lower()
-    if normalized not in {"draft", "active", "ended"}:
+    if normalized not in {"draft", "active", "ended", "archived"}:
         raise HTTPException(status_code=400, detail="Некорректный статус конкурса.")
     return normalized
 
@@ -137,7 +137,9 @@ async def update_campaign_status(
         status: str,
 ) -> dict[str, Any]:
     normalized_status = _normalize_status(status)
-    await _get_campaign_or_404(db, campaign_key)
+    row = await _get_campaign_or_404(db, campaign_key)
+    if str(row["status"] or "") == "archived":
+        raise HTTPException(status_code=404, detail="Конкурс уже в архиве.")
 
     async with tx(db, immediate=False):
         await set_campaign_status(db, campaign_key, normalized_status)
@@ -145,19 +147,26 @@ async def update_campaign_status(
     return await get_campaign_detail(db, campaign_key)
 
 
-async def delete_campaign_entry(
+async def archive_campaign_entry(
         db: aiosqlite.Connection,
         campaign_key: str,
 ) -> dict[str, Any]:
     await _get_campaign_or_404(db, campaign_key)
 
     async with tx(db):
-        await delete_campaign(db, campaign_key)
+        await archive_campaign(db, campaign_key)
 
     return {
         "ok": True,
         "campaign_key": campaign_key,
     }
+
+
+async def delete_campaign_entry(
+        db: aiosqlite.Connection,
+        campaign_key: str,
+) -> dict[str, Any]:
+    return await archive_campaign_entry(db, campaign_key)
 
 
 async def add_campaign_winners(

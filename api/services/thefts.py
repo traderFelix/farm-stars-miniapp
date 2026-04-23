@@ -351,7 +351,7 @@ def _build_theft_resolved_text(*, theft_row: TheftRowLike, user_id: int) -> str:
         if role == "victim":
             return (
                 "🛡 Атака отбита\n\n"
-                f"Ты защитился от {opponent_name}, заблокированные {amount:g}⭐ вернулись на баланс"
+                f"Ты защитился от {opponent_name}, {amount:g}⭐ вернулись на баланс"
             )
         return (
             "🛡 Кражу отбили\n\n"
@@ -360,7 +360,7 @@ def _build_theft_resolved_text(*, theft_row: TheftRowLike, user_id: int) -> str:
 
     return (
         "⌛ Кража сорвалась\n\n"
-        f"Время вышло, заблокированные {amount:g}⭐ вернулись владельцу"
+        f"Время вышло, {amount:g}⭐ вернулись владельцу"
     )
 
 

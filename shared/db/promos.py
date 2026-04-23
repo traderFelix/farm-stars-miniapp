@@ -95,9 +95,18 @@ async def delete_promo(
         db: aiosqlite.Connection,
         promo_code: str,
 ) -> None:
+    await archive_promo(db, promo_code)
+
+
+async def archive_promo(
+        db: aiosqlite.Connection,
+        promo_code: str,
+) -> None:
     await ensure_promos_schema(db)
-    await db.execute("DELETE FROM promo_claims WHERE promo_code = ?", (promo_code,))
-    await db.execute("DELETE FROM promo_codes WHERE promo_code = ?", (promo_code,))
+    await db.execute(
+        "UPDATE promo_codes SET status = ? WHERE promo_code = ?",
+        ("archived", promo_code),
+    )
 
 
 async def get_promo(
@@ -130,6 +139,7 @@ async def list_promos(db: aiosqlite.Connection):
                 COUNT(pc.id) AS claims_count
             FROM promo_codes p
             LEFT JOIN promo_claims pc ON pc.promo_code = p.promo_code
+            WHERE p.status != 'archived'
             GROUP BY p.promo_code, p.title, p.reward_amount, p.total_uses, p.status, p.created_at
             ORDER BY datetime(p.created_at) DESC
             """
@@ -154,6 +164,7 @@ async def list_promos_latest(
                 COUNT(pc.id) AS claims_count
             FROM promo_codes p
             LEFT JOIN promo_claims pc ON pc.promo_code = p.promo_code
+            WHERE p.status != 'archived'
             GROUP BY p.promo_code, p.title, p.reward_amount, p.total_uses, p.status, p.created_at
             ORDER BY datetime(p.created_at) DESC
             LIMIT ?
@@ -166,7 +177,7 @@ async def list_promos_latest(
 async def promos_status_counts(db: aiosqlite.Connection) -> tuple[int, int, int]:
     await ensure_promos_schema(db)
     async with db.execute(
-            "SELECT status, COUNT(*) AS cnt FROM promo_codes GROUP BY status"
+            "SELECT status, COUNT(*) AS cnt FROM promo_codes WHERE status != 'archived' GROUP BY status"
     ) as cur:
         rows = await cur.fetchall()
 
@@ -285,6 +296,7 @@ async def total_assigned_amount(db: aiosqlite.Connection) -> float:
             """
             SELECT COALESCE(SUM(reward_amount * total_uses), 0) AS total
             FROM promo_codes
+            WHERE status != 'archived'
             """
     ) as cur:
         row = await cur.fetchone()
@@ -307,6 +319,7 @@ async def unclaimed_total_amount(db: aiosqlite.Connection) -> float:
                 FROM promo_claims
                 GROUP BY promo_code
             ) pc ON pc.promo_code = p.promo_code
+            WHERE p.status != 'archived'
             """
     ) as cur:
         row = await cur.fetchone()

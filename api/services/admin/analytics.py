@@ -9,6 +9,7 @@ from shared.db.ledger import (
     ledger_sum_battle_net,
     ledger_sum_by_reason,
     ledger_sum_theft_net,
+    ledger_sum_unrefunded_battle_entries,
     ledger_sum_unknown_audit_net,
     list_global_ledger_page,
 )
@@ -133,7 +134,11 @@ async def get_audit(
     daily_bonus = await ledger_sum_by_reason(db, "daily_bonus")
     subscription_bonus = await ledger_sum_by_reason(db, "subscription_bonus")
     battle_bonus = await ledger_sum_battle_net(db)
+    battle_negative = await ledger_sum_unrefunded_battle_entries(db)
+    battle_positive = await ledger_sum_by_reason(db, "battle_bonus")
     theft_bonus = await ledger_sum_theft_net(db)
+    theft_negative = await ledger_sum_by_reason(db, "theft_loss")
+    theft_positive = await ledger_sum_by_reason(db, "theft_win")
     other_ledger_net = await ledger_sum_unknown_audit_net(db)
 
     return {
@@ -147,7 +152,11 @@ async def get_audit(
         "daily_bonus": float(daily_bonus),
         "subscription_bonus": float(subscription_bonus),
         "battle_bonus": float(battle_bonus),
+        "battle_negative": float(battle_negative),
+        "battle_positive": float(battle_positive),
         "theft_bonus": float(theft_bonus),
+        "theft_negative": float(theft_negative),
+        "theft_positive": float(theft_positive),
         "other_ledger_net": float(other_ledger_net),
         "admin_adjust_net": float(admin_added - admin_removed),
         "total_withdrawn": float(total_withdrawn_sum),

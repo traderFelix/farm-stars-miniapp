@@ -162,6 +162,8 @@ def _status_icon(status: str) -> str:
         return "🔴"
     if status == "draft":
         return "🟡"
+    if status == "archived":
+        return "🗃"
     return "⚪"
 
 def campaigns_list_kb(rows, back_callback: str = "adm:back") -> InlineKeyboardMarkup:
@@ -206,6 +208,11 @@ def stats_list_kb(rows, back_callback: str = "adm:back") -> InlineKeyboardMarkup
 def campaign_manage_kb(key: str, status: str) -> InlineKeyboardMarkup:
     keyboard = []
 
+    if status == "archived":
+        keyboard.append([InlineKeyboardButton(text="📊 Статистика", callback_data=f"adm:stats:{key}")])
+        keyboard.append([InlineKeyboardButton(text="⬅ Назад", callback_data="adm:list")])
+        return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
     if status == "active":
         keyboard.append([InlineKeyboardButton(text="🔴 Выключить", callback_data=f"adm:off:{key}")])
     else:
@@ -218,7 +225,7 @@ def campaign_manage_kb(key: str, status: str) -> InlineKeyboardMarkup:
 
     keyboard.append([
         InlineKeyboardButton(text="➖ Удалить победителя", callback_data=f"adm:winner_del:{key}"),
-        InlineKeyboardButton(text="🗑 Удалить конкурс", callback_data=f"adm:del:ask:{key}"),
+        InlineKeyboardButton(text="🗃 Заархивировать", callback_data=f"adm:del:ask:{key}"),
     ])
 
     keyboard.append([
@@ -230,7 +237,7 @@ def campaign_manage_kb(key: str, status: str) -> InlineKeyboardMarkup:
 def campaign_delete_confirm_kb(key: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="✅ Да, удалить", callback_data=f"adm:del:do:{key}")],
+            [InlineKeyboardButton(text="✅ Да, в архив", callback_data=f"adm:del:do:{key}")],
             [InlineKeyboardButton(text="⬅ Назад", callback_data=f"adm:open:{key}")],
         ]
     )
@@ -265,13 +272,18 @@ def promos_list_kb(rows, back_callback: str = "adm:back") -> InlineKeyboardMarku
 def promo_manage_kb(code: str, status: str) -> InlineKeyboardMarkup:
     keyboard = []
 
+    if status == "archived":
+        keyboard.append([InlineKeyboardButton(text="📊 Статистика", callback_data=f"adm:promo:stats:{code}")])
+        keyboard.append([InlineKeyboardButton(text="⬅ Назад", callback_data="adm:promo:list")])
+        return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
     if status == "active":
         keyboard.append([InlineKeyboardButton(text="🔴 Выключить", callback_data=f"adm:promo:off:{code}")])
     else:
         keyboard.append([InlineKeyboardButton(text="🟢 Включить", callback_data=f"adm:promo:on:{code}")])
 
     keyboard.append([InlineKeyboardButton(text="📊 Статистика", callback_data=f"adm:promo:stats:{code}")])
-    keyboard.append([InlineKeyboardButton(text="🗑 Удалить промокод", callback_data=f"adm:promo:del:ask:{code}")])
+    keyboard.append([InlineKeyboardButton(text="🗃 Заархивировать", callback_data=f"adm:promo:del:ask:{code}")])
     keyboard.append([InlineKeyboardButton(text="⬅ Назад", callback_data="adm:promo:list")])
 
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
@@ -280,7 +292,7 @@ def promo_manage_kb(code: str, status: str) -> InlineKeyboardMarkup:
 def promo_delete_confirm_kb(code: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="✅ Да, удалить", callback_data=f"adm:promo:del:do:{code}")],
+            [InlineKeyboardButton(text="✅ Да, в архив", callback_data=f"adm:promo:del:do:{code}")],
             [InlineKeyboardButton(text="⬅ Назад", callback_data=f"adm:promo:open:{code}")],
         ]
     )
@@ -402,7 +414,17 @@ def admin_subscription_task_card_kb(task_id: int, is_active: bool) -> InlineKeyb
                 text="🔴 Отключить" if is_active else "🟢 Включить",
                 callback_data=f"adm:sub:toggle:{int(task_id)}:{0 if is_active else 1}",
             )],
+            [InlineKeyboardButton(text="🗃 Заархивировать", callback_data=f"adm:sub:archive:ask:{int(task_id)}")],
             [InlineKeyboardButton(text="⬅ Назад", callback_data="adm:sub:list")],
+        ]
+    )
+
+
+def admin_subscription_task_archive_confirm_kb(task_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Да, в архив", callback_data=f"adm:sub:archive:do:{int(task_id)}")],
+            [InlineKeyboardButton(text="⬅ Назад", callback_data=f"adm:sub:open:{int(task_id)}")],
         ]
     )
 

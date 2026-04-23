@@ -17,6 +17,7 @@ from api.schemas.admin.campaigns import (
 )
 from api.services.admin.campaigns import (
     add_campaign_winners,
+    archive_campaign_entry,
     create_campaign_entry,
     delete_campaign_entry,
     delete_campaign_winner,
@@ -91,6 +92,15 @@ async def delete_campaign_route(campaign_key: str):
     db = await get_db()
     try:
         return await delete_campaign_entry(db, campaign_key)
+    finally:
+        await db.close()
+
+
+@router.post("/{campaign_key}/archive")
+async def archive_campaign_route(campaign_key: str):
+    db = await get_db()
+    try:
+        return await archive_campaign_entry(db, campaign_key)
     finally:
         await db.close()
 

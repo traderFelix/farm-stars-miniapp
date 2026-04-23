@@ -15,6 +15,7 @@ class AdminSubscriptionTaskItem(BaseModel):
     max_subscribers: int
     participants_count: int
     is_active: bool
+    is_archived: bool = False
     assignment_count: int = 0
     active_count: int = 0
     completed_count: int = 0
