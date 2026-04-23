@@ -1692,11 +1692,11 @@ function SubscriptionTaskCard({
       </div>
 
       <div className="mining-subscription-card__limit">
-        <span>Лимит</span>
+        <span>Лимит подписчиков</span>
         <strong>{task.participants_count}/{task.max_subscribers}</strong>
       </div>
       <div className="mining-subscription-card__track" aria-hidden="true">
-        <span style={{ width: `${percent}%` }} />
+        <span className="mining-subscription-card__track-fill" style={{ width: `${percent}%` }} />
       </div>
 
       <div className="mining-subscription-card__actions">
@@ -1790,11 +1790,11 @@ function SubscriptionActiveCard({
       </div>
       <div
         className="mining-subscription-card__track"
-        aria-label={`${assignment.daily_claims_done}/${assignment.daily_claim_days}`}
+        aria-label={`${assignment.daily_claims_done}/${assignment.daily_claim_days} клеймов`}
       >
         <span className="mining-subscription-card__track-fill" style={{ width: `${percent}%` }} />
         <span className="mining-subscription-card__track-value">
-          {assignment.daily_claims_done}/{assignment.daily_claim_days}
+          {assignment.daily_claims_done}/{assignment.daily_claim_days} клеймов
         </span>
       </div>
       <p className="mining-subscription-card__hint">
