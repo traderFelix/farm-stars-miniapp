@@ -987,7 +987,10 @@ export default function HomePage() {
                     action={
                       subscriptionStatus ? (
                         <span className="mining-subscriptions-slots">
-                          Занято слотов {subscriptionStatus.slots_used}/{subscriptionStatus.slot_limit}
+                          <span>Занято слотов </span>
+                          <strong>
+                            {subscriptionStatus.slots_used}/{subscriptionStatus.slot_limit}
+                          </strong>
                         </span>
                       ) : null
                     }
@@ -1092,14 +1095,14 @@ function SectionHeader({
 }) {
   return (
     <div className="flex items-start justify-between gap-3">
-      <div>
+      <div className="min-w-0 flex-1">
         {eyebrow ? <div className="mining-kicker">{eyebrow}</div> : null}
         <h2 className={eyebrow ? "mt-1 text-xl font-semibold text-white" : "text-xl font-semibold text-white"}>
           {title}
         </h2>
         <p className="mt-1 text-sm text-slate-300">{description}</p>
       </div>
-      {action}
+      {action ? <div className="shrink-0">{action}</div> : null}
     </div>
   );
 }
@@ -1753,12 +1756,17 @@ function SubscriptionActiveCard({
         <span>До следующего клейма</span>
         <strong>{claimTimerLabel}</strong>
       </div>
-      <div className="mining-subscription-card__track" aria-hidden="true">
-        <span style={{ width: `${percent}%` }} />
+      <div
+        className="mining-subscription-card__track"
+        aria-label={`${assignment.daily_claims_done}/${assignment.daily_claim_days}`}
+      >
+        <span className="mining-subscription-card__track-fill" style={{ width: `${percent}%` }} />
+        <span className="mining-subscription-card__track-value">
+          {assignment.daily_claims_done}/{assignment.daily_claim_days}
+        </span>
       </div>
       <p className="mining-subscription-card__hint">
-        Получено дней {assignment.daily_claims_done}/{assignment.daily_claim_days}. Осталось забрать{" "}
-        {formatCompactBalance(assignment.remaining_reward)} ⭐
+        Осталось забрать {formatCompactBalance(assignment.remaining_reward)} ⭐
       </p>
 
       <div className="mining-subscription-card__actions">

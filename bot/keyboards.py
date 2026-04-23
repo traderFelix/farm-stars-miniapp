@@ -9,7 +9,7 @@ from shared.config import WEB_ORIGIN_NGROK, ROLE_ADMIN, ROLE_CLIENT, ROLE_PARTNE
 
 # ---------- USER KEYBOARDS ----------
 
-MINIAPP_MENU_BUTTON_TEXT = "Запустить"
+MINIAPP_MENU_BUTTON_TEXT = "Запуск"
 
 
 def _miniapp_button() -> InlineKeyboardButton:
