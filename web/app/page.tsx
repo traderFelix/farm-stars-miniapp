@@ -1697,12 +1697,13 @@ function SubscriptionTaskCard({
             <a
               href={task.channel_url}
               className="mining-subscription-card__title-link"
+              title={task.title}
               onClick={(event) => {
                 event.preventDefault();
                 onOpenChannel(task.channel_url);
               }}
             >
-              <SubscriptionChannelTitleText title={task.title} />
+              {truncateSubscriptionChannelTitle(task.title)}
             </a>
           </h3>
         </div>
@@ -1760,14 +1761,6 @@ function truncateSubscriptionChannelTitle(title: string, maxLength = 22): string
   return `${chars.slice(0, maxLength).join("")}...`;
 }
 
-function SubscriptionChannelTitleText({ title }: { title: string }) {
-  return (
-    <span className="mining-subscription-card__title-text" title={title}>
-      {truncateSubscriptionChannelTitle(title)}
-    </span>
-  );
-}
-
 function SubscriptionActiveCard({
   assignment,
   nowMs,
@@ -1806,12 +1799,13 @@ function SubscriptionActiveCard({
             <a
               href={assignment.channel_url}
               className="mining-subscription-card__title-link"
+              title={assignment.title}
               onClick={(event) => {
                 event.preventDefault();
                 onOpenChannel(assignment.channel_url);
               }}
             >
-              <SubscriptionChannelTitleText title={assignment.title} />
+              {truncateSubscriptionChannelTitle(assignment.title)}
             </a>
           </h3>
         </div>
