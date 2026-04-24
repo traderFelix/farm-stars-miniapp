@@ -175,6 +175,16 @@ async def get_subscription_task(db: aiosqlite.Connection, task_id: int) -> Optio
 
 async def list_subscription_tasks(db: aiosqlite.Connection) -> list[Any]:
     await ensure_subscription_tasks_schema(db)
+    await db.execute(
+        """
+        UPDATE subscription_tasks
+        SET is_active = 0,
+            updated_at = datetime('now')
+        WHERE is_active = 1
+          AND COALESCE(is_archived, 0) = 0
+          AND participants_count >= max_subscribers
+        """
+    )
     async with db.execute(
         """
         SELECT
@@ -456,6 +466,10 @@ async def increment_subscription_task_participants(
         """
         UPDATE subscription_tasks
         SET participants_count = participants_count + 1,
+            is_active = CASE
+                WHEN participants_count + 1 >= max_subscribers THEN 0
+                ELSE is_active
+            END,
             updated_at = datetime('now')
         WHERE id = ?
         """,

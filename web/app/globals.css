@@ -2156,10 +2156,11 @@ textarea:focus {
 }
 
 .mining-subscription-card__title-link {
+  display: block;
+  max-width: 100%;
+  min-width: 0;
   color: inherit;
-  text-decoration: underline;
-  text-decoration-color: rgba(99, 240, 255, 0.42);
-  text-underline-offset: 0.14em;
+  text-decoration: none;
   transition:
     color 160ms ease,
     text-decoration-color 160ms ease;
@@ -2170,14 +2171,28 @@ textarea:focus {
 }
 
 .mining-subscription-card[data-active="true"] .mining-subscription-card__title-link {
-  display: inline-flex;
-  align-items: center;
   min-height: 1.62rem;
+}
+
+.mining-subscription-card__title-text {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-decoration: underline;
+  text-decoration-color: rgba(99, 240, 255, 0.42);
+  text-underline-offset: 0.14em;
+  transition: text-decoration-color 160ms ease;
 }
 
 .mining-subscription-card__title-link:hover,
 .mining-subscription-card__title-link:focus-visible {
   color: #c9f6ff;
+}
+
+.mining-subscription-card__title-link:hover .mining-subscription-card__title-text,
+.mining-subscription-card__title-link:focus-visible .mining-subscription-card__title-text {
   text-decoration-color: rgba(201, 246, 255, 0.82);
 }
 

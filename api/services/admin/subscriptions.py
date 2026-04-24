@@ -281,6 +281,11 @@ async def set_admin_subscription_task_status(
 
     verified_title: Optional[str] = None
     if is_active:
+        if int(row["participants_count"] or 0) >= int(row["max_subscribers"] or 0):
+            raise HTTPException(
+                status_code=400,
+                detail="Нельзя включить задание: лимит подписчиков уже заполнен.",
+            )
         verified_title = await _verified_subscription_channel_title(str(row["chat_id"]))
 
     async with tx(db, immediate=True):

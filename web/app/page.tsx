@@ -1702,7 +1702,7 @@ function SubscriptionTaskCard({
                 onOpenChannel(task.channel_url);
               }}
             >
-              {task.title}
+              <SubscriptionChannelTitleText title={task.title} />
             </a>
           </h3>
         </div>
@@ -1751,6 +1751,23 @@ function SubscriptionTaskCard({
   );
 }
 
+function truncateSubscriptionChannelTitle(title: string, maxLength = 22): string {
+  const normalized = title.trim();
+  const chars = Array.from(normalized);
+  if (chars.length <= maxLength) {
+    return normalized;
+  }
+  return `${chars.slice(0, maxLength).join("")}...`;
+}
+
+function SubscriptionChannelTitleText({ title }: { title: string }) {
+  return (
+    <span className="mining-subscription-card__title-text" title={title}>
+      {truncateSubscriptionChannelTitle(title)}
+    </span>
+  );
+}
+
 function SubscriptionActiveCard({
   assignment,
   nowMs,
@@ -1794,7 +1811,7 @@ function SubscriptionActiveCard({
                 onOpenChannel(assignment.channel_url);
               }}
             >
-              {assignment.title}
+              <SubscriptionChannelTitleText title={assignment.title} />
             </a>
           </h3>
         </div>
