@@ -7,6 +7,9 @@ class AdminSubscriptionTaskItem(BaseModel):
     id: int
     chat_id: str
     title: str
+    client_user_id: Optional[int] = None
+    client_username: Optional[str] = None
+    client_first_name: Optional[str] = None
     channel_url: str
     instant_reward: float
     daily_reward_total: float
@@ -30,6 +33,7 @@ class AdminSubscriptionTasksResponse(BaseModel):
 class AdminSubscriptionTaskCreateRequest(BaseModel):
     chat_id: str
     title: Optional[str] = None
+    client_user_id: Optional[int] = None
     channel_url: str
     instant_reward: float
     daily_reward_total: float
@@ -43,3 +47,7 @@ class AdminSubscriptionTaskDetailResponse(BaseModel):
 
 class AdminSubscriptionTaskToggleRequest(BaseModel):
     is_active: bool
+
+
+class AdminSubscriptionTaskClientBindRequest(BaseModel):
+    client_user_id: int

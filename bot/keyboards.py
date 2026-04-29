@@ -37,13 +37,13 @@ def main_menu(role_level: int = 0) -> InlineKeyboardMarkup:
         [_miniapp_button()],
         [InlineKeyboardButton(text="👁 Просмотр постов", callback_data="tasks")],
     ]
-    rows.append([InlineKeyboardButton(text="💬 Связь с админом", url=ADMIN_CONTACT_URL)])
     if role_level >= ROLE_CLIENT:
         rows.append([InlineKeyboardButton(text="🤝 Кабинет клиента", callback_data="client:home")])
     if role_level >= ROLE_PARTNER:
         rows.append([InlineKeyboardButton(text="💼 Кабинет партнера", callback_data="partner:home")])
     if role_level >= ROLE_ADMIN:
         rows.append([InlineKeyboardButton(text="🔐 Админка", callback_data="adm:home")])
+    rows.append([InlineKeyboardButton(text="💬 Связь с админом", url=ADMIN_CONTACT_URL)])
 
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -60,6 +60,106 @@ def task_after_view_kb() -> InlineKeyboardMarkup:
         inline_keyboard=[
             [InlineKeyboardButton(text="👁 Смотреть следующий пост", callback_data="task:view_post")],
             [InlineKeyboardButton(text="⬅ Назад", callback_data="back")],
+        ]
+    )
+
+
+def client_home_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="📋 Мои каналы", callback_data="client:channels")],
+            [InlineKeyboardButton(text="🧾 Мои заказы", callback_data="client:orders")],
+            [InlineKeyboardButton(text="⬅ Назад", callback_data="back")],
+        ]
+    )
+
+
+def client_channels_kb(rows) -> InlineKeyboardMarkup:
+    keyboard = []
+    for row in rows:
+        channel_id = int(row["id"])
+        title = (row.get("title") or "").strip() or str(row.get("chat_id") or f"#{channel_id}")
+        remaining = int(row.get("remaining_views") or 0)
+        total = int(row.get("total_bought_views") or 0)
+        has_views = bool(row.get("has_views") or False)
+        has_subscriptions = bool(row.get("has_subscriptions") or False)
+        status = "🟢" if bool(row.get("is_active")) else "⏸"
+        suffix = f"{remaining}/{total}" if has_views else "👥 подписки"
+        if has_views and has_subscriptions:
+            suffix = f"{remaining}/{total} • 👥"
+        keyboard.append([
+            InlineKeyboardButton(
+                text=f"{status} {title} • {suffix}",
+                callback_data=f"client:channel:{channel_id}",
+            )
+        ])
+
+    keyboard.append([InlineKeyboardButton(text="⬅ Назад", callback_data="client:home")])
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+
+def client_channel_kb(channel) -> InlineKeyboardMarkup:
+    channel_id = int(channel["id"])
+    has_views = bool(channel.get("has_views") or False)
+    has_subscriptions = bool(channel.get("has_subscriptions") or False)
+
+    keyboard = []
+    if has_views:
+        keyboard.append([InlineKeyboardButton(text="📊 Статистика просмотров", callback_data=f"client:channel:{channel_id}:views")])
+    if has_subscriptions:
+        keyboard.append([InlineKeyboardButton(text="📊 Статистика подписок", callback_data=f"client:channel:{channel_id}:subs")])
+    if not keyboard:
+        keyboard.append([InlineKeyboardButton(text="📊 Статистика просмотров", callback_data=f"client:channel:{channel_id}:views")])
+    keyboard.append([InlineKeyboardButton(text="⬅ Назад", callback_data="client:channels")])
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+
+def client_view_stats_kb(channel_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="📊 Статус по постам", callback_data=f"client:channel:{int(channel_id)}:posts")],
+            [InlineKeyboardButton(text="⬅ Назад", callback_data=f"client:channel:{int(channel_id)}")],
+        ]
+    )
+
+
+def client_subscription_stats_kb(channel_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="📊 Статус кампаний", callback_data=f"client:channel:{int(channel_id)}:campaigns")],
+            [InlineKeyboardButton(text="⬅ Назад", callback_data=f"client:channel:{int(channel_id)}")],
+        ]
+    )
+
+
+def client_posts_nav_kb(channel_id: int, page: int, has_next: bool) -> InlineKeyboardMarkup:
+    row = []
+    if page > 0:
+        row.append(
+            InlineKeyboardButton(
+                text="⬅ Пред",
+                callback_data=f"client:channel:{int(channel_id)}:posts:{int(page) - 1}",
+            )
+        )
+    if has_next:
+        row.append(
+            InlineKeyboardButton(
+                text="След ➡",
+                callback_data=f"client:channel:{int(channel_id)}:posts:{int(page) + 1}",
+            )
+        )
+
+    keyboard = []
+    if row:
+        keyboard.append(row)
+    keyboard.append([InlineKeyboardButton(text="⬅ Назад", callback_data=f"client:channel:{int(channel_id)}:views")])
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+
+def client_back_kb(callback_data: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="⬅ Назад", callback_data=callback_data)],
         ]
     )
 
@@ -411,6 +511,7 @@ def admin_subscription_tasks_kb(rows) -> InlineKeyboardMarkup:
 def admin_subscription_task_card_kb(task_id: int, is_active: bool) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
+            [InlineKeyboardButton(text="👤 Привязать клиента", callback_data=f"adm:sub:client:{int(task_id)}")],
             [InlineKeyboardButton(
                 text="🔴 Отключить" if is_active else "🟢 Включить",
                 callback_data=f"adm:sub:toggle:{int(task_id)}:{0 if is_active else 1}",

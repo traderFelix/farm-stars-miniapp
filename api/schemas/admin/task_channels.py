@@ -50,6 +50,8 @@ class TaskChannelPostItem(BaseModel):
 class TaskChannelPostsResponse(BaseModel):
     channel: TaskChannelItem
     items: list[TaskChannelPostItem]
+    page: int = 0
+    has_next: bool = False
 
 
 class TaskChannelCreateRequest(BaseModel):

@@ -19,6 +19,7 @@ from api.routes.auth import router as auth_router
 from api.routes.battles import router as battles_router
 from api.routes.campaigns import router as campaigns_router
 from api.routes.health import router as health_router
+from api.routes.internal_client_cabinet import router as internal_client_cabinet_router
 from api.routes.internal_users import router as internal_users_router
 from api.routes.miniapp_compat import router as miniapp_compat_router
 from api.routes.profile import router as profile_router
@@ -96,6 +97,7 @@ app.include_router(auth_router)
 app.include_router(battles_router)
 app.include_router(campaigns_router)
 app.include_router(promos_router)
+app.include_router(internal_client_cabinet_router)
 app.include_router(internal_users_router)
 app.include_router(profile_router)
 app.include_router(referrals_router)

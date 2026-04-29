@@ -127,10 +127,10 @@ async def update_task_channel_title_route(
 
 
 @router.get("/{channel_id}/posts", response_model=TaskChannelPostsResponse)
-async def get_task_channel_posts_route(channel_id: int, limit: int = 20):
+async def get_task_channel_posts_route(channel_id: int, limit: int = 5, page: int = 0):
     db = await get_db()
     try:
-        return await get_channel_posts(db, channel_id, limit=limit)
+        return await get_channel_posts(db, channel_id, limit=limit, page=page)
     finally:
         await db.close()
 

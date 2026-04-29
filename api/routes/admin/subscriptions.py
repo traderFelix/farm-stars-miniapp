@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends
 from api.db.connection import get_db
 from api.dependencies.internal import require_internal_token
 from api.schemas.admin.subscriptions import (
+    AdminSubscriptionTaskClientBindRequest,
     AdminSubscriptionTaskCreateRequest,
     AdminSubscriptionTaskDetailResponse,
     AdminSubscriptionTasksResponse,
@@ -10,6 +11,7 @@ from api.schemas.admin.subscriptions import (
 )
 from api.services.admin.subscriptions import (
     archive_admin_subscription_task,
+    bind_admin_subscription_task_client,
     build_admin_subscription_task_detail,
     create_admin_subscription_task,
     list_admin_subscription_tasks,
@@ -49,6 +51,7 @@ async def create_subscription_task_route(payload: AdminSubscriptionTaskCreateReq
             db,
             chat_id=payload.chat_id,
             title=payload.title,
+            client_user_id=payload.client_user_id,
             channel_url=payload.channel_url,
             instant_reward=payload.instant_reward,
             daily_reward_total=payload.daily_reward_total,
@@ -64,6 +67,22 @@ async def get_subscription_task_route(task_id: int):
     db = await get_db()
     try:
         return await build_admin_subscription_task_detail(db, int(task_id))
+    finally:
+        await db.close()
+
+
+@router.post("/{task_id}/client", response_model=AdminSubscriptionTaskDetailResponse)
+async def bind_subscription_task_client_route(
+        task_id: int,
+        payload: AdminSubscriptionTaskClientBindRequest,
+):
+    db = await get_db()
+    try:
+        return await bind_admin_subscription_task_client(
+            db,
+            task_id=int(task_id),
+            client_user_id=payload.client_user_id,
+        )
     finally:
         await db.close()
 

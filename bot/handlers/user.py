@@ -1,4 +1,5 @@
 import asyncio
+import html
 import logging
 
 from typing import Any, Optional, TypedDict, Union
@@ -21,17 +22,32 @@ from aiogram.types import (
 from bot.api_client import (
     ApiClientError,
     bootstrap_bot_user_via_api,
-    get_battle_status,
     check_task,
+    get_battle_status,
     get_bot_main_menu_for_user_context_via_api,
     get_bot_main_menu_via_api,
+    get_client_cabinet_summary_via_api,
+    get_client_channel_subscription_campaigns_via_api,
+    get_client_channel_subscription_stats_via_api,
+    get_client_channel_via_api,
+    get_client_channel_posts_via_api,
+    get_client_channel_view_stats_via_api,
     get_next_task,
+    list_client_channels_via_api,
+    list_client_orders_via_api,
     get_theft_status,
     ingest_task_channel_post_via_api,
     open_task,
     report_task_unavailable,
 )
 from bot.keyboards import (
+    client_back_kb,
+    client_channel_kb,
+    client_channels_kb,
+    client_home_kb,
+    client_posts_nav_kb,
+    client_subscription_stats_kb,
+    client_view_stats_kb,
     main_menu,
     miniapp_menu_button,
     task_after_view_kb,
@@ -44,7 +60,7 @@ from bot.pending_channel_posts import (
     flush_pending_task_channel_posts,
 )
 from shared.assets import MINING_HERO_BANNER_PATH
-from shared.config import ROLE_CLIENT, ROLE_PARTNER
+from shared.config import ROLE_PARTNER
 from shared.formatting import fmt_stars
 
 router = Router()
@@ -139,6 +155,198 @@ def _format_user_api_error(e: ApiClientError) -> str:
     if detail:
         return f"❌ {detail}"
     return USER_API_UNAVAILABLE_TEXT
+
+
+def _format_client_channel_title(channel: dict[str, Any]) -> str:
+    return html.escape((channel.get("title") or "").strip() or str(channel.get("chat_id") or "Канал"))
+
+
+def _format_client_datetime(value: Any) -> str:
+    text = str(value or "").strip()
+    return text if text else "не указано"
+
+
+def _format_client_days(value: Any) -> str:
+    days = int(value or 0)
+    if days <= 0:
+        return "без удержания"
+    return f"{days} дн."
+
+
+def _format_client_status(is_active: Any) -> str:
+    return "🟢 активен" if bool(is_active) else "🔴 на паузе"
+
+
+def _build_client_home_text(summary: dict[str, Any]) -> str:
+    return (
+        "🤝 <b>Кабинет клиента</b>\n\n"
+        f"Каналов: <b>{int(summary.get('channels_count') or 0)}</b>\n"
+        f"Заказов: <b>{int(summary.get('orders_count') or 0)}</b>"
+    )
+
+
+def _build_client_channels_text(items: list[dict[str, Any]]) -> str:
+    if not items:
+        return (
+            "📋 <b>Мои каналы</b>\n\n"
+            "У тебя пока нет подключенных каналов."
+        )
+
+    return (
+        "📋 <b>Мои каналы</b>\n\n"
+        "Выбери канал из списка ниже."
+    )
+
+
+def _build_client_channel_text(channel: dict[str, Any]) -> str:
+    has_views = bool(channel.get("has_views") or False)
+    has_subscriptions = bool(channel.get("has_subscriptions") or False)
+    views_line = (
+        f"Куплено просмотров: <b>{int(channel.get('total_bought_views') or 0)}</b>\n"
+        f"Осталось просмотров: <b>{int(channel.get('remaining_views') or 0)}</b>\n"
+        if has_views
+        else "Просмотры: <b>не подключены</b>\n"
+    )
+    subscriptions_line = "Подписки: <b>подключены</b>\n" if has_subscriptions else ""
+    return (
+        f"📺 <b>{_format_client_channel_title(channel)}</b>\n\n"
+        f"Статус: <b>{_format_client_status(channel.get('is_active'))}</b>\n"
+        f"{views_line}"
+        f"{subscriptions_line}\n"
+        "Выбери нужную статистику."
+    )
+
+
+def _build_client_view_stats_text(payload: dict[str, Any]) -> str:
+    channel = payload["channel"]
+    stats = payload["stats"]
+    return (
+        f"📊 <b>Статистика просмотров</b>\n\n"
+        f"Канал: <b>{_format_client_channel_title(channel)}</b>\n"
+        f"Статус: <b>{_format_client_status(channel.get('is_active'))}</b>\n"
+        f"Куплено просмотров: <b>{int(channel.get('total_bought_views') or 0)}</b>\n"
+        f"Распределено: <b>{int(channel.get('allocated_views') or 0)}</b>\n"
+        f"Осталось: <b>{int(channel.get('remaining_views') or 0)}</b>\n"
+        "\n"
+        f"Постов всего: <b>{int(stats.get('total_posts') or 0)}</b>\n"
+        f"Требуется просмотров: <b>{int(stats.get('total_required') or 0)}</b>\n"
+        f"Получено просмотров: <b>{int(stats.get('total_current') or 0)}</b>\n"
+        f"Активных постов: <b>{int(stats.get('active_posts') or 0)}</b>"
+    )
+
+
+def _build_client_subscription_stats_text(payload: dict[str, Any]) -> str:
+    channel = payload["channel"]
+    stats = payload["stats"]
+    return (
+        f"📊 <b>Статистика подписок</b>\n\n"
+        f"Канал: <b>{_format_client_channel_title(channel)}</b>\n"
+        f"Кампаний всего: <b>{int(stats.get('tasks_count') or 0)}</b>\n"
+        f"Активных кампаний: <b>{int(stats.get('active_tasks_count') or 0)}</b>\n"
+        f"Куплено подписчиков: <b>{int(stats.get('total_subscribers_bought') or 0)}</b>"
+    )
+
+
+def _build_client_orders_text(items: list[dict[str, Any]]) -> str:
+    if not items:
+        return (
+            "🧾 <b>Мои заказы</b>\n\n"
+            "История заказов пока пустая."
+        )
+
+    lines = ["🧾 <b>Мои заказы</b>", ""]
+    for index, item in enumerate(items, start=1):
+        title = html.escape((item.get("title") or "").strip() or str(item.get("chat_id") or "Канал"))
+        created_at = _format_client_datetime(item.get("created_at"))
+
+        if item.get("kind") == "views":
+            lines.extend([
+                f"{index}. 📺 <b>Просмотры</b>",
+                f"Канал: <b>{title}</b>",
+                f"Дата: <b>{created_at}</b>",
+                f"Куплено: <b>{int(item.get('total_bought_views') or 0)}</b> просмотров",
+                f"Просмотров на пост: <b>{int(item.get('views_per_post') or 0)}</b>",
+                f"Показ: <b>{int(item.get('view_seconds') or 0)} сек.</b>",
+                "",
+            ])
+            continue
+
+        lines.extend([
+            f"{index}. 👥 <b>Подписчики</b>",
+            f"Канал: <b>{title}</b>",
+            f"Дата: <b>{created_at}</b>",
+            f"Куплено: <b>{int(item.get('max_subscribers') or 0)}</b> подписчиков",
+            f"Удержание: <b>{_format_client_days(item.get('daily_claim_days'))}</b>",
+            "",
+        ])
+
+    return "\n".join(lines).strip()
+
+
+def _build_client_posts_status_text(payload: dict[str, Any]) -> str:
+    channel = payload["channel"]
+    rows = list(payload.get("items") or [])
+
+    if not rows:
+        return (
+            "📊 <b>Статус по постам</b>\n\n"
+            f"Канал: <b>{_format_client_channel_title(channel)}</b>\n\n"
+            "Пока нет добавленных постов."
+        )
+
+    lines = [
+        "📊 <b>Статус по постам</b>",
+        "",
+        f"Канал: <b>{_format_client_channel_title(channel)}</b>",
+        "",
+    ]
+    for row in rows:
+        post_id = int(row.get("channel_post_id") or 0)
+        current_views = int(row.get("current_views") or 0)
+        required_views = int(row.get("required_views") or 0)
+        source_label = "ручной" if row.get("source") == "manual" else "авто"
+        done = current_views >= required_views and required_views > 0
+        status = "✅" if done else "🔄"
+        created_at = _format_client_datetime(row.get("created_at"))
+        lines.append(
+            f"📝 Пост #{post_id} ({source_label}, {created_at}) — {current_views}/{required_views} {status}"
+        )
+        lines.append("")
+
+    return "\n".join(lines).strip()
+
+
+def _build_client_campaigns_status_text(payload: dict[str, Any]) -> str:
+    channel = payload["channel"]
+    rows = list(payload.get("items") or [])
+
+    if not rows:
+        return (
+            "📊 <b>Статус кампаний</b>\n\n"
+            f"Канал: <b>{_format_client_channel_title(channel)}</b>\n\n"
+            "Пока нет добавленных кампаний."
+        )
+
+    lines = [
+        "📊 <b>Статус кампаний</b>",
+        "",
+        f"Канал: <b>{_format_client_channel_title(channel)}</b>",
+        "",
+    ]
+    for row in rows:
+        campaign_id = int(row.get("id") or 0)
+        created_at = _format_client_datetime(row.get("created_at"))
+        is_active = bool(row.get("is_active") or False)
+        participants = int(row.get("participants_count") or 0)
+        max_subscribers = int(row.get("max_subscribers") or 0)
+        status_label = "Активная" if is_active else "Не активная"
+        status_icon = "🟢" if is_active else "🔴"
+        lines.append(
+            f"{status_icon} {status_label} кампания #{campaign_id} {created_at} — {participants}/{max_subscribers}"
+        )
+        lines.append("")
+
+    return "\n".join(lines).strip()
 
 
 def _is_expired_callback_error(error: TelegramBadRequest) -> bool:
@@ -1043,33 +1251,111 @@ async def safe_edit_text(
 @router.callback_query(F.data == "client:home")
 async def client_home(callback: CallbackQuery):
     try:
-        menu_payload = await get_bot_main_menu_for_user_context_via_api(
-            **_build_tg_user_payload(callback.from_user),
-        )
+        summary = await get_client_cabinet_summary_via_api(callback.from_user.id)
     except ApiClientError as e:
-        await safe_callback_answer(callback, f"❌ {e.detail}", show_alert=True)
-        return
-
-    role_level = int(menu_payload.get("role_level") or 0)
-
-    if role_level < ROLE_CLIENT:
-        await safe_callback_answer(callback, "❌ Раздел клиента тебе пока недоступен.", show_alert=True)
+        await _answer_user_api_error(callback, e, context="client_home.summary")
         return
 
     await safe_callback_answer(callback)
     await safe_edit_text(
         callback.message,
-        "🤝 <b>Кабинет клиента</b>\n\n"
-        "Тут потом будут:\n"
-        "• мои заказы\n"
-        "• запуск просмотров\n"
-        "• запуск подписок\n"
-        "• статистика заказов",
-        reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[
-                [InlineKeyboardButton(text="⬅ Назад", callback_data="back")]
-            ]
-        ),
+        _build_client_home_text(summary),
+        reply_markup=client_home_kb(),
+        parse_mode=ParseMode.HTML,
+    )
+
+
+@router.callback_query(F.data == "client:channels")
+async def client_channels(callback: CallbackQuery):
+    try:
+        result = await list_client_channels_via_api(callback.from_user.id)
+    except ApiClientError as e:
+        await _answer_user_api_error(callback, e, context="client_channels.list")
+        return
+
+    items = list(result.get("items") or [])
+    await safe_callback_answer(callback)
+    await safe_edit_text(
+        callback.message,
+        _build_client_channels_text(items),
+        reply_markup=client_channels_kb(items),
+        parse_mode=ParseMode.HTML,
+    )
+
+
+@router.callback_query(F.data.startswith("client:channel:"))
+async def client_channel_router(callback: CallbackQuery):
+    parts = (callback.data or "").split(":")
+    if len(parts) < 3:
+        await safe_callback_answer(callback, "❌ Канал не найден.", show_alert=True)
+        return
+
+    try:
+        channel_id = int(parts[2])
+    except ValueError:
+        await safe_callback_answer(callback, "❌ Канал не найден.", show_alert=True)
+        return
+
+    mode = parts[3] if len(parts) > 3 else "card"
+    page = 0
+    if mode == "posts" and len(parts) > 4:
+        try:
+            page = max(int(parts[4]), 0)
+        except ValueError:
+            await safe_callback_answer(callback, "❌ Страница не найдена.", show_alert=True)
+            return
+    try:
+        if mode == "views":
+            payload = await get_client_channel_view_stats_via_api(callback.from_user.id, channel_id)
+            text = _build_client_view_stats_text(payload)
+            reply_markup = client_view_stats_kb(channel_id)
+        elif mode == "posts":
+            payload = await get_client_channel_posts_via_api(callback.from_user.id, channel_id, limit=5, page=page)
+            text = _build_client_posts_status_text(payload)
+            reply_markup = client_posts_nav_kb(
+                channel_id,
+                int(payload.get("page") or 0),
+                bool(payload.get("has_next") or False),
+            )
+        elif mode in {"campaigns", "subs-status"}:
+            payload = await get_client_channel_subscription_campaigns_via_api(callback.from_user.id, channel_id)
+            text = _build_client_campaigns_status_text(payload)
+            reply_markup = client_back_kb(f"client:channel:{channel_id}:subs")
+        elif mode in {"subs", "subscriptions"}:
+            payload = await get_client_channel_subscription_stats_via_api(callback.from_user.id, channel_id)
+            text = _build_client_subscription_stats_text(payload)
+            reply_markup = client_subscription_stats_kb(channel_id)
+        else:
+            payload = await get_client_channel_via_api(callback.from_user.id, channel_id)
+            text = _build_client_channel_text(payload["channel"])
+            reply_markup = client_channel_kb(payload["channel"])
+    except ApiClientError as e:
+        await _answer_user_api_error(callback, e, context=f"client_channel.{mode}")
+        return
+
+    await safe_callback_answer(callback)
+    await safe_edit_text(
+        callback.message,
+        text,
+        reply_markup=reply_markup,
+        parse_mode=ParseMode.HTML,
+    )
+
+
+@router.callback_query(F.data == "client:orders")
+async def client_orders(callback: CallbackQuery):
+    try:
+        result = await list_client_orders_via_api(callback.from_user.id, limit=20)
+    except ApiClientError as e:
+        await _answer_user_api_error(callback, e, context="client_orders.list")
+        return
+
+    items = list(result.get("items") or [])
+    await safe_callback_answer(callback)
+    await safe_edit_text(
+        callback.message,
+        _build_client_orders_text(items),
+        reply_markup=client_back_kb("client:home"),
         parse_mode=ParseMode.HTML,
     )
 

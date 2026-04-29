@@ -1,17 +1,12 @@
 from __future__ import annotations
 
-import asyncio
-import json
-import logging
 from typing import Any, Optional
-from urllib import error as urllib_error
 from urllib import parse as urllib_parse
-from urllib import request as urllib_request
 
 import aiosqlite
 from fastapi import HTTPException
 
-from shared.config import TELEGRAM_BOT_TOKEN
+from api.services.admin.client_roles import ensure_client_role, sync_client_role_after_rebind
 from shared.db.common import tx
 from shared.db.subscriptions import (
     archive_subscription_task,
@@ -19,97 +14,15 @@ from shared.db.subscriptions import (
     get_subscription_task,
     list_subscription_tasks,
     reset_subscription_task_unavailable_notification,
+    set_subscription_task_client,
     set_subscription_task_active,
     set_subscription_task_title,
 )
-
-logger = logging.getLogger(__name__)
-
-
-def _telegram_api_url(method: str) -> str:
-    return f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/{method}"
-
-
-def _telegram_request_json_sync(method: str, params: Optional[dict[str, object]] = None) -> dict[str, Any]:
-    query = urllib_parse.urlencode(params or {})
-    url = _telegram_api_url(method)
-    if query:
-        url = f"{url}?{query}"
-
-    request = urllib_request.Request(url, method="GET")
-    with urllib_request.urlopen(request, timeout=12) as response:
-        payload = json.loads(response.read().decode("utf-8"))
-
-    if not payload.get("ok"):
-        raise RuntimeError(str(payload.get("description") or "Telegram API request failed"))
-
-    return payload
-
-
-def _subscription_channel_title_sync(chat_id: str) -> str:
-    payload = _telegram_request_json_sync("getChat", {"chat_id": str(chat_id)})
-    result = payload.get("result")
-    if not isinstance(result, dict):
-        raise RuntimeError("Telegram API returned an empty chat result")
-
-    title = str(result.get("title") or result.get("username") or "").strip()
-    if not title:
-        raise RuntimeError("Telegram API returned chat without title")
-    return title
-
-
-def _verify_subscription_channel_access_sync(chat_id: str) -> str:
-    title = _subscription_channel_title_sync(chat_id)
-
-    me_payload = _telegram_request_json_sync("getMe")
-    me = me_payload.get("result")
-    if not isinstance(me, dict) or me.get("id") is None:
-        raise RuntimeError("Telegram API returned an empty bot result")
-
-    member_payload = _telegram_request_json_sync(
-        "getChatMember",
-        {
-            "chat_id": str(chat_id),
-            "user_id": int(me["id"]),
-        },
-    )
-    member = member_payload.get("result")
-    status = str(member.get("status") or "").lower() if isinstance(member, dict) else ""
-    if status in {"left", "kicked"} or not status:
-        raise RuntimeError("Bot is not a member of the channel")
-
-    return title
-
-
-async def _try_fetch_subscription_channel_title(chat_id: str) -> Optional[str]:
-    try:
-        return await asyncio.to_thread(_subscription_channel_title_sync, chat_id)
-    except (urllib_error.HTTPError, urllib_error.URLError, RuntimeError, json.JSONDecodeError) as exc:
-        logger.info("Could not fetch subscription channel title chat_id=%s detail=%s", chat_id, exc)
-        return None
-
-
-async def _verified_subscription_channel_title(chat_id: str) -> str:
-    try:
-        return await asyncio.to_thread(_verify_subscription_channel_access_sync, chat_id)
-    except urllib_error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="ignore")
-        logger.warning(
-            "Could not verify subscription channel access chat_id=%s http=%s detail=%s",
-            chat_id,
-            exc.code,
-            detail,
-        )
-    except (urllib_error.URLError, RuntimeError, json.JSONDecodeError) as exc:
-        logger.warning("Could not verify subscription channel access chat_id=%s detail=%s", chat_id, exc)
-
-    raise HTTPException(
-        status_code=400,
-        detail=(
-            "Нельзя включить задание: бот не добавлен в канал или не видит канал. "
-            "Добавь бота в канал и попробуй снова."
-        ),
-    )
+from shared.db.users import get_user_by_id
+from api.services.admin.telegram_channels import (
+    try_fetch_telegram_channel_title,
+    verified_telegram_channel_title,
+)
 
 
 def _serialize_task(row: Any) -> dict[str, Any]:
@@ -119,6 +32,9 @@ def _serialize_task(row: Any) -> dict[str, Any]:
         "id": int(row["id"]),
         "chat_id": str(row["chat_id"]),
         "title": str(row["title"] or ""),
+        "client_user_id": int(row["client_user_id"]) if row["client_user_id"] is not None else None,
+        "client_username": (row["client_username"] or None) if "client_username" in row.keys() else None,
+        "client_first_name": (row["client_first_name"] or None) if "client_first_name" in row.keys() else None,
         "channel_url": normalize_subscription_channel_url(str(row["channel_url"])),
         "instant_reward": instant_reward,
         "daily_reward_total": daily_reward_total,
@@ -225,6 +141,7 @@ async def create_admin_subscription_task(
         *,
         chat_id: str,
         title: Optional[str],
+        client_user_id: Optional[int],
         channel_url: str,
         instant_reward: float,
         daily_reward_total: float,
@@ -233,9 +150,10 @@ async def create_admin_subscription_task(
 ) -> dict[str, Any]:
     normalized_chat_id = _normalize_text(chat_id, field_name="chat_id")
     normalized_title = (title or "").strip()
+    normalized_client_user_id = int(client_user_id) if client_user_id is not None else None
     normalized_channel_url = normalize_subscription_channel_url(channel_url)
     if not normalized_title:
-        normalized_title = await _try_fetch_subscription_channel_title(normalized_chat_id) or ""
+        normalized_title = await try_fetch_telegram_channel_title(normalized_chat_id) or ""
     normalized_instant_reward = _normalize_reward(instant_reward, field_name="instant_reward")
     normalized_daily_reward_total = _normalize_reward(daily_reward_total, field_name="daily_reward_total")
     normalized_daily_claim_days = _normalize_non_negative_int(daily_claim_days, field_name="daily_claim_days")
@@ -250,18 +168,57 @@ async def create_admin_subscription_task(
         normalized_daily_claim_days = 0
     if normalized_instant_reward == 0 and normalized_daily_reward_total == 0:
         raise HTTPException(status_code=400, detail="Награда не может быть 0.")
+    if normalized_client_user_id is not None and not await get_user_by_id(db, normalized_client_user_id):
+        raise HTTPException(status_code=404, detail="Клиент не найден")
 
     async with tx(db, immediate=True):
         task_id = await create_subscription_task(
             db,
             chat_id=normalized_chat_id,
             title=normalized_title,
+            client_user_id=normalized_client_user_id,
             channel_url=normalized_channel_url,
             instant_reward=normalized_instant_reward,
             daily_reward_total=normalized_daily_reward_total,
             daily_claim_days=normalized_daily_claim_days,
             max_subscribers=normalized_max_subscribers,
             is_active=False,
+        )
+        if normalized_client_user_id is not None:
+            await ensure_client_role(db, normalized_client_user_id)
+
+    return await build_admin_subscription_task_detail(db, int(task_id))
+
+
+async def bind_admin_subscription_task_client(
+        db: aiosqlite.Connection,
+        *,
+        task_id: int,
+        client_user_id: int,
+) -> dict[str, Any]:
+    row = await get_subscription_task(db, int(task_id))
+    if not row:
+        raise HTTPException(status_code=404, detail="Задание подписки не найдено.")
+    if int(row["is_archived"] or 0) == 1:
+        raise HTTPException(status_code=404, detail="Задание подписки уже в архиве.")
+    if not await get_user_by_id(db, int(client_user_id)):
+        raise HTTPException(status_code=404, detail="Клиент не найден")
+
+    previous_client_user_id = (
+        int(row["client_user_id"])
+        if row["client_user_id"] is not None
+        else None
+    )
+    async with tx(db, immediate=True):
+        await set_subscription_task_client(
+            db,
+            task_id=int(task_id),
+            client_user_id=int(client_user_id),
+        )
+        await sync_client_role_after_rebind(
+            db,
+            previous_user_id=previous_client_user_id,
+            next_user_id=int(client_user_id),
         )
 
     return await build_admin_subscription_task_detail(db, int(task_id))
@@ -286,7 +243,10 @@ async def set_admin_subscription_task_status(
                 status_code=400,
                 detail="Нельзя включить задание: лимит подписчиков уже заполнен.",
             )
-        verified_title = await _verified_subscription_channel_title(str(row["chat_id"]))
+        verified_title = await verified_telegram_channel_title(
+            str(row["chat_id"]),
+            activation_subject="задание",
+        )
 
     async with tx(db, immediate=True):
         if verified_title:
