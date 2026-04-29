@@ -194,6 +194,65 @@ async def ledger_sum_battle_net(db: aiosqlite.Connection) -> float:
         return float(row[0] or 0)
 
 
+async def ledger_sum_unrefunded_battle_entries(db: aiosqlite.Connection) -> float:
+    query = """
+    SELECT COALESCE(SUM(entry.delta), 0)
+    FROM ledger entry
+    WHERE entry.reason = 'battle_entry'
+      AND NOT EXISTS (
+          SELECT 1
+          FROM ledger refund
+          WHERE refund.user_id = entry.user_id
+            AND refund.reason = 'battle_refund'
+            AND (
+                refund.meta = entry.meta
+                OR refund.meta LIKE entry.meta || ';%'
+            )
+      )
+    """
+    async with db.execute(query) as cur:
+        row = await cur.fetchone()
+        return float(row[0] or 0)
+
+
+async def ledger_sum_theft_net(db: aiosqlite.Connection) -> float:
+    query = """
+    SELECT COALESCE(SUM(delta), 0)
+    FROM ledger
+    WHERE reason IN ('theft_win', 'theft_loss')
+    """
+    async with db.execute(query) as cur:
+        row = await cur.fetchone()
+        return float(row[0] or 0)
+
+
+async def ledger_sum_unknown_audit_net(db: aiosqlite.Connection) -> float:
+    known_reasons = {
+        *SYSTEM_REASONS,
+        "admin_adjust",
+        "battle_bonus",
+        "battle_entry",
+        "battle_refund",
+        "contest_bonus",
+        "daily_bonus",
+        "promo_bonus",
+        "referral_bonus",
+        "subscription_bonus",
+        "theft_loss",
+        "theft_win",
+        "view_post_bonus",
+    }
+    placeholders = ",".join("?" for _ in known_reasons)
+    query = f"""
+    SELECT COALESCE(SUM(delta), 0)
+    FROM ledger
+    WHERE reason NOT IN ({placeholders})
+    """
+    async with db.execute(query, tuple(sorted(known_reasons))) as cur:
+        row = await cur.fetchone()
+        return float(row[0] or 0)
+
+
 async def apply_balance_delta(
         db: aiosqlite.Connection,
         user_id: int,
@@ -300,6 +359,7 @@ async def get_user_earnings_breakdown(db: aiosqlite.Connection, user_id: int) ->
             COALESCE(SUM(CASE WHEN reason = 'contest_bonus' THEN delta ELSE 0 END), 0) AS contest_bonus,
             COALESCE(SUM(CASE WHEN reason = 'promo_bonus' THEN delta ELSE 0 END), 0) AS promo_bonus,
             COALESCE(SUM(CASE WHEN reason = 'referral_bonus' THEN delta ELSE 0 END), 0) AS referral_bonus,
+            COALESCE(SUM(CASE WHEN reason = 'subscription_bonus' THEN delta ELSE 0 END), 0) AS subscription_bonus,
             COALESCE(
                 SUM(
                     CASE
@@ -335,6 +395,7 @@ async def get_user_earnings_breakdown(db: aiosqlite.Connection, user_id: int) ->
     contest_bonus = float(row["contest_bonus"] or 0)
     promo_bonus = float(row["promo_bonus"] or 0)
     referral_bonus = float(row["referral_bonus"] or 0)
+    subscription_bonus = float(row["subscription_bonus"] or 0)
     battle_net = float(row["battle_net"] or 0)
     admin_adjust = float(row["admin_adjust"] or 0)
     theft_net = float(row["theft_net"] or 0)
@@ -357,6 +418,8 @@ async def get_user_earnings_breakdown(db: aiosqlite.Connection, user_id: int) ->
         "promo_bonus_pct": pct(promo_bonus, total),
         "referral_bonus": referral_bonus,
         "referral_bonus_pct": pct(referral_bonus, total),
+        "subscription_bonus": subscription_bonus,
+        "subscription_bonus_pct": pct(subscription_bonus, total),
         "battle_net": battle_net,
         "battle_net_pct": pct(battle_net, total),
         "theft_net": theft_net,

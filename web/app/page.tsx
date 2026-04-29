@@ -9,14 +9,18 @@ import ReferralsPanel from "@/components/referrals/ReferralsPanel";
 import WithdrawalPanel from "@/components/withdrawal/WithdrawalPanel";
 import {
   authTelegram,
+  abandonSubscriptionAssignment,
   cancelBattle,
   claimCheckin,
+  claimSubscriptionDaily,
   clearAccessToken,
   type BattleRecentResult,
   getMyBattleStatus,
+  getMySubscriptionStatus,
   getMyTheftStatus,
   getCheckinStatus,
   getMyProfile,
+  joinSubscriptionTask,
   joinBattle,
   openBotTasks,
   startTheft,
@@ -26,6 +30,9 @@ import {
   type BattleStatusResponse,
   type CheckinStatus,
   type Profile,
+  type SubscriptionAssignmentItem,
+  type SubscriptionStatusResponse,
+  type SubscriptionTaskItem,
   type TheftStatusResponse,
 } from "@/lib/api";
 import { formatBalance, formatCompactBalance } from "@/lib/format";
@@ -42,6 +49,11 @@ type AppTab = "profile" | "mining" | "referrals" | "campaigns" | "withdrawal";
 type CheckinState = "idle" | "loading" | "ready" | "claiming" | "error";
 type BattleLoadState = "idle" | "loading" | "ready" | "working" | "error";
 type TheftLoadState = "idle" | "loading" | "ready" | "working" | "error";
+type SubscriptionLoadState = "idle" | "loading" | "ready" | "working" | "error";
+type SubscriptionActionContext =
+  | { type: "task"; id: number }
+  | { type: "assignment"; id: number }
+  | { type: "abandon" };
 type NicknameSaveState = "idle" | "saving";
 
 const HERO_BANNER_URL = ["/hero", "mining-hero-banner.png"].join("/");
@@ -75,12 +87,25 @@ export default function HomePage() {
   const [theftErrorMessage, setTheftErrorMessage] = useState("");
   const [theftNoticeMessage, setTheftNoticeMessage] = useState("");
   const [theftDisplaySeconds, setTheftDisplaySeconds] = useState(0);
+  const [subscriptionStatus, setSubscriptionStatus] = useState<SubscriptionStatusResponse | null>(null);
+  const [subscriptionLoadState, setSubscriptionLoadState] = useState<SubscriptionLoadState>("idle");
+  const [subscriptionMessage, setSubscriptionMessage] = useState("");
+  const [subscriptionRewardPopup, setSubscriptionRewardPopup] = useState<{
+    amount: number;
+    remaining: number;
+  } | null>(null);
+  const [subscriptionUnavailableTaskIds, setSubscriptionUnavailableTaskIds] = useState<Set<number>>(() => new Set());
+  const [subscriptionTaskErrors, setSubscriptionTaskErrors] = useState<Record<number, string>>({});
+  const [subscriptionAssignmentErrors, setSubscriptionAssignmentErrors] = useState<Record<number, string>>({});
+  const [subscriptionAbandonError, setSubscriptionAbandonError] = useState("");
+  const [subscriptionAbandonTarget, setSubscriptionAbandonTarget] = useState<SubscriptionAssignmentItem | null>(null);
   const [nicknameModalOpen, setNicknameModalOpen] = useState(false);
   const [nicknameDraft, setNicknameDraft] = useState("");
   const [nicknameSaveState, setNicknameSaveState] = useState<NicknameSaveState>("idle");
   const [nicknameErrorMessage, setNicknameErrorMessage] = useState("");
   const battleSyncInFlightRef = useRef(false);
   const theftSyncInFlightRef = useRef(false);
+  const subscriptionSyncInFlightRef = useRef(false);
 
   const [debugMessage, setDebugMessage] = useState<string>("Шаг 1: запуск");
   const [errorMessage, setErrorMessage] = useState<string>("");
@@ -272,6 +297,169 @@ export default function HomePage() {
     }
   }
 
+  async function loadSubscriptionStatus(options?: { silent?: boolean }) {
+    if (subscriptionSyncInFlightRef.current) {
+      return subscriptionStatus;
+    }
+
+    subscriptionSyncInFlightRef.current = true;
+
+    if (!options?.silent) {
+      setSubscriptionLoadState("loading");
+      setSubscriptionMessage("");
+    }
+
+    try {
+      const status = await getMySubscriptionStatus();
+      setSubscriptionStatus(status);
+      setSubscriptionUnavailableTaskIds(new Set());
+      setSubscriptionTaskErrors({});
+      setSubscriptionAssignmentErrors({});
+      setSubscriptionAbandonError("");
+      setSubscriptionLoadState("ready");
+      if (!options?.silent) {
+        setSubscriptionMessage("");
+      }
+      return status;
+    } catch (error) {
+      const message = toUserErrorMessage(error, "Не удалось загрузить подписки");
+      if (!options?.silent) {
+        setSubscriptionStatus(null);
+        setSubscriptionLoadState("error");
+        setSubscriptionMessage(message);
+      }
+      return subscriptionStatus;
+    } finally {
+      subscriptionSyncInFlightRef.current = false;
+    }
+  }
+
+  function applySubscriptionActionResult(result: {
+    status: SubscriptionStatusResponse;
+    balance: number;
+    reward_granted: number;
+    remaining_reward: number;
+    message: string;
+    ok: boolean;
+  }, context?: SubscriptionActionContext) {
+    setSubscriptionStatus(result.status);
+    setSubscriptionLoadState("ready");
+    setSubscriptionTaskErrors({});
+    setSubscriptionAssignmentErrors({});
+    setSubscriptionAbandonError("");
+    setSubscriptionMessage("");
+    setProfile((prev) =>
+      prev
+        ? {
+            ...prev,
+            balance: Number(result.balance ?? prev.balance),
+          }
+        : prev,
+    );
+
+    if (result.ok) {
+      if (Number(result.reward_granted) > 0 || Number(result.remaining_reward) > 0) {
+        setSubscriptionRewardPopup({
+          amount: Number(result.reward_granted),
+          remaining: Number(result.remaining_reward || 0),
+        });
+      }
+      return;
+    }
+
+    if (context?.type === "task") {
+      setSubscriptionTaskErrors({ [context.id]: result.message });
+    } else if (context?.type === "assignment") {
+      setSubscriptionAssignmentErrors({ [context.id]: result.message });
+    } else if (context?.type === "abandon") {
+      setSubscriptionAbandonError(result.message);
+    } else {
+      setSubscriptionMessage(result.message);
+    }
+  }
+
+  async function handleJoinSubscription(task: SubscriptionTaskItem) {
+    if (subscriptionLoadState === "working") return;
+
+    try {
+      setSubscriptionLoadState("working");
+      setSubscriptionMessage("");
+      setSubscriptionTaskErrors((prev) => {
+        const next = { ...prev };
+        delete next[task.id];
+        return next;
+      });
+      const result = await joinSubscriptionTask(task.id);
+      applySubscriptionActionResult(result, { type: "task", id: task.id });
+    } catch (error) {
+      const message = toUserErrorMessage(error, "Не удалось проверить подписку");
+      if (message.includes("Это задание временно недоступно")) {
+        setSubscriptionUnavailableTaskIds((prev) => new Set(prev).add(task.id));
+      }
+      setSubscriptionLoadState("error");
+      setSubscriptionMessage("");
+      setSubscriptionTaskErrors((prev) => ({
+        ...prev,
+        [task.id]: message,
+      }));
+    }
+  }
+
+  async function handleClaimSubscription(assignment: SubscriptionAssignmentItem) {
+    if (subscriptionLoadState === "working") return;
+
+    try {
+      setSubscriptionLoadState("working");
+      setSubscriptionMessage("");
+      setSubscriptionAssignmentErrors((prev) => {
+        const next = { ...prev };
+        delete next[assignment.id];
+        return next;
+      });
+      const result = await claimSubscriptionDaily(assignment.id);
+      applySubscriptionActionResult(result, { type: "assignment", id: assignment.id });
+    } catch (error) {
+      const message = toUserErrorMessage(error, "Не удалось забрать награду");
+      if (message.includes("Это задание временно недоступно")) {
+        setSubscriptionUnavailableTaskIds((prev) => new Set(prev).add(assignment.task_id));
+      }
+      setSubscriptionLoadState("error");
+      setSubscriptionMessage("");
+      setSubscriptionAssignmentErrors((prev) => ({
+        ...prev,
+        [assignment.id]: message,
+      }));
+    }
+  }
+
+  async function handleConfirmAbandonSubscription() {
+    if (!subscriptionAbandonTarget || subscriptionLoadState === "working") return;
+
+    try {
+      setSubscriptionLoadState("working");
+      setSubscriptionMessage("");
+      setSubscriptionAbandonError("");
+      const result = await abandonSubscriptionAssignment(subscriptionAbandonTarget.id);
+      setSubscriptionAbandonTarget(null);
+      applySubscriptionActionResult(result, { type: "abandon" });
+    } catch (error) {
+      const message = toUserErrorMessage(error, "Не удалось удалить задание");
+      setSubscriptionLoadState("error");
+      setSubscriptionMessage("");
+      setSubscriptionAbandonError(message);
+    }
+  }
+
+  function openSubscriptionAbandonModal(assignment: SubscriptionAssignmentItem) {
+    setSubscriptionAbandonError("");
+    setSubscriptionAbandonTarget(assignment);
+  }
+
+  function closeSubscriptionAbandonModal() {
+    setSubscriptionAbandonError("");
+    setSubscriptionAbandonTarget(null);
+  }
+
   async function handleClaimCheckin() {
     if (!checkin?.can_claim || checkinState === "claiming") return;
 
@@ -395,8 +583,12 @@ export default function HomePage() {
         await loadTheftStatus();
         if (cancelled) return;
 
+        setDebugMessage("Шаг 8: загрузка подписок");
+        await loadSubscriptionStatus();
+        if (cancelled) return;
+
         setBootstrapState("ready");
-        setDebugMessage("Шаг 8: готово");
+        setDebugMessage("Шаг 9: готово");
       } catch (error) {
         if (cancelled) return;
         clearAccessToken();
@@ -417,6 +609,7 @@ export default function HomePage() {
     if (bootstrapState !== "ready" || activeTab !== "mining") return;
     void loadBattleStatus();
     void loadTheftStatus();
+    void loadSubscriptionStatus();
   }, [activeTab, bootstrapState]);
 
   useEffect(() => {
@@ -504,6 +697,15 @@ export default function HomePage() {
         />
       ) : null}
 
+      {subscriptionRewardPopup ? (
+        <RewardPopup
+          kicker="Награда за подписку"
+          amountLabel={`+${formatCompactBalance(subscriptionRewardPopup.amount)} ⭐`}
+          description={buildSubscriptionPopupDescription(subscriptionRewardPopup.remaining)}
+          onClose={() => setSubscriptionRewardPopup(null)}
+        />
+      ) : null}
+
       {nicknameModalOpen && typeof document !== "undefined"
         ? createPortal(
             <div className="mining-modal-backdrop" role="presentation" onClick={() => setNicknameModalOpen(false)}>
@@ -546,6 +748,59 @@ export default function HomePage() {
                   >
                     {nicknameSaveState === "saving" ? "Сохраняю..." : "Сохранить"}
                   </button>
+                </div>
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
+
+      {subscriptionAbandonTarget && typeof document !== "undefined"
+        ? createPortal(
+            <div
+              className="mining-modal-backdrop"
+              role="presentation"
+              onClick={closeSubscriptionAbandonModal}
+            >
+              <div
+                className="mining-modal"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="subscription-abandon-modal-title"
+                onClick={(event) => event.stopPropagation()}
+              >
+                <div className="mining-kicker">Подписка</div>
+                <h2 id="subscription-abandon-modal-title" className="mining-modal__title">
+                  Удалить задание?
+                </h2>
+                <p className="mining-modal__description">
+                  Слот освободится сразу, но оставшаяся награда по этому заданию сгорит.
+                </p>
+                <div className="mining-modal__actions">
+                  <div className="mining-modal__action">
+                    <button
+                      type="button"
+                      className="mining-ghost-button"
+                      onClick={closeSubscriptionAbandonModal}
+                    >
+                      Отмена
+                    </button>
+                  </div>
+                  <div className="mining-modal__action">
+                    <button
+                      type="button"
+                      className="mining-primary-button"
+                      disabled={subscriptionLoadState === "working"}
+                      onClick={() => void handleConfirmAbandonSubscription()}
+                    >
+                      {subscriptionLoadState === "working" ? "Удаляю..." : "Удалить"}
+                    </button>
+                    {subscriptionAbandonError ? (
+                      <div className="mining-subscription-card__action-note" data-tone="error">
+                        {subscriptionAbandonError}
+                      </div>
+                    ) : null}
+                  </div>
                 </div>
               </div>
             </div>,
@@ -598,7 +853,18 @@ export default function HomePage() {
               <>
                 <section className="mining-panel mining-profile-panel">
                   <div className="mining-profile-panel__header">
-                    <div className="mining-profile-panel__name">{operatorName}</div>
+                    <div className="mining-profile-panel__identity">
+                      <div className="mining-profile-panel__name">{operatorName}</div>
+                      {profile.can_change_game_nickname ? (
+                        <button
+                          type="button"
+                          className="mining-profile-panel__edit"
+                          onClick={openNicknameModal}
+                        >
+                          Сменить ник
+                        </button>
+                      ) : null}
+                    </div>
                     <span className="mining-profile-panel__role">
                       {profile.role || "пользователь"}
                     </span>
@@ -607,19 +873,10 @@ export default function HomePage() {
                   <div className="mining-profile-panel__balance">
                     <div className="mining-profile-panel__balanceLabel">Баланс</div>
                     <div className="mining-profile-panel__balanceValue">
-                      {formatBalance(profile.balance)} <span>⭐</span>
+                      <span>{formatBalance(profile.balance)}</span>
+                      <span>⭐</span>
                     </div>
                   </div>
-
-                  {profile.can_change_game_nickname ? (
-                    <button
-                      type="button"
-                      className="mining-profile-panel__edit"
-                      onClick={openNicknameModal}
-                    >
-                      Сменить ник
-                    </button>
-                  ) : null}
                 </section>
 
                 <section className="mining-panel">
@@ -723,6 +980,36 @@ export default function HomePage() {
                     onOpenTasks={() => void handleOpenBotTasks()}
                   />
                 </section>
+
+                <section className="mining-panel">
+                  <SectionHeader
+                    title="Подписки"
+                    description="Выбирай канал, подписывайся и забирай награду"
+                    action={
+                      subscriptionStatus ? (
+                        <span className="mining-subscriptions-slots">
+                          <span>Занято слотов </span>
+                          <strong>
+                            {subscriptionStatus.slots_used}/{subscriptionStatus.slot_limit}
+                          </strong>
+                        </span>
+                      ) : null
+                    }
+                  />
+
+                  <SubscriptionsPanel
+                    status={subscriptionStatus}
+                    loadState={subscriptionLoadState}
+                    message={subscriptionMessage}
+                    unavailableTaskIds={subscriptionUnavailableTaskIds}
+                    taskErrors={subscriptionTaskErrors}
+                    assignmentErrors={subscriptionAssignmentErrors}
+                    onOpenChannel={(url) => openTelegramLink(url)}
+                    onJoin={(task) => void handleJoinSubscription(task)}
+                    onClaim={(assignment) => void handleClaimSubscription(assignment)}
+                    onAbandon={openSubscriptionAbandonModal}
+                  />
+                </section>
               </>
             )}
 
@@ -809,14 +1096,14 @@ function SectionHeader({
 }) {
   return (
     <div className="flex items-start justify-between gap-3">
-      <div>
+      <div className="min-w-0 flex-1">
         {eyebrow ? <div className="mining-kicker">{eyebrow}</div> : null}
         <h2 className={eyebrow ? "mt-1 text-xl font-semibold text-white" : "text-xl font-semibold text-white"}>
           {title}
         </h2>
         <p className="mt-1 text-sm text-slate-300">{description}</p>
       </div>
-      {action}
+      {action ? <div className="shrink-0">{action}</div> : null}
     </div>
   );
 }
@@ -1131,6 +1418,73 @@ function buildCheckinPopupDescription(nextCycleDay: number, nextReward: number):
   return `Завтра будет доступно ${formatCompactBalance(nextReward)} ⭐`;
 }
 
+function buildSubscriptionPopupDescription(remaining: number): string {
+  if (remaining > 0) {
+    return `Забирай награду каждый день, чтобы получить оставшиеся ${formatCompactBalance(remaining)} ⭐`;
+  }
+
+  return "Вся награда по этой подписке уже забрана";
+}
+
+function parseUtcTimestamp(value?: string | null): number | null {
+  if (!value) return null;
+  const normalized = value.includes("T") ? value : `${value.replace(" ", "T")}Z`;
+  const parsed = Date.parse(normalized.endsWith("Z") ? normalized : `${normalized}Z`);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function nextUtcMidnightMs(nowMs: number): number {
+  const date = new Date(nowMs);
+  return Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate() + 1);
+}
+
+function formatCountdown(totalMs: number): string {
+  const totalSeconds = Math.max(Math.ceil(totalMs / 1000), 0);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return `${pad(hours)}:${pad(minutes)}:${pad(seconds)}`;
+}
+
+function getSubscriptionClaimWaitMs(assignment: SubscriptionAssignmentItem, nowMs: number): number {
+  if (assignment.can_claim_today) return 0;
+  if (assignment.daily_claims_done >= assignment.daily_claim_days) return 0;
+  return Math.max(nextUtcMidnightMs(nowMs) - nowMs, 0);
+}
+
+function renderSubscriptionActionError(
+  message: string,
+  channelUrl: string,
+  onOpenChannel: (url: string) => void,
+): React.ReactNode {
+  const trigger = "Подпишись";
+  const index = message.indexOf(trigger);
+  if (index < 0) {
+    return message;
+  }
+
+  const before = message.slice(0, index);
+  const after = message.slice(index + trigger.length);
+
+  return (
+    <>
+      {before}
+      <a
+        href={channelUrl}
+        className="mining-subscription-card__action-note-link"
+        onClick={(event) => {
+          event.preventDefault();
+          onOpenChannel(channelUrl);
+        }}
+      >
+        {trigger}
+      </a>
+      {after}
+    </>
+  );
+}
+
 function RewardInline({
   value,
   compact = false,
@@ -1143,6 +1497,388 @@ function RewardInline({
       <span className="mining-inline-reward__value">{value}</span>
       <span className="mining-inline-reward__star">⭐</span>
     </span>
+  );
+}
+
+function SubscriptionsPanel({
+  status,
+  loadState,
+  message,
+  unavailableTaskIds,
+  taskErrors,
+  assignmentErrors,
+  onOpenChannel,
+  onJoin,
+  onClaim,
+  onAbandon,
+}: {
+  status: SubscriptionStatusResponse | null;
+  loadState: SubscriptionLoadState;
+  message: string;
+  unavailableTaskIds: Set<number>;
+  taskErrors: Record<number, string>;
+  assignmentErrors: Record<number, string>;
+  onOpenChannel: (url: string) => void;
+  onJoin: (task: SubscriptionTaskItem) => void;
+  onClaim: (assignment: SubscriptionAssignmentItem) => void;
+  onAbandon: (assignment: SubscriptionAssignmentItem) => void;
+}) {
+  const isBusy = loadState === "loading" || loadState === "working";
+  const active = status?.active ?? [];
+  const available = status?.available ?? [];
+  const [activeExpanded, setActiveExpanded] = useState(false);
+  const [availableExpanded, setAvailableExpanded] = useState(false);
+  const [timerNowMs, setTimerNowMs] = useState(() => Date.now());
+  const serverClockRef = useRef<{ source: string; serverMs: number; clientMs: number } | null>(null);
+  const shouldRunCountdown = active.some(
+    (assignment) => !assignment.can_claim_today && assignment.daily_claims_done < assignment.daily_claim_days,
+  );
+  const serverTime = status?.server_time || "";
+  const parsedServerMs = parseUtcTimestamp(serverTime);
+
+  if (serverTime && parsedServerMs !== null && serverClockRef.current?.source !== serverTime) {
+    serverClockRef.current = {
+      source: serverTime,
+      serverMs: parsedServerMs,
+      clientMs: Date.now(),
+    };
+  }
+
+  const countdownNowMs = serverClockRef.current
+    ? serverClockRef.current.serverMs + (timerNowMs - serverClockRef.current.clientMs)
+    : timerNowMs;
+  const visibleActive = activeExpanded ? active : active.slice(0, 1);
+  const visibleAvailable = availableExpanded ? available : available.slice(0, 1);
+  const hiddenActiveCount = Math.max(active.length - visibleActive.length, 0);
+  const hiddenAvailableCount = Math.max(available.length - visibleAvailable.length, 0);
+  const slotsFull = Boolean(status && status.slots_used >= status.slot_limit);
+
+  useEffect(() => {
+    if (active.length <= 1 && activeExpanded) {
+      setActiveExpanded(false);
+    }
+  }, [active.length, activeExpanded]);
+
+  useEffect(() => {
+    if (available.length <= 1 && availableExpanded) {
+      setAvailableExpanded(false);
+    }
+  }, [available.length, availableExpanded]);
+
+  useEffect(() => {
+    if (!shouldRunCountdown) return;
+    setTimerNowMs(Date.now());
+    const timerId = window.setInterval(() => {
+      setTimerNowMs(Date.now());
+    }, 1000);
+    return () => window.clearInterval(timerId);
+  }, [shouldRunCountdown]);
+
+  if (loadState === "loading" && !status) {
+    return <StatusNote>Ищу доступные задания подписки...</StatusNote>;
+  }
+
+  return (
+    <div className="mt-4 space-y-4">
+      {active.length > 0 || available.length > 0 ? (
+        <div className="mining-subscriptions-board">
+          {active.length > 0 ? (
+            <section className="mining-subscriptions-section" data-kind="active">
+              <div className="mining-subscriptions-section__head">
+                <div>
+                  <div className="mining-kicker">Активные подписки</div>
+                  <h3>Забирай ежедневные награды!</h3>
+                </div>
+              </div>
+              <div className="mining-subscriptions-list">
+                {visibleActive.map((assignment) => (
+                  <SubscriptionActiveCard
+                    key={assignment.id}
+                    assignment={assignment}
+                    nowMs={countdownNowMs}
+                    disabled={isBusy}
+                    unavailable={unavailableTaskIds.has(assignment.task_id)}
+                    errorMessage={assignmentErrors[assignment.id] || ""}
+                    onOpenChannel={onOpenChannel}
+                    onClaim={onClaim}
+                    onAbandon={onAbandon}
+                  />
+                ))}
+                {active.length > 1 ? (
+                  <button
+                    type="button"
+                    className="mining-subscriptions-toggle"
+                    onClick={() => setActiveExpanded((value) => !value)}
+                  >
+                    {activeExpanded ? "Свернуть активные подписки" : `Показать еще ${hiddenActiveCount}`}
+                  </button>
+                ) : null}
+              </div>
+            </section>
+          ) : null}
+
+          {available.length > 0 ? (
+            <section className="mining-subscriptions-section" data-kind="available">
+              <div className="mining-subscriptions-section__head">
+                <div>
+                  <div className="mining-kicker">Доступные подписки</div>
+                  <h3>Выбирай новые задания!</h3>
+                  {slotsFull ? (
+                    <div className="mining-status-note mining-subscriptions-section__warning" data-tone="warning">
+                      <div className="mining-subscriptions-section__warning-content">
+                        <span>Чтобы взять новое задание, необходимо сперва освободить слот</span>
+                        <InfoHint text="Для освобождения слота необходимо завершить или удалить минимум одно из активных заданий" />
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+              <div className="mining-subscriptions-list">
+                {visibleAvailable.map((task) => (
+                  <SubscriptionTaskCard
+                    key={task.id}
+                    task={task}
+                    disabled={isBusy}
+                    unavailable={unavailableTaskIds.has(task.id)}
+                    errorMessage={taskErrors[task.id] || ""}
+                    slotsFull={slotsFull}
+                    onOpenChannel={onOpenChannel}
+                    onJoin={onJoin}
+                  />
+                ))}
+                {available.length > 1 ? (
+                  <button
+                    type="button"
+                    className="mining-subscriptions-toggle"
+                    onClick={() => setAvailableExpanded((value) => !value)}
+                  >
+                    {availableExpanded ? "Свернуть доступные подписки" : `Показать еще ${hiddenAvailableCount}`}
+                  </button>
+                ) : null}
+              </div>
+            </section>
+          ) : null}
+        </div>
+      ) : (
+        <StatusNote>Пока нет подписок для добычи. Новые задания появятся здесь.</StatusNote>
+      )}
+
+      {message ? (
+        <StatusNote tone={loadState === "error" ? "error" : "success"}>{message}</StatusNote>
+      ) : null}
+    </div>
+  );
+}
+
+function SubscriptionTaskCard({
+  task,
+  disabled,
+  unavailable,
+  errorMessage,
+  slotsFull,
+  onOpenChannel,
+  onJoin,
+}: {
+  task: SubscriptionTaskItem;
+  disabled: boolean;
+  unavailable: boolean;
+  errorMessage: string;
+  slotsFull: boolean;
+  onOpenChannel: (url: string) => void;
+  onJoin: (task: SubscriptionTaskItem) => void;
+}) {
+  const percent = Math.min((Math.max(task.participants_count, 0) / Math.max(task.max_subscribers, 1)) * 100, 100);
+
+  return (
+    <article className="mining-subscription-card">
+      <div className="mining-subscription-card__top">
+        <div>
+          <h3 className="mining-subscription-card__title">
+            <a
+              href={task.channel_url}
+              className="mining-subscription-card__title-link"
+              title={task.title}
+              onClick={(event) => {
+                event.preventDefault();
+                onOpenChannel(task.channel_url);
+              }}
+            >
+              {truncateSubscriptionChannelTitle(task.title)}
+            </a>
+          </h3>
+        </div>
+        <div className="mining-subscription-card__reward">
+          {formatCompactBalance(task.total_reward)} ⭐
+        </div>
+      </div>
+
+      <div className="mining-subscription-card__limit">
+        <span>Лимит подписчиков</span>
+        <strong>{task.participants_count}/{task.max_subscribers}</strong>
+      </div>
+      <div className="mining-subscription-card__track" aria-hidden="true">
+        <span className="mining-subscription-card__track-fill" style={{ width: `${percent}%` }} />
+      </div>
+
+      <div className="mining-subscription-card__actions">
+        <div className="mining-subscription-card__action">
+          <button
+            type="button"
+            className="mining-secondary-button"
+            disabled={disabled || unavailable || slotsFull}
+            onClick={() => onOpenChannel(task.channel_url)}
+          >
+            Подписаться
+          </button>
+        </div>
+        <div className="mining-subscription-card__action">
+          <button
+            type="button"
+            className="mining-primary-button"
+            disabled={disabled || unavailable || slotsFull}
+            onClick={() => onJoin(task)}
+            title={slotsFull ? "Все слоты подписок заняты" : undefined}
+          >
+            {slotsFull ? "Слоты заняты" : "Забрать награду"}
+          </button>
+          {errorMessage && !slotsFull ? (
+            <div className="mining-subscription-card__action-note" data-tone="error">
+              {errorMessage}
+            </div>
+          ) : null}
+        </div>
+      </div>
+    </article>
+  );
+}
+
+function truncateSubscriptionChannelTitle(title: string, maxLength = 22): string {
+  const normalized = title.trim();
+  const chars = Array.from(normalized);
+  if (chars.length <= maxLength) {
+    return normalized;
+  }
+  return `${chars.slice(0, maxLength).join("")}...`;
+}
+
+function SubscriptionActiveCard({
+  assignment,
+  nowMs,
+  disabled,
+  unavailable,
+  errorMessage,
+  onOpenChannel,
+  onClaim,
+  onAbandon,
+}: {
+  assignment: SubscriptionAssignmentItem;
+  nowMs: number;
+  disabled: boolean;
+  unavailable: boolean;
+  errorMessage: string;
+  onOpenChannel: (url: string) => void;
+  onClaim: (assignment: SubscriptionAssignmentItem) => void;
+  onAbandon: (assignment: SubscriptionAssignmentItem) => void;
+}) {
+  const percent = Math.min(
+    (Math.max(assignment.daily_claims_done, 0) / Math.max(assignment.daily_claim_days, 1)) * 100,
+    100,
+  );
+  const deleteTooltip = assignment.can_abandon
+    ? "Удалить задание"
+    : `Удаление доступно через ${Math.max(assignment.abandon_cooldown_days_left, 1)}д`;
+  const claimWaitMs = getSubscriptionClaimWaitMs(assignment, nowMs);
+  const canClaimNow = assignment.can_claim_today || claimWaitMs <= 0;
+  const claimTimerLabel = canClaimNow ? "доступно" : formatCountdown(claimWaitMs);
+
+  return (
+    <article className="mining-subscription-card" data-active="true">
+      <div className="mining-subscription-card__top">
+        <div>
+          <h3 className="mining-subscription-card__title">
+            <a
+              href={assignment.channel_url}
+              className="mining-subscription-card__title-link"
+              title={assignment.title}
+              onClick={(event) => {
+                event.preventDefault();
+                onOpenChannel(assignment.channel_url);
+              }}
+            >
+              {truncateSubscriptionChannelTitle(assignment.title)}
+            </a>
+          </h3>
+        </div>
+        <button
+          type="button"
+          className="mining-subscription-delete"
+          disabled={disabled || !assignment.can_abandon}
+          data-tooltip={deleteTooltip}
+          aria-label={deleteTooltip}
+          onClick={() => onAbandon(assignment)}
+        >
+          <TrashIcon />
+        </button>
+      </div>
+
+      <div className="mining-subscription-card__limit">
+        <span>До следующего клейма</span>
+        <strong>{claimTimerLabel}</strong>
+      </div>
+      <div
+        className="mining-subscription-card__track"
+        aria-label={`${assignment.daily_claims_done}/${assignment.daily_claim_days} клеймов`}
+      >
+        <span className="mining-subscription-card__track-fill" style={{ width: `${percent}%` }} />
+        <span className="mining-subscription-card__track-value">
+          {assignment.daily_claims_done}/{assignment.daily_claim_days} клеймов
+        </span>
+      </div>
+      <p className="mining-subscription-card__hint">
+        Осталось забрать {formatCompactBalance(assignment.remaining_reward)} ⭐
+      </p>
+
+      <div className="mining-subscription-card__actions" data-single-action="true">
+        <div className="mining-subscription-card__action">
+          <button
+            type="button"
+            className="mining-primary-button"
+            disabled={disabled || unavailable || !canClaimNow}
+            onClick={() => onClaim(assignment)}
+          >
+            {canClaimNow ? "Забрать награду" : "Ждет таймер"}
+          </button>
+          {errorMessage ? (
+            <div className="mining-subscription-card__action-note" data-tone="error">
+              {renderSubscriptionActionError(errorMessage, assignment.channel_url, onOpenChannel)}
+            </div>
+          ) : null}
+        </div>
+      </div>
+    </article>
+  );
+}
+
+function TrashIcon() {
+  return (
+    <svg viewBox="0 0 18 18" aria-hidden="true" className="mining-subscription-delete__icon">
+      <path
+        d="M5.2 6.7h7.6l-.45 7.05a1.45 1.45 0 0 1-1.45 1.36H7.1a1.45 1.45 0 0 1-1.45-1.36L5.2 6.7Z"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.45"
+        strokeLinejoin="round"
+      />
+      <path d="M4.2 4.7h9.6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      <path
+        d="M7.1 4.65V3.7c0-.42.34-.76.76-.76h2.28c.42 0 .76.34.76.76v.95"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.45"
+        strokeLinecap="round"
+      />
+      <path d="M7.75 8.35v4.3M10.25 8.35v4.3" stroke="currentColor" strokeWidth="1.35" strokeLinecap="round" />
+    </svg>
   );
 }
 

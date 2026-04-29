@@ -356,7 +356,10 @@ class CampaignsAdminApi(ApiSection):
         )
 
     async def delete(self, campaign_key: str) -> JsonDict:
-        return await self._post(f"/admin/campaigns/{campaign_key}/delete", json={})
+        return await self.archive(campaign_key)
+
+    async def archive(self, campaign_key: str) -> JsonDict:
+        return await self._post(f"/admin/campaigns/{campaign_key}/archive", json={})
 
     async def add_winners(self, campaign_key: str, *, usernames: Sequence[str]) -> JsonDict:
         return await self._post(
@@ -415,7 +418,10 @@ class PromosAdminApi(ApiSection):
         )
 
     async def delete(self, promo_code: str) -> JsonDict:
-        return await self._post(f"/admin/promos/{promo_code}/delete", json={})
+        return await self.archive(promo_code)
+
+    async def archive(self, promo_code: str) -> JsonDict:
+        return await self._post(f"/admin/promos/{promo_code}/archive", json={})
 
     async def get_summary(self, *, latest_limit: int = 5) -> JsonDict:
         return await self._get(
@@ -514,6 +520,47 @@ class TaskChannelsApi(ApiSection):
         )
 
 
+class SubscriptionTasksApi(ApiSection):
+    async def list(self) -> JsonDict:
+        return await self._get("/admin/subscription-tasks")
+
+    async def get(self, task_id: int) -> JsonDict:
+        return await self._get(f"/admin/subscription-tasks/{int(task_id)}")
+
+    async def create(
+            self,
+            *,
+            chat_id: str,
+            title: Optional[str],
+            channel_url: str,
+            instant_reward: float,
+            daily_reward_total: float,
+            daily_claim_days: int,
+            max_subscribers: int,
+    ) -> JsonDict:
+        return await self._post(
+            "/admin/subscription-tasks",
+            json={
+                "chat_id": str(chat_id),
+                "title": title,
+                "channel_url": str(channel_url),
+                "instant_reward": float(instant_reward),
+                "daily_reward_total": float(daily_reward_total),
+                "daily_claim_days": int(daily_claim_days),
+                "max_subscribers": int(max_subscribers),
+            },
+        )
+
+    async def set_status(self, task_id: int, *, is_active: bool) -> JsonDict:
+        return await self._post(
+            f"/admin/subscription-tasks/{int(task_id)}/status",
+            json={"is_active": bool(is_active)},
+        )
+
+    async def archive(self, task_id: int) -> JsonDict:
+        return await self._post(f"/admin/subscription-tasks/{int(task_id)}/archive", json={})
+
+
 class AnalyticsApi(ApiSection):
     async def get_top_balances(self, *, limit: int = 10) -> JsonDict:
         return await self._get(
@@ -568,6 +615,7 @@ class BotApiClient:
         self.admin_campaigns = CampaignsAdminApi(self)
         self.admin_promos = PromosAdminApi(self)
         self.task_channels = TaskChannelsApi(self)
+        self.subscription_tasks = SubscriptionTasksApi(self)
         self.analytics = AnalyticsApi(self)
         self.thefts = TheftsApi(self)
 
@@ -748,6 +796,10 @@ async def delete_campaign_via_api(campaign_key: str) -> JsonDict:
     return await api_client.admin_campaigns.delete(campaign_key)
 
 
+async def archive_campaign_via_api(campaign_key: str) -> JsonDict:
+    return await api_client.admin_campaigns.archive(campaign_key)
+
+
 async def add_campaign_winners_via_api(campaign_key: str, usernames: Sequence[str]) -> JsonDict:
     return await api_client.admin_campaigns.add_winners(campaign_key, usernames=usernames)
 
@@ -797,6 +849,10 @@ async def set_promo_status_via_api(promo_code: str, *, status: str) -> JsonDict:
 
 async def delete_promo_via_api(promo_code: str) -> JsonDict:
     return await api_client.admin_promos.delete(promo_code)
+
+
+async def archive_promo_via_api(promo_code: str) -> JsonDict:
+    return await api_client.admin_promos.archive(promo_code)
 
 
 async def get_promos_summary_via_api(*, latest_limit: int = 5) -> JsonDict:
@@ -954,6 +1010,43 @@ async def add_task_channel_manual_post_via_api(
     )
 
 
+async def list_subscription_tasks_via_api() -> JsonDict:
+    return await api_client.subscription_tasks.list()
+
+
+async def get_subscription_task_via_api(task_id: int) -> JsonDict:
+    return await api_client.subscription_tasks.get(task_id)
+
+
+async def create_subscription_task_via_api(
+        *,
+        chat_id: str,
+        title: Optional[str],
+        channel_url: str,
+        instant_reward: float,
+        daily_reward_total: float,
+        daily_claim_days: int,
+        max_subscribers: int,
+) -> JsonDict:
+    return await api_client.subscription_tasks.create(
+        chat_id=chat_id,
+        title=title,
+        channel_url=channel_url,
+        instant_reward=instant_reward,
+        daily_reward_total=daily_reward_total,
+        daily_claim_days=daily_claim_days,
+        max_subscribers=max_subscribers,
+    )
+
+
+async def set_subscription_task_status_via_api(task_id: int, *, is_active: bool) -> JsonDict:
+    return await api_client.subscription_tasks.set_status(task_id, is_active=is_active)
+
+
+async def archive_subscription_task_via_api(task_id: int) -> JsonDict:
+    return await api_client.subscription_tasks.archive(task_id)
+
+
 async def bootstrap_bot_user_via_api(
         *,
         user_id: int,
@@ -1049,6 +1142,7 @@ __all__ = [
     "create_campaign_via_api",
     "set_campaign_status_via_api",
     "delete_campaign_via_api",
+    "archive_campaign_via_api",
     "add_campaign_winners_via_api",
     "get_campaigns_summary_via_api",
     "get_campaign_stats_via_api",
@@ -1059,6 +1153,7 @@ __all__ = [
     "create_promo_via_api",
     "set_promo_status_via_api",
     "delete_promo_via_api",
+    "archive_promo_via_api",
     "get_promos_summary_via_api",
     "get_promo_stats_via_api",
     "get_top_balances_via_api",
@@ -1081,6 +1176,11 @@ __all__ = [
     "update_task_channel_params_via_api",
     "get_task_channel_posts_via_api",
     "add_task_channel_manual_post_via_api",
+    "list_subscription_tasks_via_api",
+    "get_subscription_task_via_api",
+    "create_subscription_task_via_api",
+    "set_subscription_task_status_via_api",
+    "archive_subscription_task_via_api",
     "bootstrap_bot_user_via_api",
     "get_bot_main_menu_for_user_context_via_api",
     "get_bot_main_menu_via_api",

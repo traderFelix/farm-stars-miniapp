@@ -9,7 +9,7 @@ from shared.config import WEB_ORIGIN_NGROK, ROLE_ADMIN, ROLE_CLIENT, ROLE_PARTNE
 
 # ---------- USER KEYBOARDS ----------
 
-MINIAPP_MENU_BUTTON_TEXT = "🏠 Меню"
+MINIAPP_MENU_BUTTON_TEXT = "Запуск"
 
 
 def _miniapp_button() -> InlineKeyboardButton:
@@ -70,9 +70,10 @@ def admin_menu_kb() -> InlineKeyboardMarkup:
         inline_keyboard=[
             [InlineKeyboardButton(text="🏆 Конкурсы", callback_data="adm:campaigns_menu")],
             [InlineKeyboardButton(text="🎟 Промокоды", callback_data="adm:promos_menu")],
+            [InlineKeyboardButton(text="📢 Подписки", callback_data="adm:sub:list")],
             [InlineKeyboardButton(text="📺 Каналы просмотров", callback_data="adm:tch:list")],
             [InlineKeyboardButton(text="📈 Рост пользователей", callback_data="adm:growth_png")],
-            [InlineKeyboardButton(text="📜 Леджер (последние)", callback_data="adm:ledger_last")],
+            [InlineKeyboardButton(text="📜 Леджер", callback_data="adm:ledger_last")],
             [InlineKeyboardButton(text="🔎 Детали пользователя", callback_data="adm:user_balance")],
             [InlineKeyboardButton(text="🏆 Топ по балансу", callback_data="adm:top")],
             [InlineKeyboardButton(text="💸 Заявки на вывод", callback_data="adm:wd:list")],
@@ -161,6 +162,8 @@ def _status_icon(status: str) -> str:
         return "🔴"
     if status == "draft":
         return "🟡"
+    if status == "archived":
+        return "🗃"
     return "⚪"
 
 def campaigns_list_kb(rows, back_callback: str = "adm:back") -> InlineKeyboardMarkup:
@@ -205,6 +208,11 @@ def stats_list_kb(rows, back_callback: str = "adm:back") -> InlineKeyboardMarkup
 def campaign_manage_kb(key: str, status: str) -> InlineKeyboardMarkup:
     keyboard = []
 
+    if status == "archived":
+        keyboard.append([InlineKeyboardButton(text="📊 Статистика", callback_data=f"adm:stats:{key}")])
+        keyboard.append([InlineKeyboardButton(text="⬅ Назад", callback_data="adm:list")])
+        return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
     if status == "active":
         keyboard.append([InlineKeyboardButton(text="🔴 Выключить", callback_data=f"adm:off:{key}")])
     else:
@@ -217,7 +225,7 @@ def campaign_manage_kb(key: str, status: str) -> InlineKeyboardMarkup:
 
     keyboard.append([
         InlineKeyboardButton(text="➖ Удалить победителя", callback_data=f"adm:winner_del:{key}"),
-        InlineKeyboardButton(text="🗑 Удалить конкурс", callback_data=f"adm:del:ask:{key}"),
+        InlineKeyboardButton(text="🗃 Заархивировать", callback_data=f"adm:del:ask:{key}"),
     ])
 
     keyboard.append([
@@ -229,7 +237,7 @@ def campaign_manage_kb(key: str, status: str) -> InlineKeyboardMarkup:
 def campaign_delete_confirm_kb(key: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="✅ Да, удалить", callback_data=f"adm:del:do:{key}")],
+            [InlineKeyboardButton(text="✅ Да, в архив", callback_data=f"adm:del:do:{key}")],
             [InlineKeyboardButton(text="⬅ Назад", callback_data=f"adm:open:{key}")],
         ]
     )
@@ -264,13 +272,18 @@ def promos_list_kb(rows, back_callback: str = "adm:back") -> InlineKeyboardMarku
 def promo_manage_kb(code: str, status: str) -> InlineKeyboardMarkup:
     keyboard = []
 
+    if status == "archived":
+        keyboard.append([InlineKeyboardButton(text="📊 Статистика", callback_data=f"adm:promo:stats:{code}")])
+        keyboard.append([InlineKeyboardButton(text="⬅ Назад", callback_data="adm:promo:list")])
+        return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
     if status == "active":
         keyboard.append([InlineKeyboardButton(text="🔴 Выключить", callback_data=f"adm:promo:off:{code}")])
     else:
         keyboard.append([InlineKeyboardButton(text="🟢 Включить", callback_data=f"adm:promo:on:{code}")])
 
     keyboard.append([InlineKeyboardButton(text="📊 Статистика", callback_data=f"adm:promo:stats:{code}")])
-    keyboard.append([InlineKeyboardButton(text="🗑 Удалить промокод", callback_data=f"adm:promo:del:ask:{code}")])
+    keyboard.append([InlineKeyboardButton(text="🗃 Заархивировать", callback_data=f"adm:promo:del:ask:{code}")])
     keyboard.append([InlineKeyboardButton(text="⬅ Назад", callback_data="adm:promo:list")])
 
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
@@ -279,7 +292,7 @@ def promo_manage_kb(code: str, status: str) -> InlineKeyboardMarkup:
 def promo_delete_confirm_kb(code: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="✅ Да, удалить", callback_data=f"adm:promo:del:do:{code}")],
+            [InlineKeyboardButton(text="✅ Да, в архив", callback_data=f"adm:promo:del:do:{code}")],
             [InlineKeyboardButton(text="⬅ Назад", callback_data=f"adm:promo:open:{code}")],
         ]
     )
@@ -367,6 +380,51 @@ def admin_task_channel_manual_post_confirm_kb(channel_id: int) -> InlineKeyboard
         inline_keyboard=[
             [InlineKeyboardButton(text="✅ Добавить пост", callback_data="adm:tch:manual_post:add")],
             [InlineKeyboardButton(text="❌ Отмена", callback_data=f"adm:tch:manual_post:cancel:{int(channel_id)}")],
+        ]
+    )
+
+
+def admin_subscription_tasks_kb(rows) -> InlineKeyboardMarkup:
+    kb = []
+
+    for row in rows:
+        task_id = int(row["id"])
+        title = row.get("title") or row.get("chat_id") or f"#{task_id}"
+        is_active = bool(row.get("is_active"))
+        participants = int(row.get("participants_count") or 0)
+        max_subscribers = int(row.get("max_subscribers") or 0)
+        total_reward = float(row.get("total_reward") or 0)
+        status = "🟢" if is_active else "🔴"
+        kb.append([
+            InlineKeyboardButton(
+                text=f"{status} {title} • {participants}/{max_subscribers} • {total_reward:g}⭐",
+                callback_data=f"adm:sub:open:{task_id}",
+            )
+        ])
+
+    kb.append([InlineKeyboardButton(text="➕ Создать подписку", callback_data="adm:sub:new")])
+    kb.append([InlineKeyboardButton(text="⬅ Назад", callback_data="adm:back")])
+    return InlineKeyboardMarkup(inline_keyboard=kb)
+
+
+def admin_subscription_task_card_kb(task_id: int, is_active: bool) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(
+                text="🔴 Отключить" if is_active else "🟢 Включить",
+                callback_data=f"adm:sub:toggle:{int(task_id)}:{0 if is_active else 1}",
+            )],
+            [InlineKeyboardButton(text="🗃 Заархивировать", callback_data=f"adm:sub:archive:ask:{int(task_id)}")],
+            [InlineKeyboardButton(text="⬅ Назад", callback_data="adm:sub:list")],
+        ]
+    )
+
+
+def admin_subscription_task_archive_confirm_kb(task_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Да, в архив", callback_data=f"adm:sub:archive:do:{int(task_id)}")],
+            [InlineKeyboardButton(text="⬅ Назад", callback_data=f"adm:sub:open:{int(task_id)}")],
         ]
     )
 

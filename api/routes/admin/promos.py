@@ -11,6 +11,7 @@ from api.schemas.admin.promos import (
     PromosResponse,
 )
 from api.services.admin.promos import (
+    archive_promo_entry,
     create_promo_entry,
     delete_promo_entry,
     get_promo_detail,
@@ -83,6 +84,15 @@ async def delete_promo_route(promo_code: str):
     db = await get_db()
     try:
         return await delete_promo_entry(db, promo_code)
+    finally:
+        await db.close()
+
+
+@router.post("/{promo_code}/archive")
+async def archive_promo_route(promo_code: str):
+    db = await get_db()
+    try:
+        return await archive_promo_entry(db, promo_code)
     finally:
         await db.close()
 

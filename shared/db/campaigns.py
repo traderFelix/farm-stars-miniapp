@@ -42,9 +42,17 @@ async def delete_campaign(
         db: aiosqlite.Connection,
         campaign_key: str,
 ) -> None:
-    await db.execute("DELETE FROM claims WHERE campaign_key = ?", (campaign_key,))
-    await db.execute("DELETE FROM campaign_winners WHERE campaign_key = ?", (campaign_key,))
-    await db.execute("DELETE FROM campaigns WHERE campaign_key = ?", (campaign_key,))
+    await archive_campaign(db, campaign_key)
+
+
+async def archive_campaign(
+        db: aiosqlite.Connection,
+        campaign_key: str,
+) -> None:
+    await db.execute(
+        "UPDATE campaigns SET status = ? WHERE campaign_key = ?",
+        ("archived", campaign_key),
+    )
 
 
 async def get_campaign(
@@ -67,6 +75,7 @@ async def list_campaigns(db: aiosqlite.Connection):
             """
             SELECT campaign_key, title, reward_amount, status, description AS post_url, created_at
             FROM campaigns
+            WHERE status != 'archived'
             ORDER BY datetime(created_at) DESC
             """
     ) as cur:
@@ -81,6 +90,7 @@ async def list_campaigns_latest(
             """
             SELECT campaign_key, title, reward_amount, status, description AS post_url, created_at
             FROM campaigns
+            WHERE status != 'archived'
             ORDER BY datetime(created_at) DESC
             LIMIT ?
             """,
@@ -90,7 +100,9 @@ async def list_campaigns_latest(
 
 
 async def campaigns_status_counts(db: aiosqlite.Connection) -> Tuple[int, int, int]:
-    async with db.execute("SELECT status, COUNT(*) AS cnt FROM campaigns GROUP BY status") as cur:
+    async with db.execute(
+        "SELECT status, COUNT(*) AS cnt FROM campaigns WHERE status != 'archived' GROUP BY status"
+    ) as cur:
         rows = await cur.fetchall()
 
     counts = {"active": 0, "ended": 0, "draft": 0}
@@ -251,6 +263,7 @@ async def total_assigned_amount(db: aiosqlite.Connection) -> float:
             SELECT COALESCE(SUM(c.reward_amount), 0) AS total
             FROM campaign_winners w
             JOIN campaigns c ON c.campaign_key = w.campaign_key
+            WHERE c.status != 'archived'
             """
     ) as cur:
         row = await cur.fetchone()
@@ -264,7 +277,8 @@ async def unclaimed_total_amount(db: aiosqlite.Connection) -> float:
             FROM campaign_winners w
             JOIN campaigns c ON c.campaign_key = w.campaign_key
             LEFT JOIN users u ON u.username = w.username
-            WHERE NOT EXISTS (
+            WHERE c.status != 'archived'
+              AND NOT EXISTS (
                 SELECT 1
                 FROM claims cl
                 WHERE cl.campaign_key = w.campaign_key

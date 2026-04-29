@@ -11,6 +11,7 @@ from shared.config import WEB_ORIGIN_DEV, WEB_ORIGIN_NGROK
 from api.routes.admin.analytics import router as analytics_admin_router
 from api.routes.admin.campaigns import router as campaigns_admin_router
 from api.routes.admin.promos import router as promos_admin_router
+from api.routes.admin.subscriptions import router as subscriptions_admin_router
 from api.routes.admin.users import router as users_router
 from api.routes.admin.task_channels import router as task_channels_router
 from api.routes.admin.withdrawals import router as withdrawals_admin_router
@@ -25,6 +26,7 @@ from api.routes.promos import router as promos_router
 from api.routes.referrals import router as referrals_router
 from api.routes.tasks import router as tasks_router
 from api.routes.thefts import router as thefts_router
+from api.routes.subscriptions import router as subscriptions_router
 from api.routes.ledger import router as ledger_router
 from api.routes.checkin import router as checkin_router
 from api.routes.withdrawals import router as withdrawals_router
@@ -99,11 +101,13 @@ app.include_router(profile_router)
 app.include_router(referrals_router)
 app.include_router(tasks_router)
 app.include_router(thefts_router)
+app.include_router(subscriptions_router)
 app.include_router(miniapp_compat_router)
 app.include_router(users_router)
 app.include_router(analytics_admin_router)
 app.include_router(campaigns_admin_router)
 app.include_router(promos_admin_router)
+app.include_router(subscriptions_admin_router)
 app.include_router(task_channels_router)
 app.include_router(withdrawals_admin_router)
 app.include_router(ledger_router)

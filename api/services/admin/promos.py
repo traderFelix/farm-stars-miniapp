@@ -5,8 +5,8 @@ from fastapi import HTTPException
 
 from shared.db.common import tx
 from shared.db.promos import (
+    archive_promo,
     claimed_usernames,
-    delete_promo,
     get_promo,
     global_claims_stats,
     list_promos,
@@ -74,7 +74,7 @@ def _normalize_total_uses(value: int) -> int:
 
 def _normalize_status(value: str) -> str:
     normalized = (value or "").strip().lower()
-    if normalized not in {"draft", "active", "ended"}:
+    if normalized not in {"draft", "active", "ended", "archived"}:
         raise HTTPException(status_code=400, detail="Некорректный статус промокода")
     return normalized
 
@@ -130,7 +130,9 @@ async def update_promo_status(
         *,
         status: str,
 ) -> dict[str, Any]:
-    await _get_promo_or_404(db, promo_code)
+    row = await _get_promo_or_404(db, promo_code)
+    if str(row["status"] or "") == "archived":
+        raise HTTPException(status_code=404, detail="Промокод уже в архиве.")
     normalized_status = _normalize_status(status)
 
     async with tx(db, immediate=False):
@@ -139,19 +141,26 @@ async def update_promo_status(
     return await get_promo_detail(db, promo_code)
 
 
-async def delete_promo_entry(
+async def archive_promo_entry(
         db: aiosqlite.Connection,
         promo_code: str,
 ) -> dict[str, Any]:
     await _get_promo_or_404(db, promo_code)
 
     async with tx(db):
-        await delete_promo(db, promo_code)
+        await archive_promo(db, promo_code)
 
     return {
         "ok": True,
         "promo_code": promo_code,
     }
+
+
+async def delete_promo_entry(
+        db: aiosqlite.Connection,
+        promo_code: str,
+) -> dict[str, Any]:
+    return await archive_promo_entry(db, promo_code)
 
 
 async def get_promo_summary(
