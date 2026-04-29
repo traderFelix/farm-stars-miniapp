@@ -51,8 +51,13 @@ class TaskChannelManualPost(StatesGroup):
 
 class SubscriptionTaskCreate(StatesGroup):
     chat_id = State()
+    client_ref = State()
     channel_url = State()
     instant_reward = State()
     daily_reward_total = State()
     daily_claim_days = State()
     max_subscribers = State()
+
+
+class SubscriptionTaskBindClient(StatesGroup):
+    client_ref = State()

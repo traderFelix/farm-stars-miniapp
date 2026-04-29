@@ -60,6 +60,12 @@ async def ensure_subscription_tasks_schema(db: aiosqlite.Connection) -> None:
         "is_archived",
         "INTEGER NOT NULL DEFAULT 0",
     )
+    await _add_column_if_missing(
+        db,
+        "subscription_tasks",
+        "client_user_id",
+        "INTEGER",
+    )
     await db.execute(
         """
         CREATE TABLE IF NOT EXISTS subscription_assignments (
@@ -130,6 +136,7 @@ async def create_subscription_task(
         *,
         chat_id: str,
         title: str,
+        client_user_id: Optional[int],
         channel_url: str,
         instant_reward: float,
         daily_reward_total: float,
@@ -141,14 +148,15 @@ async def create_subscription_task(
     cur = await db.execute(
         """
         INSERT INTO subscription_tasks (
-            chat_id, title, channel_url, instant_reward, daily_reward_total,
+            chat_id, title, client_user_id, channel_url, instant_reward, daily_reward_total,
             daily_claim_days, max_subscribers, is_active, created_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
         """,
         (
             str(chat_id),
             str(title or ""),
+            int(client_user_id) if client_user_id is not None else None,
             str(channel_url),
             float(instant_reward),
             float(daily_reward_total),
@@ -189,11 +197,14 @@ async def list_subscription_tasks(db: aiosqlite.Connection) -> list[Any]:
         """
         SELECT
             t.*,
+            u.username AS client_username,
+            u.tg_first_name AS client_first_name,
             COUNT(a.id) AS assignment_count,
             COALESCE(SUM(CASE WHEN a.status = 'active' THEN 1 ELSE 0 END), 0) AS active_count,
             COALESCE(SUM(CASE WHEN a.status = 'completed' THEN 1 ELSE 0 END), 0) AS completed_count,
             COALESCE(SUM(CASE WHEN a.status = 'abandoned' THEN 1 ELSE 0 END), 0) AS abandoned_count
         FROM subscription_tasks t
+        LEFT JOIN users u ON u.user_id = t.client_user_id
         LEFT JOIN subscription_assignments a ON a.task_id = t.id
         WHERE COALESCE(t.is_archived, 0) = 0
         GROUP BY t.id
@@ -234,6 +245,26 @@ async def set_subscription_task_title(
         WHERE id = ?
         """,
         (str(title or "").strip(), int(task_id)),
+    )
+
+
+async def set_subscription_task_client(
+        db: aiosqlite.Connection,
+        *,
+        task_id: int,
+        client_user_id: Optional[int],
+) -> None:
+    await ensure_subscription_tasks_schema(db)
+    await db.execute(
+        """
+        UPDATE subscription_tasks
+        SET client_user_id = ?, updated_at = datetime('now')
+        WHERE id = ?
+        """,
+        (
+            int(client_user_id) if client_user_id is not None else None,
+            int(task_id),
+        ),
     )
 
 

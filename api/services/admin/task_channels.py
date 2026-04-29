@@ -4,6 +4,8 @@ from typing import Any, Optional
 import aiosqlite
 from fastapi import HTTPException
 
+from api.services.admin.client_roles import ensure_client_role, sync_client_role_after_rebind
+from api.services.admin.telegram_channels import verified_telegram_channel_title
 from shared.db.common import tx
 from shared.db.tasks import (
     allocate_task_post_from_channel_post,
@@ -124,8 +126,17 @@ async def toggle_channel(
 ) -> dict[str, Any]:
     row = await _get_channel_row(db, int(channel_id))
     new_active = 0 if int(row["is_active"] or 0) == 1 else 1
+    verified_title: Optional[str] = None
+
+    if new_active == 1:
+        verified_title = await verified_telegram_channel_title(
+            str(row["chat_id"]),
+            activation_subject="канал просмотров",
+        )
 
     async with tx(db):
+        if verified_title:
+            await set_task_channel_title(db, int(channel_id), verified_title)
         await set_task_channel_active(db, int(channel_id), new_active)
 
     return await build_channel_detail(db, int(channel_id))
@@ -198,6 +209,8 @@ async def create_channel(
                 views_per_post=views_per_post,
                 view_seconds=view_seconds,
             )
+            if client_user_id is not None:
+                await ensure_client_role(db, int(client_user_id))
     except sqlite3.IntegrityError as e:
         raise HTTPException(
             status_code=409,
@@ -213,13 +226,23 @@ async def bind_channel_client(
         *,
         client_user_id: int,
 ) -> dict[str, Any]:
-    await _get_channel_row(db, int(channel_id))
+    row = await _get_channel_row(db, int(channel_id))
 
     if not await get_user_by_id(db, int(client_user_id)):
         raise HTTPException(status_code=404, detail="Клиент не найден")
 
+    previous_client_user_id = (
+        int(row["client_user_id"])
+        if row["client_user_id"] is not None
+        else None
+    )
     async with tx(db):
         await set_task_channel_client(db, int(channel_id), int(client_user_id))
+        await sync_client_role_after_rebind(
+            db,
+            previous_user_id=previous_client_user_id,
+            next_user_id=int(client_user_id),
+        )
 
     return await build_channel_detail(db, int(channel_id))
 
@@ -245,13 +268,25 @@ async def get_channel_posts(
         db: aiosqlite.Connection,
         channel_id: int,
         *,
-        limit: int = 20,
+        limit: int = 5,
+        page: int = 0,
 ) -> dict[str, Any]:
     row = await _get_channel_row(db, int(channel_id))
-    posts = await list_task_posts_by_channel(db, int(channel_id), limit=int(limit))
+    normalized_limit = max(int(limit), 1)
+    normalized_page = max(int(page), 0)
+    offset = normalized_page * normalized_limit
+    posts = await list_task_posts_by_channel(
+        db,
+        int(channel_id),
+        limit=normalized_limit + 1,
+        offset=offset,
+    )
+    has_next = len(posts) > normalized_limit
     return {
         "channel": _serialize_channel(row),
-        "items": [_serialize_post(post) for post in posts],
+        "items": [_serialize_post(post) for post in posts[:normalized_limit]],
+        "page": normalized_page,
+        "has_next": has_next,
     }
 
 

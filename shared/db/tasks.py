@@ -506,7 +506,7 @@ async def create_task_channel(
         INSERT INTO task_channels (
             chat_id, title, client_user_id, is_active, total_bought_views, views_per_post, view_seconds, allocated_views, created_at
         )
-        VALUES (?, ?, ?, 1, ?, ?, ?, 0, datetime('now'))
+        VALUES (?, ?, ?, 0, ?, ?, ?, 0, datetime('now'))
         """,
         (
             str(chat_id),
@@ -620,7 +620,12 @@ async def get_task_channel_allocated_views(db: aiosqlite.Connection, channel_id:
         return int(row["allocated_views"] or 0) if row else 0
 
 
-async def list_task_posts_by_channel(db: aiosqlite.Connection, channel_id: int, limit: int = 20):
+async def list_task_posts_by_channel(
+        db: aiosqlite.Connection,
+        channel_id: int,
+        limit: int = 20,
+        offset: int = 0,
+):
     await ensure_task_posts_manual_schema(db)
     async with db.execute(
             """
@@ -638,8 +643,9 @@ async def list_task_posts_by_channel(db: aiosqlite.Connection, channel_id: int, 
         WHERE channel_id = ?
         ORDER BY channel_post_id DESC, id DESC
         LIMIT ?
+        OFFSET ?
         """,
-            (int(channel_id), int(limit)),
+            (int(channel_id), int(limit), int(offset)),
     ) as cur:
         return await cur.fetchall()
 

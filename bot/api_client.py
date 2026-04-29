@@ -184,6 +184,38 @@ class TheftsApi(ApiSection):
         return await self._get(f"/thefts/bot/me/{int(user_id)}")
 
 
+class ClientCabinetApi(ApiSection):
+    async def get_summary(self, user_id: int) -> JsonDict:
+        return await self._get(f"/bot/clients/{int(user_id)}")
+
+    async def list_channels(self, user_id: int) -> JsonDict:
+        return await self._get(f"/bot/clients/{int(user_id)}/channels")
+
+    async def get_channel(self, user_id: int, channel_id: int) -> JsonDict:
+        return await self._get(f"/bot/clients/{int(user_id)}/channels/{int(channel_id)}")
+
+    async def get_view_stats(self, user_id: int, channel_id: int) -> JsonDict:
+        return await self._get(f"/bot/clients/{int(user_id)}/channels/{int(channel_id)}/view-stats")
+
+    async def get_subscription_stats(self, user_id: int, channel_id: int) -> JsonDict:
+        return await self._get(f"/bot/clients/{int(user_id)}/channels/{int(channel_id)}/subscription-stats")
+
+    async def get_subscription_campaigns(self, user_id: int, channel_id: int) -> JsonDict:
+        return await self._get(f"/bot/clients/{int(user_id)}/channels/{int(channel_id)}/subscription-campaigns")
+
+    async def get_posts(self, user_id: int, channel_id: int, *, limit: int = 5, page: int = 0) -> JsonDict:
+        return await self._get(
+            f"/bot/clients/{int(user_id)}/channels/{int(channel_id)}/posts",
+            params={"limit": int(limit), "page": int(page)},
+        )
+
+    async def list_orders(self, user_id: int, *, limit: int = 20) -> JsonDict:
+        return await self._get(
+            f"/bot/clients/{int(user_id)}/orders",
+            params={"limit": int(limit)},
+        )
+
+
 class UsersApi(ApiSection):
     async def lookup(self, query: str) -> JsonDict:
         return await self._post(
@@ -498,10 +530,10 @@ class TaskChannelsApi(ApiSection):
             },
         )
 
-    async def get_posts(self, channel_id: int, *, limit: int = 20) -> JsonDict:
+    async def get_posts(self, channel_id: int, *, limit: int = 5, page: int = 0) -> JsonDict:
         return await self._get(
             f"/admin/task-channels/{int(channel_id)}/posts",
-            params={"limit": int(limit)},
+            params={"limit": int(limit), "page": int(page)},
         )
 
     async def add_manual_post(
@@ -532,6 +564,7 @@ class SubscriptionTasksApi(ApiSection):
             *,
             chat_id: str,
             title: Optional[str],
+            client_user_id: Optional[int],
             channel_url: str,
             instant_reward: float,
             daily_reward_total: float,
@@ -543,6 +576,7 @@ class SubscriptionTasksApi(ApiSection):
             json={
                 "chat_id": str(chat_id),
                 "title": title,
+                "client_user_id": int(client_user_id) if client_user_id is not None else None,
                 "channel_url": str(channel_url),
                 "instant_reward": float(instant_reward),
                 "daily_reward_total": float(daily_reward_total),
@@ -555,6 +589,12 @@ class SubscriptionTasksApi(ApiSection):
         return await self._post(
             f"/admin/subscription-tasks/{int(task_id)}/status",
             json={"is_active": bool(is_active)},
+        )
+
+    async def bind_client(self, task_id: int, *, client_user_id: int) -> JsonDict:
+        return await self._post(
+            f"/admin/subscription-tasks/{int(task_id)}/client",
+            json={"client_user_id": int(client_user_id)},
         )
 
     async def archive(self, task_id: int) -> JsonDict:
@@ -610,6 +650,7 @@ class BotApiClient:
         self.profile = ProfileApi(self)
         self.tasks = TasksApi(self)
         self.battles = BattlesApi(self)
+        self.clients = ClientCabinetApi(self)
         self.users = UsersApi(self)
         self.withdrawals_review = ReviewWithdrawalsApi(self)
         self.admin_campaigns = CampaignsAdminApi(self)
@@ -696,6 +737,38 @@ api_client = BotApiClient(
 
 async def get_user_profile(user_id: int) -> JsonDict:
     return await api_client.users.get_profile(user_id)
+
+
+async def get_client_cabinet_summary_via_api(user_id: int) -> JsonDict:
+    return await api_client.clients.get_summary(user_id)
+
+
+async def list_client_channels_via_api(user_id: int) -> JsonDict:
+    return await api_client.clients.list_channels(user_id)
+
+
+async def get_client_channel_via_api(user_id: int, channel_id: int) -> JsonDict:
+    return await api_client.clients.get_channel(user_id, channel_id)
+
+
+async def get_client_channel_view_stats_via_api(user_id: int, channel_id: int) -> JsonDict:
+    return await api_client.clients.get_view_stats(user_id, channel_id)
+
+
+async def get_client_channel_subscription_stats_via_api(user_id: int, channel_id: int) -> JsonDict:
+    return await api_client.clients.get_subscription_stats(user_id, channel_id)
+
+
+async def get_client_channel_subscription_campaigns_via_api(user_id: int, channel_id: int) -> JsonDict:
+    return await api_client.clients.get_subscription_campaigns(user_id, channel_id)
+
+
+async def get_client_channel_posts_via_api(user_id: int, channel_id: int, *, limit: int = 5, page: int = 0) -> JsonDict:
+    return await api_client.clients.get_posts(user_id, channel_id, limit=limit, page=page)
+
+
+async def list_client_orders_via_api(user_id: int, *, limit: int = 20) -> JsonDict:
+    return await api_client.clients.list_orders(user_id, limit=limit)
 
 
 async def get_user_stats(user_id: int) -> JsonDict:
@@ -993,8 +1066,8 @@ async def update_task_channel_title_via_api(
     )
 
 
-async def get_task_channel_posts_via_api(channel_id: int, *, limit: int = 20) -> JsonDict:
-    return await api_client.task_channels.get_posts(channel_id, limit=limit)
+async def get_task_channel_posts_via_api(channel_id: int, *, limit: int = 5, page: int = 0) -> JsonDict:
+    return await api_client.task_channels.get_posts(channel_id, limit=limit, page=page)
 
 
 async def add_task_channel_manual_post_via_api(
@@ -1022,6 +1095,7 @@ async def create_subscription_task_via_api(
         *,
         chat_id: str,
         title: Optional[str],
+        client_user_id: Optional[int] = None,
         channel_url: str,
         instant_reward: float,
         daily_reward_total: float,
@@ -1031,6 +1105,7 @@ async def create_subscription_task_via_api(
     return await api_client.subscription_tasks.create(
         chat_id=chat_id,
         title=title,
+        client_user_id=client_user_id,
         channel_url=channel_url,
         instant_reward=instant_reward,
         daily_reward_total=daily_reward_total,
@@ -1041,6 +1116,13 @@ async def create_subscription_task_via_api(
 
 async def set_subscription_task_status_via_api(task_id: int, *, is_active: bool) -> JsonDict:
     return await api_client.subscription_tasks.set_status(task_id, is_active=is_active)
+
+
+async def bind_subscription_task_client_via_api(task_id: int, *, client_user_id: int) -> JsonDict:
+    return await api_client.subscription_tasks.bind_client(
+        task_id,
+        client_user_id=client_user_id,
+    )
 
 
 async def archive_subscription_task_via_api(task_id: int) -> JsonDict:
@@ -1127,6 +1209,14 @@ __all__ = [
     "BotApiClient",
     "api_client",
     "get_user_profile",
+    "get_client_cabinet_summary_via_api",
+    "list_client_channels_via_api",
+    "get_client_channel_via_api",
+    "get_client_channel_view_stats_via_api",
+    "get_client_channel_subscription_stats_via_api",
+    "get_client_channel_subscription_campaigns_via_api",
+    "get_client_channel_posts_via_api",
+    "list_client_orders_via_api",
     "get_user_stats",
     "get_user_battle_stats",
     "get_user_theft_stats",

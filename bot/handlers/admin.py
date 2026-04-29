@@ -13,6 +13,7 @@ from bot.api_client import (
     archive_promo_via_api,
     archive_subscription_task_via_api,
     adjust_user_balance,
+    bind_subscription_task_client_via_api,
     bind_task_channel_client_via_api,
     clear_user_suspicious,
     create_campaign_via_api,
@@ -92,7 +93,7 @@ from bot.keyboards import (
 )
 
 from bot.states import (
-    CampaignCreate, PromoCreate, AddWinners, DeleteWinner, UserLookup, AdminAdjust, AdminRefundFee, TaskChannelBindClient, TaskChannelCreate, TaskChannelEdit, TaskChannelManualPost, SubscriptionTaskCreate,
+    CampaignCreate, PromoCreate, AddWinners, DeleteWinner, UserLookup, AdminAdjust, AdminRefundFee, TaskChannelBindClient, TaskChannelCreate, TaskChannelEdit, TaskChannelManualPost, SubscriptionTaskCreate, SubscriptionTaskBindClient,
 )
 
 router = Router()
@@ -310,11 +311,13 @@ async def admin_api_unavailable_myrole(message: Message):
         TaskChannelEdit.view_seconds,
         TaskChannelManualPost.post_url,
         SubscriptionTaskCreate.chat_id,
+        SubscriptionTaskCreate.client_ref,
         SubscriptionTaskCreate.channel_url,
         SubscriptionTaskCreate.instant_reward,
         SubscriptionTaskCreate.daily_reward_total,
         SubscriptionTaskCreate.daily_claim_days,
         SubscriptionTaskCreate.max_subscribers,
+        SubscriptionTaskBindClient.client_ref,
     )
 )
 async def admin_api_unavailable_state_message(message: Message):
@@ -405,6 +408,31 @@ def _user_risk_nav_kb(user_id: int, page: int, has_next: bool) -> InlineKeyboard
             callback_data=f"adm:user:details:{user_id}",
         )
     ])
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+
+def _task_channel_posts_nav_kb(channel_id: int, page: int, has_next: bool) -> InlineKeyboardMarkup:
+    row = []
+    if page > 0:
+        row.append(
+            InlineKeyboardButton(
+                text="⬅ Пред",
+                callback_data=f"adm:tch:posts:{channel_id}:{page - 1}",
+            )
+        )
+    if has_next:
+        row.append(
+            InlineKeyboardButton(
+                text="След ➡",
+                callback_data=f"adm:tch:posts:{channel_id}:{page + 1}",
+            )
+        )
+
+    keyboard = []
+    if row:
+        keyboard.append(row)
+    keyboard.append([InlineKeyboardButton(text="⬅ Назад к каналу", callback_data=f"adm:tch:open:{channel_id}")])
+    keyboard.append([InlineKeyboardButton(text="📺 Все каналы", callback_data="adm:tch:list")])
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 
@@ -517,12 +545,23 @@ def _build_subscription_task_card_text(detail: dict) -> tuple[str, bool, int]:
     active_count = int(task.get("active_count") or 0)
     completed_count = int(task.get("completed_count") or 0)
     abandoned_count = int(task.get("abandoned_count") or 0)
+    client_user_id = _to_optional_int(task.get("client_user_id"))
+    client_username = (task.get("client_username") or "").strip()
+    client_first_name = (task.get("client_first_name") or "").strip()
     status_text = "🟢 Включено" if is_active else "🔴 Отключено"
+    client_label = "не привязан"
+    if client_user_id is not None:
+        client_label = f"id:{client_user_id}"
+        if client_username:
+            client_label = f"@{client_username}"
+        elif client_first_name:
+            client_label = f"{client_first_name} ({client_label})"
 
     text = (
         "📢 Задание подписки\n\n"
         f"Название: {title}\n"
         f"ID канала: {chat_id}\n"
+        f"Клиент: {client_label}\n"
         f"Ссылка: {channel_url}\n"
         f"Статус: {status_text}\n\n"
         f"Награда пользователю: {fmt_stars(total_reward)}⭐\n"
@@ -2457,13 +2496,43 @@ async def adm_subscription_task_new_chat_id(message: Message, state: FSMContext)
     bot = message.bot
     title = await _get_channel_title_for_admin(bot, chat_id) if bot is not None else None
     await state.update_data(chat_id=chat_id, title=title)
-    await state.set_state(SubscriptionTaskCreate.channel_url)
+    await state.set_state(SubscriptionTaskCreate.client_ref)
     channel_label = f"Канал: {title}" if title else (
         "Название канала пока не определилось.\n"
         "Задание создадим выключенным, а при включении проверим, что бот есть в канале."
     )
     await message.answer(
         f"{channel_label}\n\n"
+        "Теперь пришли @username или user_id клиента, которому принадлежит этот канал."
+    )
+
+
+@router.message(SubscriptionTaskCreate.client_ref)
+async def adm_subscription_task_new_client_ref(message: Message, state: FSMContext):
+    query = (message.text or "").strip()
+    if not query:
+        await message.answer("❌ Нужен @username или user_id клиента")
+        return
+
+    try:
+        profile = await lookup_user(query)
+    except ApiClientError as e:
+        await message.answer(f"❌ {e.detail}")
+        return
+
+    client_user_id = int(profile["user_id"])
+    client_username = (profile.get("username") or "").strip()
+    client_name = (profile.get("first_name") or "").strip()
+    client_label = f"id:{client_user_id}"
+    if client_username:
+        client_label = f"@{client_username}"
+    elif client_name:
+        client_label = f"{client_name} ({client_label})"
+
+    await state.update_data(client_user_id=client_user_id)
+    await state.set_state(SubscriptionTaskCreate.channel_url)
+    await message.answer(
+        f"Клиент привязан: {client_label}\n\n"
         "Теперь пришли ссылку, которую пользователь будет открывать для подписки.\n"
         "Например: https://t.me/... или invite-link."
     )
@@ -2558,6 +2627,7 @@ async def adm_subscription_task_new_max_subscribers(message: Message, state: FSM
         detail = await create_subscription_task_via_api(
             chat_id=str(data["chat_id"]),
             title=data.get("title"),
+            client_user_id=_to_optional_int(data.get("client_user_id")),
             channel_url=str(data["channel_url"]),
             instant_reward=instant_reward,
             daily_reward_total=daily_reward_total,
@@ -2620,6 +2690,64 @@ async def adm_subscription_task_toggle(callback: CallbackQuery):
     await safe_edit_text(
         callback.message,
         text,
+        reply_markup=admin_subscription_task_card_kb(resolved_task_id, is_active),
+    )
+
+
+@router.callback_query(F.data.startswith("adm:sub:client:"))
+async def adm_subscription_task_bind_client_start(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    task_id = int((callback.data or "").rsplit(":", 1)[1])
+
+    try:
+        detail = await get_subscription_task_via_api(task_id)
+    except ApiClientError as e:
+        await safe_edit_text(
+            callback.message,
+            f"❌ Не удалось открыть задание подписки.\n\n{e.detail}",
+            reply_markup=admin_subscription_tasks_kb([]),
+        )
+        return
+
+    await state.clear()
+    await state.update_data(subscription_task_id=task_id)
+    await state.set_state(SubscriptionTaskBindClient.client_ref)
+    text, _, _ = _build_subscription_task_card_text(detail)
+    await safe_edit_text(
+        callback.message,
+        f"{text}\n\nПришли @username или user_id клиента для этого задания:",
+        reply_markup=admin_back_kb(f"adm:sub:open:{task_id}"),
+    )
+
+
+@router.message(SubscriptionTaskBindClient.client_ref)
+async def adm_subscription_task_bind_client_value(message: Message, state: FSMContext):
+    data = await state.get_data()
+    task_id = _to_optional_int(data.get("subscription_task_id"))
+    if task_id is None:
+        await state.clear()
+        await message.answer("❌ Не удалось определить задание, открой его заново.")
+        return
+
+    query = (message.text or "").strip()
+    if not query:
+        await message.answer("❌ Нужен @username или user_id клиента")
+        return
+
+    try:
+        profile = await lookup_user(query)
+        detail = await bind_subscription_task_client_via_api(
+            int(task_id),
+            client_user_id=int(profile["user_id"]),
+        )
+    except ApiClientError as e:
+        await message.answer(f"❌ {e.detail}")
+        return
+
+    await state.clear()
+    text, is_active, resolved_task_id = _build_subscription_task_card_text(detail)
+    await message.answer(
+        "✅ Клиент привязан к подписке\n\n" + text,
         reply_markup=admin_subscription_task_card_kb(resolved_task_id, is_active),
     )
 
@@ -3125,10 +3253,18 @@ async def adm_task_channel_manual_post_add(callback: CallbackQuery, state: FSMCo
 @router.callback_query(F.data.startswith("adm:tch:posts:"))
 async def adm_task_channel_posts(callback: CallbackQuery):
     await callback.answer()
-    channel_id = int(callback.data.split(":")[3])
+    parts = (callback.data or "").split(":")
+    channel_id = int(parts[3])
+    page = 0
+    if len(parts) > 4:
+        try:
+            page = max(int(parts[4]), 0)
+        except ValueError:
+            await safe_edit_text(callback.message, "❌ Страница не найдена.", reply_markup=admin_back_kb())
+            return
 
     try:
-        result = await get_task_channel_posts_via_api(channel_id, limit=20)
+        result = await get_task_channel_posts_via_api(channel_id, limit=5, page=page)
     except ApiClientError as e:
         if e.status_code == 404:
             await safe_edit_text(callback.message, "❌ Канал не найден.", reply_markup=admin_back_kb())
@@ -3142,6 +3278,8 @@ async def adm_task_channel_posts(callback: CallbackQuery):
 
     channel = result["channel"]
     rows = result.get("items") or []
+    current_page = int(result.get("page") or 0)
+    has_next = bool(result.get("has_next") or False)
     title = channel.get("title") or channel["chat_id"]
 
     if not rows:
@@ -3150,12 +3288,7 @@ async def adm_task_channel_posts(callback: CallbackQuery):
             "📊 Статус по постам\n\n"
             f"Канал: {title}\n\n"
             "Пока нет добавленных постов.",
-            reply_markup=InlineKeyboardMarkup(
-                inline_keyboard=[
-                    [InlineKeyboardButton(text="⬅ Назад к каналу", callback_data=f"adm:tch:open:{channel_id}")],
-                    [InlineKeyboardButton(text="📺 Все каналы", callback_data="adm:tch:list")],
-                ]
-            )
+            reply_markup=_task_channel_posts_nav_kb(channel_id, current_page, has_next),
         )
         return
 
@@ -3183,12 +3316,7 @@ async def adm_task_channel_posts(callback: CallbackQuery):
     await safe_edit_text(
         callback.message,
         text,
-        reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[
-                [InlineKeyboardButton(text="⬅ Назад к каналу", callback_data=f"adm:tch:open:{channel_id}")],
-                [InlineKeyboardButton(text="📺 Все каналы", callback_data="adm:tch:list")],
-            ]
-        )
+        reply_markup=_task_channel_posts_nav_kb(channel_id, current_page, has_next),
     )
 
 @router.message(TaskChannelEdit.view_seconds)
@@ -3292,7 +3420,8 @@ async def adm_task_channel_new_view_seconds(message: Message, state: FSMContext)
         f"Клиент user_id: {client_user_id}\n"
         f"Куплено просмотров: {total_bought_views}\n"
         f"На 1 пост: {views_per_post}\n"
-        f"Секунд просмотра: {view_seconds}"
+        f"Секунд просмотра: {view_seconds}\n"
+        "Статус: 🔴 Отключен"
     )
 
     await message.answer(
