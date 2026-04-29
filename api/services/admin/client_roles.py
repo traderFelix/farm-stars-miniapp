@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Optional
+from typing import Optional, cast
 
 import aiosqlite
 
@@ -36,15 +36,15 @@ async def sync_client_role_after_rebind(
     if normalized_previous is None or normalized_previous == normalized_next:
         return
 
-    previous_user_id = normalized_previous
-    current_role_level = await get_user_role_level(db, previous_user_id)
+    previous_user_id_value = cast(int, normalized_previous)
+    current_role_level = await get_user_role_level(db, previous_user_id_value)
     if current_role_level < ROLE_CLIENT or current_role_level >= ROLE_PARTNER:
         return
 
-    if await _has_any_client_bindings(db, previous_user_id):
+    if await _has_any_client_bindings(db, previous_user_id_value):
         return
 
-    await set_user_role_level(db, previous_user_id, ROLE_USER)
+    await set_user_role_level(db, previous_user_id_value, ROLE_USER)
 
 
 async def _has_any_client_bindings(
