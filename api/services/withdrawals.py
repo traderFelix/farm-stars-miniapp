@@ -27,6 +27,7 @@ from shared.db.abuse import (
     count_recent_abuse_events,
     sum_recent_abuse_amount,
 )
+from shared.db.common import tx
 from shared.db.ledger import (
     apply_balance_debit_if_enough,
     get_withdrawal_ability,
@@ -59,6 +60,12 @@ class EligibilityCheckResult:
     task_earnings_percent: float
     available_balance: float
     is_first_withdraw: bool
+
+
+class WithdrawalCreateError(ValueError):
+    def __init__(self, message: str, *, kind: str = "validation"):
+        super().__init__(message)
+        self.kind = kind
 
 
 def _safe_float(value) -> float:
@@ -289,6 +296,36 @@ def _resolve_paid_fee(
     return int(requested_fee)
 
 
+async def _record_withdraw_create_failure(
+        db,
+        *,
+        user_id: int,
+        method: str,
+        amount: float,
+        fingerprint: Optional[RequestFingerprint],
+        error_text: str,
+) -> None:
+    await log_user_action_with_fingerprint(
+        db,
+        user_id=int(user_id),
+        action="withdraw_create_fail",
+        fingerprint=fingerprint,
+        amount=amount,
+        entity_type="withdrawal",
+        entity_id=method,
+        meta=error_text,
+    )
+    recent_create_fails = await count_recent_abuse_events(db, int(user_id), "withdraw_create_fail", 60)
+    if recent_create_fails >= 5:
+        await add_user_risk_score(
+            db,
+            int(user_id),
+            15,
+            "Слишком много неудачных попыток вывода",
+            source="withdrawals",
+        )
+
+
 async def get_withdrawal_eligibility_for_user(
         user_id: int,
 ) -> WithdrawalEligibilityResponse:
@@ -431,36 +468,95 @@ async def create_withdrawal_for_user(
             entity_type="withdrawal",
             entity_id=method,
         )
-        error_text = await _validate_withdraw_rules(db, user_id, amount)
-        if error_text:
-            await log_user_action_with_fingerprint(
-                db,
-                user_id=int(user_id),
-                action="withdraw_create_fail",
-                fingerprint=fingerprint,
-                amount=amount,
-                entity_type="withdrawal",
-                entity_id=method,
-                meta=error_text,
-            )
-            recent_create_fails = await count_recent_abuse_events(db, int(user_id), "withdraw_create_fail", 60)
-            if recent_create_fails >= 5:
-                await add_user_risk_score(
-                    db,
-                    int(user_id),
-                    15,
-                    "Слишком много неудачных попыток вывода",
-                    source="withdrawals",
+        try:
+            async with tx(db):
+                error_text = await _validate_withdraw_rules(db, user_id, amount)
+                if error_text:
+                    raise WithdrawalCreateError(error_text)
+
+                if method == "ton":
+                    if not wallet:
+                        raise WithdrawalCreateError("Для вывода в TON нужно указать кошелек")
+
+                    wallet_in_use = await wallet_used_by_another_user(db, user_id, wallet)
+                    if wallet_in_use:
+                        raise WithdrawalCreateError(
+                            "Этот TON-кошелек уже используется другим пользователем",
+                            kind="wallet_conflict",
+                        )
+
+                first = await is_first_withdraw(db, user_id)
+                expected_fee = get_withdraw_fee(amount, first)
+                paid_fee_value = _resolve_paid_fee(
+                    paid_fee,
+                    expected_fee=expected_fee,
                 )
-            await db.commit()
-            raise ValueError(error_text)
+                if paid_fee_value != expected_fee:
+                    raise WithdrawalCreateError("Сумма комиссии не совпадает с ожидаемой", kind="fee_mismatch")
 
-        if method == "ton":
-            if not wallet:
-                raise ValueError("Для вывода в TON нужно указать кошелек")
+                withdrawal_id = await create_withdrawal(
+                    db=db,
+                    user_id=user_id,
+                    amount=amount,
+                    method=method,
+                    wallet=wallet,
+                )
 
-            wallet_in_use = await wallet_used_by_another_user(db, user_id, wallet)
-            if wallet_in_use:
+                await set_withdrawal_fee_info(
+                    db=db,
+                    withdrawal_id=withdrawal_id,
+                    fee_xtr=paid_fee_value,
+                    fee_paid=paid_fee_value > 0,
+                    fee_payment_charge_id=fee_payment_charge_id,
+                    fee_invoice_payload=fee_invoice_payload,
+                )
+
+                if paid_fee_value > 0:
+                    await xtr_ledger_add(
+                        db=db,
+                        user_id=user_id,
+                        withdrawal_id=withdrawal_id,
+                        delta_xtr=paid_fee_value,
+                        reason="withdraw_fee_paid",
+                        telegram_payment_charge_id=fee_payment_charge_id,
+                        invoice_payload=fee_invoice_payload,
+                        meta=f"method={method}",
+                    )
+
+                ok = await apply_balance_debit_if_enough(
+                    db=db,
+                    user_id=user_id,
+                    amount=amount,
+                    reason="withdraw_hold",
+                    withdrawal_id=withdrawal_id,
+                    meta=f"method={method};fee_xtr={paid_fee_value}",
+                )
+                if not ok:
+                    raise WithdrawalCreateError("На балансе не хватает звезд для вывода", kind="balance_race")
+
+                await log_user_action_with_fingerprint(
+                    db,
+                    user_id=int(user_id),
+                    action="withdraw_create",
+                    fingerprint=fingerprint,
+                    amount=amount,
+                    entity_type="withdrawal",
+                    entity_id=str(withdrawal_id),
+                    meta=f"method={method}",
+                )
+
+                balance = await get_balance(db, user_id)
+
+            return WithdrawalCreateResponse(
+                ok=True,
+                withdrawal_id=withdrawal_id,
+                status="pending",
+                message="Заявка на вывод создана",
+                balance=float(balance or 0),
+                fee_xtr=paid_fee_value,
+            )
+        except WithdrawalCreateError as exc:
+            if exc.kind == "wallet_conflict" and wallet:
                 await add_user_risk_score(
                     db,
                     int(user_id),
@@ -478,91 +574,16 @@ async def create_withdrawal_for_user(
                     entity_type="wallet",
                     entity_id=wallet,
                 )
-                await db.commit()
-                raise ValueError("Этот TON-кошелек уже используется другим пользователем")
 
-        first = await is_first_withdraw(db, user_id)
-        expected_fee = get_withdraw_fee(amount, first)
-        paid_fee_value = _resolve_paid_fee(
-            paid_fee,
-            expected_fee=expected_fee,
-        )
-        if paid_fee_value != expected_fee:
-            await log_user_action_with_fingerprint(
+            await _record_withdraw_create_failure(
                 db,
                 user_id=int(user_id),
-                action="withdraw_create_fail",
-                fingerprint=fingerprint,
+                method=method,
                 amount=amount,
-                entity_type="withdrawal",
-                entity_id=method,
-                meta="fee_mismatch",
+                fingerprint=fingerprint,
+                error_text=str(exc),
             )
-            await db.commit()
-            raise ValueError("Сумма комиссии не совпадает с ожидаемой")
-
-        withdrawal_id = await create_withdrawal(
-            db=db,
-            user_id=user_id,
-            amount=amount,
-            method=method,
-            wallet=wallet,
-        )
-
-        await set_withdrawal_fee_info(
-            db=db,
-            withdrawal_id=withdrawal_id,
-            fee_xtr=paid_fee_value,
-            fee_paid=paid_fee_value > 0,
-            fee_payment_charge_id=fee_payment_charge_id,
-            fee_invoice_payload=fee_invoice_payload,
-        )
-
-        if paid_fee_value > 0:
-            await xtr_ledger_add(
-                db=db,
-                user_id=user_id,
-                withdrawal_id=withdrawal_id,
-                delta_xtr=paid_fee_value,
-                reason="withdraw_fee_paid",
-                telegram_payment_charge_id=fee_payment_charge_id,
-                invoice_payload=fee_invoice_payload,
-                meta=f"method={method}",
-            )
-
-        await log_user_action_with_fingerprint(
-            db,
-            user_id=int(user_id),
-            action="withdraw_create",
-            fingerprint=fingerprint,
-            amount=amount,
-            entity_type="withdrawal",
-            entity_id=str(withdrawal_id),
-            meta=f"method={method}",
-        )
-
-        ok = await apply_balance_debit_if_enough(
-            db=db,
-            user_id=user_id,
-            amount=amount,
-            reason="withdraw_hold",
-            withdrawal_id=withdrawal_id,
-            meta=f"method={method};fee_xtr={paid_fee_value}",
-        )
-        if not ok:
-            raise ValueError("На балансе не хватает звезд для вывода")
-
-        balance = await get_balance(db, user_id)
-        await db.commit()
-
-        return WithdrawalCreateResponse(
-            ok=True,
-            withdrawal_id=withdrawal_id,
-            status="pending",
-            message="Заявка на вывод создана",
-            balance=float(balance or 0),
-            fee_xtr=paid_fee_value,
-        )
+            raise ValueError(str(exc))
     finally:
         await db.close()
 

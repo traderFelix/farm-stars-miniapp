@@ -5,7 +5,7 @@ from aiogram.types import (
     WebAppInfo,
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-from shared.config import WEB_ORIGIN_NGROK, ROLE_ADMIN, ROLE_CLIENT, ROLE_PARTNER
+from shared.config import ADMIN_CONTACT_URL, WEB_ORIGIN_NGROK, ROLE_ADMIN, ROLE_CLIENT, ROLE_PARTNER
 
 # ---------- USER KEYBOARDS ----------
 
@@ -37,6 +37,7 @@ def main_menu(role_level: int = 0) -> InlineKeyboardMarkup:
         [_miniapp_button()],
         [InlineKeyboardButton(text="👁 Просмотр постов", callback_data="tasks")],
     ]
+    rows.append([InlineKeyboardButton(text="💬 Связь с админом", url=ADMIN_CONTACT_URL)])
     if role_level >= ROLE_CLIENT:
         rows.append([InlineKeyboardButton(text="🤝 Кабинет клиента", callback_data="client:home")])
     if role_level >= ROLE_PARTNER:

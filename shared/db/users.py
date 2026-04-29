@@ -664,8 +664,10 @@ async def get_user_admin_details(db: aiosqlite.Connection, user_id: int):
 
 async def build_user_stats_text(db: aiosqlite.Connection, user_id: int) -> str:
     from shared.db.ledger import get_user_earnings_breakdown
+    from shared.db.withdrawals import get_user_withdrawal_summary
 
     stats = await get_user_earnings_breakdown(db, user_id)
+    withdrawal_summary = await get_user_withdrawal_summary(db, user_id)
     withdrawal_ability_total = (
         float(stats["view_post_bonus"])
         + float(stats["daily_bonus"])
@@ -711,7 +713,12 @@ async def build_user_stats_text(db: aiosqlite.Connection, user_id: int) -> str:
         f"{fmt_stars(stats['contest_bonus'])} ({fmt_pct(stats['contest_bonus_pct'])}%) — конкурсы\n"
         f"{fmt_stars(stats['promo_bonus'])} ({fmt_pct(stats['promo_bonus_pct'])}%) — промокоды\n"
         f"{fmt_stars(stats['admin_adjust'])} ({fmt_pct(stats['admin_adjust_pct'])}%) — начисления от админа\n"
-        f"<b>Итого: {fmt_stars(bonus_total)} ({fmt_pct_total(bonus_total_pct)}%)</b>"
+        f"<b>Итого: {fmt_stars(bonus_total)} ({fmt_pct_total(bonus_total_pct)}%)</b>\n\n"
+        f"<b>Выводы</b>\n"
+        f"{fmt_stars(withdrawal_summary['paid_amount'])}⭐ — выплачено "
+        f"({int(withdrawal_summary['paid_count'])} заявок)\n"
+        f"{fmt_stars(withdrawal_summary['pending_amount'])}⭐ — в обработке "
+        f"({int(withdrawal_summary['pending_count'])} заявок)"
     )
 
 

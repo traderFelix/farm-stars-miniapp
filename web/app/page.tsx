@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 
+import SharedInfoHint from "@/components/InfoHint";
 import RewardPopup from "@/components/RewardPopup";
 import CampaignsPanel from "@/components/campaigns/CampaignsPanel";
 import ReferralsPanel from "@/components/referrals/ReferralsPanel";
@@ -63,6 +64,17 @@ const HERO_BANNER_STYLE = {
   backgroundImage: `linear-gradient(180deg, rgba(7, 10, 18, 0.04), rgba(7, 10, 18, 0.1)), url("${HERO_BANNER_URL}")`,
 };
 const BOOTSTRAP_ERROR_MESSAGE = "Сейчас не удалось открыть мини-приложение. Попробуй еще раз чуть позже.";
+const BOOTSTRAP_PROGRESS = {
+  starting: 8,
+  telegramReady: 20,
+  authenticated: 36,
+  profileLoaded: 54,
+  checkinLoaded: 68,
+  battleLoaded: 80,
+  theftLoaded: 90,
+  subscriptionsLoaded: 97,
+  done: 100,
+} as const;
 
 export default function HomePage() {
   const [bootstrapState, setBootstrapState] = useState<BootstrapState>("idle");
@@ -107,7 +119,7 @@ export default function HomePage() {
   const theftSyncInFlightRef = useRef(false);
   const subscriptionSyncInFlightRef = useRef(false);
 
-  const [debugMessage, setDebugMessage] = useState<string>("Шаг 1: запуск");
+  const [bootstrapProgress, setBootstrapProgress] = useState<number>(BOOTSTRAP_PROGRESS.starting);
   const [errorMessage, setErrorMessage] = useState<string>("");
   const operatorName = profile?.game_nickname || "Шахтер";
 
@@ -547,12 +559,12 @@ export default function HomePage() {
       try {
         setBootstrapState("loading");
         setErrorMessage("");
-        setDebugMessage("Шаг 1: запуск");
+        setBootstrapProgress(BOOTSTRAP_PROGRESS.starting);
 
         initTelegramMiniApp();
         if (cancelled) return;
 
-        setDebugMessage("Шаг 2: Telegram готов");
+        setBootstrapProgress(BOOTSTRAP_PROGRESS.telegramReady);
 
         const initData = getTelegramInitData();
         if (!initData) {
@@ -562,33 +574,33 @@ export default function HomePage() {
           return;
         }
 
-        setDebugMessage("Шаг 3: авторизация");
         await authTelegram(initData);
         if (cancelled) return;
+        setBootstrapProgress(BOOTSTRAP_PROGRESS.authenticated);
 
-        setDebugMessage("Шаг 4: загрузка профиля");
         const nextProfile = await getMyProfile();
         if (cancelled) return;
         setProfile(nextProfile);
+        setBootstrapProgress(BOOTSTRAP_PROGRESS.profileLoaded);
 
-        setDebugMessage("Шаг 5: загрузка ежедневного бонуса");
         await loadCheckinStatus({ preserveMessage: true });
         if (cancelled) return;
+        setBootstrapProgress(BOOTSTRAP_PROGRESS.checkinLoaded);
 
-        setDebugMessage("Шаг 6: загрузка дуэли");
         await loadBattleStatus();
         if (cancelled) return;
+        setBootstrapProgress(BOOTSTRAP_PROGRESS.battleLoaded);
 
-        setDebugMessage("Шаг 7: загрузка воровства");
         await loadTheftStatus();
         if (cancelled) return;
+        setBootstrapProgress(BOOTSTRAP_PROGRESS.theftLoaded);
 
-        setDebugMessage("Шаг 8: загрузка подписок");
         await loadSubscriptionStatus();
         if (cancelled) return;
+        setBootstrapProgress(BOOTSTRAP_PROGRESS.subscriptionsLoaded);
 
+        setBootstrapProgress(BOOTSTRAP_PROGRESS.done);
         setBootstrapState("ready");
-        setDebugMessage("Шаг 9: готово");
       } catch (error) {
         if (cancelled) return;
         clearAccessToken();
@@ -819,13 +831,22 @@ export default function HomePage() {
         </header>
 
         {bootstrapState === "loading" && (
-          <section className="mining-panel">
-            <SectionHeader
-              eyebrow="Запуск"
-              title="Подключаю шахтный контур"
-              description="Поднимаю мини-приложение Telegram, авторизацию и данные смены"
-            />
-            <StatusNote>{debugMessage}</StatusNote>
+          <section className="mining-bootstrap-progressCard">
+            <h2 className="mining-bootstrap-progressCard__title">Загрузка</h2>
+            <div
+              className="mining-progress mining-bootstrap-progressCard__track"
+              role="progressbar"
+              aria-label="Прогресс запуска приложения"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={Math.round(bootstrapProgress)}
+              aria-valuetext={`${Math.round(bootstrapProgress)}%`}
+            >
+              <div
+                className="mining-progress__fill mining-bootstrap-progressCard__fill"
+                style={{ width: `${bootstrapProgress}%` }}
+              />
+            </div>
           </section>
         )}
 
@@ -1627,7 +1648,7 @@ function SubscriptionsPanel({
                     <div className="mining-status-note mining-subscriptions-section__warning" data-tone="warning">
                       <div className="mining-subscriptions-section__warning-content">
                         <span>Чтобы взять новое задание, необходимо сперва освободить слот</span>
-                        <InfoHint text="Для освобождения слота необходимо завершить или удалить минимум одно из активных заданий" />
+                        <SharedInfoHint hint="releaseSubscriptionSlot" />
                       </div>
                     </div>
                   ) : null}

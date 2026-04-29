@@ -53,6 +53,8 @@ JWT_EXPIRE_DAYS = _get_int_env("JWT_EXPIRE_DAYS")
 BOT_INTERNAL_TOKEN = _require_env("BOT_INTERNAL_TOKEN")
 TELEGRAM_BOT_TOKEN = _require_env("TELEGRAM_BOT_TOKEN")
 TELEGRAM_BOT_USERNAME = _require_env("TELEGRAM_BOT_USERNAME")
+_raw_admin_contact_username = (_get_env("ADMIN_CONTACT_USERNAME") or "traderFelix_admin").strip()
+ADMIN_CONTACT_USERNAME = _raw_admin_contact_username.lstrip("@") or "traderFelix_admin"
 ALLOW_DEV_AUTH = _get_bool_env("ALLOW_DEV_AUTH")
 CHANNEL_LINK = _require_env("CHANNEL_LINK")
 CHANNEL_ID = _require_env("CHANNEL_ID")
@@ -63,6 +65,7 @@ ANTIABUSE_HASH_SALT = _require_env("ANTIABUSE_HASH_SALT")
 RISK_SCORE_SUSPICIOUS_THRESHOLD = _get_float_env("RISK_SCORE_SUSPICIOUS_THRESHOLD")
 RISK_SCORE_WITHDRAW_BLOCK_THRESHOLD = _get_float_env("RISK_SCORE_WITHDRAW_BLOCK_THRESHOLD")
 BOT_TASK_CHANNEL_POST_QUEUE_PATH = _resolve_base_path(_require_env("BOT_TASK_CHANNEL_POST_QUEUE_PATH"))
+ADMIN_CONTACT_URL = f"https://t.me/{ADMIN_CONTACT_USERNAME}"
 
 ROLE_USER = 0
 ROLE_CLIENT = 3
@@ -108,7 +111,6 @@ GOOD_ACTIVITY_REASONS = {
     "view_post_bonus",
     "daily_bonus",
     "referral_bonus",
-    "task_bonus",
     "battle_bonus",
     "subscription_bonus",
 }
