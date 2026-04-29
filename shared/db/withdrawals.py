@@ -1,6 +1,6 @@
 import aiosqlite, logging
 
-from typing import Optional
+from typing import Optional, Union
 
 logger = logging.getLogger(__name__)
 
@@ -149,6 +149,26 @@ async def pending_withdrawn_amount(db: aiosqlite.Connection) -> int:
     async with db.execute(query) as cur:
         row = await cur.fetchone()
         return int(row[0] or 0)
+
+
+async def get_user_withdrawal_summary(db: aiosqlite.Connection, user_id: int) -> dict[str, Union[float, int]]:
+    query = """
+    SELECT
+        COALESCE(SUM(CASE WHEN status = 'paid' THEN amount ELSE 0 END), 0) AS paid_amount,
+        COALESCE(SUM(CASE WHEN status = 'pending' THEN amount ELSE 0 END), 0) AS pending_amount,
+        COALESCE(SUM(CASE WHEN status = 'paid' THEN 1 ELSE 0 END), 0) AS paid_count,
+        COALESCE(SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END), 0) AS pending_count
+    FROM withdrawals
+    WHERE user_id = ?
+    """
+    async with db.execute(query, (int(user_id),)) as cur:
+        row = await cur.fetchone()
+    return {
+        "paid_amount": float(row["paid_amount"] or 0),
+        "pending_amount": float(row["pending_amount"] or 0),
+        "paid_count": int(row["paid_count"] or 0),
+        "pending_count": int(row["pending_count"] or 0),
+    }
 
 
 async def has_pending_withdrawal(db: aiosqlite.Connection, user_id: int) -> bool:

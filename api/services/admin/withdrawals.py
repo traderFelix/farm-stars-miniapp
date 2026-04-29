@@ -77,6 +77,23 @@ async def _get_pending_withdrawal(db: aiosqlite.Connection, withdrawal_id: int) 
         raise HTTPException(status_code=404, detail="Заявка не найдена")
     if str(row["status"]) != "pending":
         raise HTTPException(status_code=409, detail="Уже обработана")
+    async with db.execute(
+            """
+        SELECT 1
+        FROM ledger
+        WHERE user_id = ?
+          AND withdrawal_id = ?
+          AND reason = 'withdraw_hold'
+        LIMIT 1
+        """,
+            (int(row["user_id"]), int(withdrawal_id)),
+    ) as cur:
+        hold_row = await cur.fetchone()
+    if not hold_row:
+        raise HTTPException(
+            status_code=409,
+            detail="Заявка без удержания баланса, нужна ручная проверка",
+        )
     return row
 
 
