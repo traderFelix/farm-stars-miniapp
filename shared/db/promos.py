@@ -48,6 +48,17 @@ async def ensure_promos_schema(db: aiosqlite.Connection) -> None:
         ON promo_claims(user_id, claimed_at DESC)
         """
     )
+    async with db.execute("PRAGMA table_info(promo_codes)") as cur:
+        columns = {
+            row["name"] if isinstance(row, aiosqlite.Row) else row[1]
+            for row in await cur.fetchall()
+        }
+    if "partner_user_id" not in columns:
+        await db.execute("ALTER TABLE promo_codes ADD COLUMN partner_user_id INTEGER")
+    if "partner_channel_chat_id" not in columns:
+        await db.execute("ALTER TABLE promo_codes ADD COLUMN partner_channel_chat_id TEXT")
+    if "partner_channel_title" not in columns:
+        await db.execute("ALTER TABLE promo_codes ADD COLUMN partner_channel_title TEXT")
 
 
 async def upsert_promo(
@@ -57,17 +68,18 @@ async def upsert_promo(
         reward_amount: float,
         total_uses: int,
         status: str = "draft",
+        partner_user_id: Optional[int] = None,
+        partner_channel_chat_id: Optional[str] = None,
+        partner_channel_title: Optional[str] = None,
 ) -> None:
     await ensure_promos_schema(db)
     await db.execute(
         """
-        INSERT INTO promo_codes (promo_code, title, reward_amount, total_uses, status)
-        VALUES (?, ?, ?, ?, ?)
-        ON CONFLICT(promo_code) DO UPDATE SET
-            title = excluded.title,
-            reward_amount = excluded.reward_amount,
-            total_uses = excluded.total_uses,
-            status = excluded.status
+        INSERT INTO promo_codes (
+            promo_code, title, reward_amount, total_uses, status,
+            partner_user_id, partner_channel_chat_id, partner_channel_title
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             promo_code,
@@ -75,6 +87,9 @@ async def upsert_promo(
             float(reward_amount),
             int(total_uses),
             status,
+            int(partner_user_id) if partner_user_id is not None else None,
+            str(partner_channel_chat_id) if partner_channel_chat_id is not None else None,
+            str(partner_channel_title) if partner_channel_title is not None else None,
         ),
     )
 
@@ -116,9 +131,21 @@ async def get_promo(
     await ensure_promos_schema(db)
     async with db.execute(
             """
-            SELECT promo_code, title, reward_amount, total_uses, status, created_at
-            FROM promo_codes
-            WHERE promo_code = ?
+            SELECT
+                p.promo_code,
+                p.title,
+                p.reward_amount,
+                p.total_uses,
+                p.status,
+                p.partner_user_id,
+                u.username AS partner_username,
+                u.tg_first_name AS partner_first_name,
+                p.partner_channel_chat_id,
+                p.partner_channel_title,
+                p.created_at
+            FROM promo_codes p
+            LEFT JOIN users u ON u.user_id = p.partner_user_id
+            WHERE p.promo_code = ?
             """,
             (promo_code,),
     ) as cur:
@@ -135,12 +162,29 @@ async def list_promos(db: aiosqlite.Connection):
                 p.reward_amount,
                 p.total_uses,
                 p.status,
+                p.partner_user_id,
+                u.username AS partner_username,
+                u.tg_first_name AS partner_first_name,
+                p.partner_channel_chat_id,
+                p.partner_channel_title,
                 p.created_at,
                 COUNT(pc.id) AS claims_count
             FROM promo_codes p
+            LEFT JOIN users u ON u.user_id = p.partner_user_id
             LEFT JOIN promo_claims pc ON pc.promo_code = p.promo_code
             WHERE p.status != 'archived'
-            GROUP BY p.promo_code, p.title, p.reward_amount, p.total_uses, p.status, p.created_at
+            GROUP BY
+                p.promo_code,
+                p.title,
+                p.reward_amount,
+                p.total_uses,
+                p.status,
+                p.partner_user_id,
+                u.username,
+                u.tg_first_name,
+                p.partner_channel_chat_id,
+                p.partner_channel_title,
+                p.created_at
             ORDER BY datetime(p.created_at) DESC
             """
     ) as cur:
@@ -160,12 +204,29 @@ async def list_promos_latest(
                 p.reward_amount,
                 p.total_uses,
                 p.status,
+                p.partner_user_id,
+                u.username AS partner_username,
+                u.tg_first_name AS partner_first_name,
+                p.partner_channel_chat_id,
+                p.partner_channel_title,
                 p.created_at,
                 COUNT(pc.id) AS claims_count
             FROM promo_codes p
+            LEFT JOIN users u ON u.user_id = p.partner_user_id
             LEFT JOIN promo_claims pc ON pc.promo_code = p.promo_code
             WHERE p.status != 'archived'
-            GROUP BY p.promo_code, p.title, p.reward_amount, p.total_uses, p.status, p.created_at
+            GROUP BY
+                p.promo_code,
+                p.title,
+                p.reward_amount,
+                p.total_uses,
+                p.status,
+                p.partner_user_id,
+                u.username,
+                u.tg_first_name,
+                p.partner_channel_chat_id,
+                p.partner_channel_title,
+                p.created_at
             ORDER BY datetime(p.created_at) DESC
             LIMIT ?
             """,

@@ -96,6 +96,7 @@ async def redeem_promo_for_user(
             reward_amount = float(row["reward_amount"] or 0)
             total_uses = int(row["total_uses"] or 0)
             status = row["status"] or "draft"
+            partner_user_id = int(row["partner_user_id"]) if row["partner_user_id"] is not None else None
 
             if status != "active":
                 await log_user_action_with_fingerprint(
@@ -111,6 +112,22 @@ async def redeem_promo_for_user(
                     ok=False,
                     message="Этот промокод сейчас неактивен",
                     code="inactive",
+                )
+
+            if partner_user_id is not None and partner_user_id == user_id:
+                await log_user_action_with_fingerprint(
+                    db,
+                    user_id=user_id,
+                    action="promo_redeem_fail",
+                    fingerprint=fingerprint,
+                    entity_type="promo",
+                    entity_id=normalized_code,
+                    meta="own_partner_promo",
+                )
+                return PromoRedeemResponse(
+                    ok=False,
+                    message="Нельзя активировать свой промокод",
+                    code="own_promo",
                 )
 
             if await has_promo_claim(db, normalized_code, user_id):

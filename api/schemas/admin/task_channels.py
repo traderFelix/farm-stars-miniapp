@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel
 
@@ -8,12 +8,15 @@ class TaskChannelItem(BaseModel):
     chat_id: str
     title: str = ""
     client_user_id: Optional[int] = None
+    owner_type: Literal["client", "partner"] = "client"
     client_username: Optional[str] = None
     client_first_name: Optional[str] = None
     is_active: bool
     total_bought_views: int
     views_per_post: int
     view_seconds: int
+    partner_views_per_post: int
+    partner_view_seconds: int
     allocated_views: int
     remaining_views: int
     created_at: Optional[str] = None
@@ -26,9 +29,15 @@ class TaskChannelStats(BaseModel):
     active_posts: int
 
 
+class TaskChannelPartnerAccruals(BaseModel):
+    views_promised: int
+    views_delivered: int
+
+
 class TaskChannelDetailResponse(BaseModel):
     channel: TaskChannelItem
     stats: TaskChannelStats
+    partner_accruals: Optional[TaskChannelPartnerAccruals] = None
 
 
 class TaskChannelsResponse(BaseModel):
@@ -58,6 +67,7 @@ class TaskChannelCreateRequest(BaseModel):
     chat_id: str
     title: Optional[str] = None
     client_user_id: Optional[int] = None
+    owner_type: Literal["client", "partner"] = "client"
     total_bought_views: int
     views_per_post: int
     view_seconds: int
@@ -67,10 +77,16 @@ class TaskChannelUpdateRequest(BaseModel):
     total_bought_views: int
     views_per_post: int
     view_seconds: int
+    pool: Literal["main", "partner"] = "main"
+
+
+class TaskChannelAddViewsRequest(BaseModel):
+    amount: int
 
 
 class TaskChannelClientBindRequest(BaseModel):
     client_user_id: int
+    owner_type: Literal["client", "partner"] = "client"
 
 
 class TaskChannelTitleUpdateRequest(BaseModel):

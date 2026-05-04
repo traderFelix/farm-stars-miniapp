@@ -13,8 +13,6 @@ from aiogram.types import (
     CallbackQuery,
     FSInputFile,
     InaccessibleMessage,
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
     Message,
     User,
 )
@@ -32,9 +30,15 @@ from bot.api_client import (
     get_client_channel_via_api,
     get_client_channel_posts_via_api,
     get_client_channel_view_stats_via_api,
+    get_partner_cabinet_summary_via_api,
+    get_partner_channel_accruals_via_api,
+    get_partner_channel_via_api,
     get_next_task,
     list_client_channels_via_api,
     list_client_orders_via_api,
+    list_partner_channel_accrual_history_via_api,
+    list_partner_channel_promos_via_api,
+    list_partner_channels_via_api,
     get_theft_status,
     ingest_task_channel_post_via_api,
     open_task,
@@ -50,6 +54,9 @@ from bot.keyboards import (
     client_view_stats_kb,
     main_menu,
     miniapp_menu_button,
+    partner_accruals_kb,
+    partner_channel_kb,
+    partner_home_kb,
     task_after_view_kb,
     tasks_menu,
 )
@@ -116,6 +123,15 @@ def _require_message(message: Union[Message, InaccessibleMessage, None]) -> Mess
 
 def _optional_message(message: Union[Message, InaccessibleMessage, None]) -> Optional[Message]:
     return message if isinstance(message, Message) else None
+
+
+def _has_visual_media(message: Message) -> bool:
+    return bool(
+        message.photo
+        or message.animation
+        or message.document
+        or message.video
+    )
 
 
 def _to_optional_int(value: Any) -> Optional[int]:
@@ -349,6 +365,113 @@ def _build_client_campaigns_status_text(payload: dict[str, Any]) -> str:
     return "\n".join(lines).strip()
 
 
+def _format_partner_promo_status(value: Any) -> str:
+    normalized = str(value or "").strip().lower()
+    return "активен" if normalized == "active" else "выключен"
+
+
+def _build_partner_home_text(summary: dict[str, Any]) -> str:
+    return (
+        "💼 <b>Кабинет партнера</b>\n\n"
+        f"Каналов: <b>{int(summary.get('channels_count') or 0)}</b>\n"
+        f"Рефералов: <b>{int(summary.get('referrals_count') or 0)}</b>"
+    )
+
+
+def _build_partner_channel_text(channel: dict[str, Any]) -> str:
+    return f"<b>{_format_client_channel_title(channel)}</b>"
+
+
+def _build_partner_promos_text(payload: dict[str, Any]) -> str:
+    channel = payload["channel"]
+    rows = list(payload.get("items") or [])
+
+    if not rows:
+        return (
+            "🎟 <b>Мои промокоды</b>\n\n"
+            f"Канал: <b>{_format_client_channel_title(channel)}</b>\n\n"
+            "Пока нет привязанных промокодов."
+        )
+
+    lines = [
+        "🎟 <b>Мои промокоды</b>",
+        "",
+        f"Канал: <b>{_format_client_channel_title(channel)}</b>",
+        "",
+    ]
+    for row in rows:
+        promo_code = html.escape(str(row.get("promo_code") or ""))
+        status = _format_partner_promo_status(row.get("status"))
+        claims_count = int(row.get("claims_count") or 0)
+        total_uses = int(row.get("total_uses") or 0)
+        new_referrals_count = int(row.get("new_referrals_count") or 0)
+        lines.extend([
+            f"<b>{promo_code}</b>",
+            f"Статус: <b>{status}</b>",
+            f"Активации: <b>{claims_count}/{total_uses}</b>",
+            f"Новых рефов: <b>{new_referrals_count}</b>",
+            "",
+        ])
+
+    return "\n".join(lines).strip()
+
+
+def _build_partner_accruals_text(payload: dict[str, Any]) -> str:
+    channel = payload["channel"]
+    summary = payload["summary"]
+    subscribers_accrued = int(summary.get("subscribers_promised") or 0)
+    subscribers_spent = int(summary.get("subscribers_delivered") or 0)
+    views_accrued = int(summary.get("views_promised") or 0)
+    views_spent = int(summary.get("views_delivered") or 0)
+    subscribers_remaining = max(subscribers_accrued - subscribers_spent, 0)
+    views_remaining = max(views_accrued - views_spent, 0)
+    return (
+        "🧾 <b>Мои начисления</b>\n\n"
+        f"Канал: <b>{_format_client_channel_title(channel)}</b>\n\n"
+        f"Подписчиков начислено: <b>{subscribers_accrued}</b>\n"
+        f"Подписчиков использовано: <b>{subscribers_spent}</b>\n"
+        f"Подписчиков осталось: <b>{subscribers_remaining}</b>\n\n"
+        f"Просмотров начислено: <b>{views_accrued}</b>\n"
+        f"Просмотров использовано на посты: <b>{views_spent}</b>\n"
+        f"Просмотров осталось: <b>{views_remaining}</b>"
+    )
+
+
+def _build_partner_accrual_history_text(payload: dict[str, Any]) -> str:
+    channel = payload["channel"]
+    rows = list(payload.get("items") or [])
+
+    if not rows:
+        return (
+            "🗓 <b>История начислений</b>\n\n"
+            f"Канал: <b>{_format_client_channel_title(channel)}</b>\n\n"
+            "Пока нет записей."
+        )
+
+    lines = [
+        "🗓 <b>История начислений</b>",
+        "",
+        f"Канал: <b>{_format_client_channel_title(channel)}</b>",
+        "",
+    ]
+    for row in rows:
+        created_at = _format_client_datetime(row.get("created_at"))
+        subscribers_accrued = int(row.get("subscribers_promised") or 0)
+        views_accrued = int(row.get("views_promised") or 0)
+        entry_lines = [f"<b>{created_at}</b>"]
+        if subscribers_accrued > 0:
+            entry_lines.append(f"Подписчики начислено: <b>{subscribers_accrued}</b>")
+        if views_accrued > 0:
+            entry_lines.append(f"Просмотры начислено: <b>{views_accrued}</b>")
+        if len(entry_lines) == 1:
+            continue
+
+        lines.extend(entry_lines)
+        lines.append("")
+
+    return "\n".join(lines).strip()
+
+
 def _is_expired_callback_error(error: TelegramBadRequest) -> bool:
     message = str(error).lower()
     return (
@@ -418,7 +541,8 @@ async def _reply_user_api_error_via_callback_message(
     _log_user_api_error(context, e)
 
     if isinstance(callback.message, Message):
-        await callback.message.answer(
+        await _answer_visual_message(
+            callback.message,
             _format_user_api_error(e),
             reply_markup=reply_markup,
         )
@@ -436,9 +560,10 @@ async def _send_user_api_error(
         reply_markup=None,
 ) -> None:
     _log_user_api_error(context, e)
-    await bot.send_message(
-        chat_id=user_id,
-        text=_format_user_api_error(e),
+    await _send_visual_message(
+        bot,
+        user_id,
+        _format_user_api_error(e),
         reply_markup=reply_markup,
     )
 
@@ -639,20 +764,98 @@ async def _ensure_chat_menu_button(bot: Bot, chat_id: int) -> None:
 
 
 async def _send_start_screen(message: Message, role_level: int) -> None:
+    await _answer_visual_message(
+        message,
+        START_TEXT,
+        reply_markup=main_menu(role_level),
+    )
+
+
+async def _answer_visual_message(
+        message: Message,
+        text: str,
+        *,
+        reply_markup=None,
+        parse_mode: Optional[str] = None,
+) -> Message:
     if START_VISUAL_PATH.exists():
         try:
-            await message.answer_photo(
+            return await message.answer_photo(
                 photo=FSInputFile(START_VISUAL_PATH),
-                caption=START_TEXT,
-                reply_markup=main_menu(role_level),
+                caption=text,
+                reply_markup=reply_markup,
+                parse_mode=parse_mode,
             )
-            return
         except TelegramBadRequest:
             logger.exception("Failed to send start photo message to user_id=%s", message.chat.id)
     else:
         logger.warning("Start visual asset is missing: %s", START_VISUAL_PATH)
 
-    await message.answer(START_TEXT, reply_markup=main_menu(role_level))
+    return await message.answer(text, reply_markup=reply_markup, parse_mode=parse_mode)
+
+
+async def _send_visual_message(
+        bot: Bot,
+        chat_id: int,
+        text: str,
+        *,
+        reply_markup=None,
+        parse_mode: Optional[str] = None,
+) -> Message:
+    if START_VISUAL_PATH.exists():
+        try:
+            return await bot.send_photo(
+                chat_id=chat_id,
+                photo=FSInputFile(START_VISUAL_PATH),
+                caption=text,
+                reply_markup=reply_markup,
+                parse_mode=parse_mode,
+            )
+        except TelegramBadRequest:
+            logger.exception("Failed to send visual message to user_id=%s", chat_id)
+    else:
+        logger.warning("Start visual asset is missing: %s", START_VISUAL_PATH)
+
+    return await bot.send_message(
+        chat_id=chat_id,
+        text=text,
+        reply_markup=reply_markup,
+        parse_mode=parse_mode,
+    )
+
+
+async def _replace_with_visual_message(
+        bot: Bot,
+        user_id: int,
+        message: Union[Message, InaccessibleMessage, None],
+        text: str,
+        *,
+        reply_markup=None,
+        parse_mode: Optional[str] = None,
+) -> Message:
+    current_message = _optional_message(message)
+    if current_message is not None and _has_visual_media(current_message):
+        await safe_edit_text(
+            current_message,
+            text,
+            reply_markup=reply_markup,
+            parse_mode=parse_mode,
+        )
+        return current_message
+
+    if current_message is not None:
+        try:
+            await current_message.delete()
+        except TelegramBadRequest:
+            pass
+
+    return await _send_visual_message(
+        bot,
+        user_id,
+        text,
+        reply_markup=reply_markup,
+        parse_mode=parse_mode,
+    )
 
 
 @router.channel_post()
@@ -762,7 +965,11 @@ async def start(message: Message, bot: Bot, state: FSMContext):
             return
 
         await _delete_last_task_menu(bot, user_id, state)
-        sent = await message.answer(tasks_screen_text, reply_markup=tasks_menu())
+        sent = await _answer_visual_message(
+            message,
+            tasks_screen_text,
+            reply_markup=tasks_menu(),
+        )
         await state.update_data(**{LAST_TASK_MENU_MSG_ID_KEY: sent.message_id})
         return
 
@@ -796,13 +1003,14 @@ async def show_tasks(callback: CallbackQuery, bot: Bot, state: FSMContext):
         state,
         exclude_message_id=current_message_id,
     )
-    await safe_edit_text(
+    rendered = await _replace_with_visual_message(
+        bot,
+        user_id,
         callback.message,
         tasks_screen_text,
         reply_markup=tasks_menu(),
     )
-    if current_message_id is not None:
-        await state.update_data(**{LAST_TASK_MENU_MSG_ID_KEY: current_message_id})
+    await state.update_data(**{LAST_TASK_MENU_MSG_ID_KEY: rendered.message_id})
 
 
 @router.callback_query(F.data == "task:view_post")
@@ -848,9 +1056,10 @@ async def _process_task_view_post(
         return
 
     if not task:
-        await bot.send_message(
-            chat_id=user_id,
-            text="❌ Доступных постов пока нет.",
+        await _send_visual_message(
+            bot,
+            user_id,
+            "❌ Доступных постов пока нет.",
             reply_markup=task_after_view_kb(),
         )
         return
@@ -872,18 +1081,20 @@ async def _process_task_view_post(
         )
         return
     except Exception:
-        await bot.send_message(
-            chat_id=user_id,
-            text="❌ Не удалось открыть задание.",
+        await _send_visual_message(
+            bot,
+            user_id,
+            "❌ Не удалось открыть задание.",
             reply_markup=task_after_view_kb(),
         )
         return
 
     if not open_result.get("ok"):
         open_error_text = open_result.get("message") or "❌ Не удалось открыть задание."
-        await bot.send_message(
-            chat_id=user_id,
-            text=open_error_text,
+        await _send_visual_message(
+            bot,
+            user_id,
+            open_error_text,
             reply_markup=task_after_view_kb(),
         )
         return
@@ -909,9 +1120,10 @@ async def _process_task_view_post(
                 unavailable_attempt=unavailable_attempt + 1,
             )
             return
-        await bot.send_message(
-            chat_id=user_id,
-            text="❌ У задания нет данных поста.",
+        await _send_visual_message(
+            bot,
+            user_id,
+            "❌ У задания нет данных поста.",
             reply_markup=task_after_view_kb(),
         )
         return
@@ -963,9 +1175,10 @@ async def _process_task_view_post(
                     unavailable_attempt=unavailable_attempt + 1,
                 )
                 return
-            await bot.send_message(
-                chat_id=user_id,
-                text=(
+            await _send_visual_message(
+                bot,
+                user_id,
+                (
                     "❌ Не удалось показать пост.\n"
                     "Проверь, что бот есть в канале и видит этот пост."
                 ),
@@ -988,9 +1201,10 @@ async def _process_task_view_post(
                 unavailable_attempt=unavailable_attempt + 1,
             )
             return
-        await bot.send_message(
-            chat_id=user_id,
-            text=(
+        await _send_visual_message(
+            bot,
+            user_id,
+            (
                 "❌ Не удалось показать пост.\n"
                 "Проверь, что бот есть в канале и видит этот пост."
             ),
@@ -1019,9 +1233,10 @@ async def _process_task_view_post(
         )
         return
     except Exception:
-        await bot.send_message(
-            chat_id=user_id,
-            text="⚠️ Не удалось засчитать просмотр.\nПопробуй следующий пост.",
+        await _send_visual_message(
+            bot,
+            user_id,
+            "⚠️ Не удалось засчитать просмотр.\nПопробуй следующий пост.",
             reply_markup=task_after_view_kb(),
         )
         return
@@ -1053,9 +1268,10 @@ async def _process_task_view_post(
         theft_progress_text = _format_task_theft_progress(result.get("theft"))
         activity_progress_text = battle_progress_text or theft_progress_text
         activity_block = f"\n\n{activity_progress_text}" if activity_progress_text else ""
-        await bot.send_message(
-            chat_id=user_id,
-            text=(
+        await _send_visual_message(
+            bot,
+            user_id,
+            (
                 "✅ Просмотр засчитан\n\n"
                 f"Начислено: {fmt_stars(reward)}⭐\n"
                 f"{remaining_text}\n"
@@ -1067,16 +1283,18 @@ async def _process_task_view_post(
         return
 
     if status_value == "already_completed":
-        await bot.send_message(
-            chat_id=user_id,
-            text="✅ Этот пост уже был засчитан ранее.",
+        await _send_visual_message(
+            bot,
+            user_id,
+            "✅ Этот пост уже был засчитан ранее.",
             reply_markup=task_after_view_kb(),
         )
         return
 
-    await bot.send_message(
-        chat_id=user_id,
-        text=f"⚠️ {message_text}",
+    await _send_visual_message(
+        bot,
+        user_id,
+        f"⚠️ {message_text}",
         reply_markup=task_after_view_kb(),
     )
 
@@ -1124,7 +1342,9 @@ async def back_to_main(callback: CallbackQuery, bot: Bot, state: FSMContext):
     await state.update_data(**{LAST_TASK_MENU_MSG_ID_KEY: None})
 
     await safe_callback_answer(callback)
-    await safe_edit_text(
+    await _replace_with_visual_message(
+        bot,
+        user_id,
         callback.message,
         START_TEXT,
         reply_markup=main_menu(role_level),
@@ -1376,19 +1596,62 @@ async def partner_home(callback: CallbackQuery):
         await safe_callback_answer(callback, "❌ Партнерский раздел тебе пока недоступен.", show_alert=True)
         return
 
+    try:
+        summary = await get_partner_cabinet_summary_via_api(callback.from_user.id)
+        channels = await list_partner_channels_via_api(callback.from_user.id)
+    except ApiClientError as e:
+        await _answer_user_api_error(callback, e, context="partner_home")
+        return
+
+    rows = list(channels.get("items") or [])
     await safe_callback_answer(callback)
     await safe_edit_text(
         callback.message,
-        "💼 <b>Кабинет партнера</b>\n\n"
-        "Тут потом будут:\n"
-        "• приглашенные клиенты\n"
-        "• приглашенные юзеры\n"
-        "• проценты / бонусы\n"
-        "• партнерская статистика",
-        reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[
-                [InlineKeyboardButton(text="⬅ Назад", callback_data="back")]
-            ]
-        ),
+        _build_partner_home_text(summary),
+        reply_markup=partner_home_kb(rows),
+        parse_mode=ParseMode.HTML,
+    )
+
+
+@router.callback_query(F.data.startswith("partner:channel:"))
+async def partner_channel_router(callback: CallbackQuery):
+    parts = (callback.data or "").split(":")
+    if len(parts) < 3:
+        await safe_callback_answer(callback, "❌ Канал партнера не найден.", show_alert=True)
+        return
+
+    chat_id = parts[2]
+    mode = parts[3] if len(parts) > 3 else "card"
+
+    try:
+        if mode == "promos":
+            payload = await list_partner_channel_promos_via_api(callback.from_user.id, chat_id)
+            text = _build_partner_promos_text(payload)
+            reply_markup = client_back_kb(f"partner:channel:{chat_id}")
+        elif mode == "accruals":
+            payload = await get_partner_channel_accruals_via_api(callback.from_user.id, chat_id)
+            text = _build_partner_accruals_text(payload)
+            reply_markup = partner_accruals_kb(chat_id)
+        elif mode == "history":
+            payload = await list_partner_channel_accrual_history_via_api(
+                callback.from_user.id,
+                chat_id,
+                limit=50,
+            )
+            text = _build_partner_accrual_history_text(payload)
+            reply_markup = client_back_kb(f"partner:channel:{chat_id}:accruals")
+        else:
+            payload = await get_partner_channel_via_api(callback.from_user.id, chat_id)
+            text = _build_partner_channel_text(payload["channel"])
+            reply_markup = partner_channel_kb(chat_id)
+    except ApiClientError as e:
+        await _answer_user_api_error(callback, e, context=f"partner_channel.{mode}")
+        return
+
+    await safe_callback_answer(callback)
+    await safe_edit_text(
+        callback.message,
+        text,
+        reply_markup=reply_markup,
         parse_mode=ParseMode.HTML,
     )

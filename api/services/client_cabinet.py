@@ -5,7 +5,7 @@ from typing import Any
 import aiosqlite
 from fastapi import HTTPException
 
-from shared.config import ROLE_CLIENT
+from shared.config import OWNER_TYPE_CLIENT, ROLE_CLIENT
 from shared.db.subscriptions import ensure_subscription_tasks_schema
 from shared.db.tasks import ensure_task_channels_client_schema, list_task_posts_by_channel, task_channel_stats
 from shared.db.users import get_balance, get_user_by_id, user_has_role
@@ -176,9 +176,10 @@ async def _list_client_view_channel_rows(
             created_at
         FROM task_channels
         WHERE client_user_id = ?
+          AND owner_type = ?
         ORDER BY id DESC
         """,
-        (int(user_id),),
+        (int(user_id), OWNER_TYPE_CLIENT),
     ) as cur:
         return await cur.fetchall()
 
@@ -190,12 +191,13 @@ async def _list_client_subscription_channel_rows(
     await ensure_subscription_tasks_schema(db)
     view_rows = await _list_client_view_channel_rows(db, int(user_id))
     view_chat_ids = [str(row["chat_id"]) for row in view_rows]
-    conditions = ["client_user_id = ?"]
-    params: list[Any] = [int(user_id)]
+    conditions = ["(client_user_id = ? AND owner_type = ?)"]
+    params: list[Any] = [int(user_id), OWNER_TYPE_CLIENT]
     if view_chat_ids:
         placeholders = ", ".join("?" for _ in view_chat_ids)
-        conditions.append(f"chat_id IN ({placeholders})")
+        conditions.append(f"(chat_id IN ({placeholders}) AND owner_type = ?)")
         params.extend(view_chat_ids)
+        params.append(OWNER_TYPE_CLIENT)
     where_clause = " OR ".join(conditions)
 
     async with db.execute(
@@ -294,12 +296,13 @@ async def _list_client_subscription_rows(
     channel_rows = await _list_client_view_channel_rows(db, int(user_id))
     channel_chat_ids = [str(row["chat_id"]) for row in channel_rows]
 
-    conditions = ["client_user_id = ?"]
-    params: list[Any] = [int(user_id)]
+    conditions = ["(client_user_id = ? AND owner_type = ?)"]
+    params: list[Any] = [int(user_id), OWNER_TYPE_CLIENT]
     if channel_chat_ids:
         placeholders = ", ".join("?" for _ in channel_chat_ids)
-        conditions.append(f"chat_id IN ({placeholders})")
+        conditions.append(f"(chat_id IN ({placeholders}) AND owner_type = ?)")
         params.extend(channel_chat_ids)
+        params.append(OWNER_TYPE_CLIENT)
 
     where_clause = " OR ".join(conditions)
     params.append(int(limit))
@@ -404,8 +407,9 @@ async def get_client_channel_subscription_stats(
             participants_count
         FROM subscription_tasks
         WHERE chat_id = ?
+          AND owner_type = ?
         """,
-        (str(row["chat_id"]),),
+        (str(row["chat_id"]), OWNER_TYPE_CLIENT),
     ) as cur:
         campaign_rows = await cur.fetchall()
 
@@ -505,9 +509,10 @@ async def list_client_channel_subscription_campaigns(
             max_subscribers
         FROM subscription_tasks
         WHERE chat_id = ?
+          AND owner_type = ?
         ORDER BY datetime(created_at) DESC, id DESC
         """,
-        (str(row["chat_id"]),),
+        (str(row["chat_id"]), OWNER_TYPE_CLIENT),
     ) as cur:
         campaigns = await cur.fetchall()
 

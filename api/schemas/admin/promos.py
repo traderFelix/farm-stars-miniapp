@@ -6,6 +6,11 @@ from pydantic import BaseModel
 class PromoItem(BaseModel):
     promo_code: str
     title: Optional[str] = None
+    partner_user_id: Optional[int] = None
+    partner_username: Optional[str] = None
+    partner_first_name: Optional[str] = None
+    partner_channel_chat_id: Optional[str] = None
+    partner_channel_title: Optional[str] = None
     reward_amount: float
     total_uses: int
     claims_count: int
@@ -21,6 +26,9 @@ class PromosResponse(BaseModel):
 class PromoCreateRequest(BaseModel):
     promo_code: str
     title: Optional[str] = None
+    partner_user_id: Optional[int] = None
+    partner_channel_chat_id: Optional[str] = None
+    partner_channel_title: Optional[str] = None
     amount: float
     total_uses: int
 
