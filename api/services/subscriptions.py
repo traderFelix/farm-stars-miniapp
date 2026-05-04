@@ -318,6 +318,40 @@ async def _fill_missing_task_titles(
     return prepared
 
 
+async def _filter_available_tasks_user_is_not_subscribed(
+        db,
+        rows: list[Any],
+        *,
+        user_id: int,
+) -> list[Any]:
+    filtered: list[Any] = []
+
+    for row in rows:
+        try:
+            subscribed = await _is_user_subscribed(
+                chat_id=str(row["chat_id"]),
+                user_id=int(user_id),
+                db=db,
+                task_id=int(row["id"]),
+                title=_task_title(row),
+                channel_url=str(row["channel_url"] or ""),
+            )
+        except HTTPException as exc:
+            logger.info(
+                "Skipping subscription task in available list user_id=%s task_id=%s status=%s detail=%s",
+                user_id,
+                row["id"],
+                exc.status_code,
+                exc.detail,
+            )
+            continue
+
+        if not subscribed:
+            filtered.append(row)
+
+    return filtered
+
+
 def _assignment_url(row: Any) -> str:
     return _normalize_subscription_channel_url(str(row["channel_url_snapshot"] or row["task_channel_url"] or ""))
 
@@ -368,6 +402,14 @@ def _has_daily_claims(row: Any) -> bool:
     return float(row["daily_reward_total"] or 0) > 0 and int(row["daily_claim_days"] or 0) > 0
 
 
+def _is_first_daily_claim_blocked_today(row: Any, today: str) -> bool:
+    if int(row["daily_claims_done"] or 0) > 0:
+        return False
+
+    created_day = str(row["created_at"] or "")[:10]
+    return bool(created_day and created_day == str(today))
+
+
 def _next_daily_claim_amount(row: Any) -> float:
     total = round(float(row["daily_reward_total"] or 0), 2)
     days = int(row["daily_claim_days"] or 0)
@@ -408,6 +450,7 @@ def _serialize_assignment(
         _has_daily_claims(row)
         and claims_done < daily_days
         and str(row["last_daily_claim_day"] or "") != today
+        and not _is_first_daily_claim_blocked_today(row, today)
     )
 
     return SubscriptionAssignmentItem(
@@ -438,6 +481,11 @@ async def get_subscription_status_for_user(user_id: int) -> SubscriptionStatusRe
         available_rows = await list_available_subscription_tasks_for_user(db, int(user_id))
         active_rows = await list_user_active_subscription_assignments(db, int(user_id))
         available_rows = await _fill_missing_task_titles(db, available_rows)
+        available_rows = await _filter_available_tasks_user_is_not_subscribed(
+            db,
+            available_rows,
+            user_id=int(user_id),
+        )
         active_rows = await _fill_missing_task_titles(db, active_rows, task_title_key="task_title")
         slots_used = await count_user_active_subscription_slots(db, int(user_id))
 
@@ -565,7 +613,6 @@ async def join_subscription_task_for_user(
                     status_code=400,
                     detail="Все слоты подписок заняты. Забери награды или удали одно задание.",
                 )
-
             locked_has_daily = (
                 float(locked_task["daily_reward_total"] or 0) > 0
                 and int(locked_task["daily_claim_days"] or 0) > 0
@@ -576,9 +623,7 @@ async def join_subscription_task_for_user(
                 user_id=int(user_id),
                 status="active" if locked_has_daily else "completed",
                 instant_claimed_at=True,
-                first_daily_available_next_utc_day=(
-                    locked_has_daily and round(float(locked_task["instant_reward"] or 0), 2) > 0
-                ),
+                first_daily_available_next_utc_day=locked_has_daily,
             )
             await increment_subscription_task_participants(db, int(task_id))
             if instant_reward > 0:
@@ -647,6 +692,16 @@ async def claim_subscription_daily_for_user(
             raise HTTPException(status_code=400, detail="У этого задания нет ежедневных наград.")
 
         today = await current_utc_day(db)
+        if _is_first_daily_claim_blocked_today(assignment, today):
+            return await _action_response(
+                db,
+                user_id=int(user_id),
+                ok=False,
+                message="Первую награду за подписку можно забрать завтра.",
+                reward_granted=0,
+                remaining_reward=_remaining_daily_reward(assignment),
+            )
+
         if str(assignment["last_daily_claim_day"] or "") == today:
             return await _action_response(
                 db,
@@ -692,6 +747,8 @@ async def claim_subscription_daily_for_user(
             )
             if not locked_assignment or str(locked_assignment["status"]) != "active":
                 raise HTTPException(status_code=400, detail="Это задание уже завершено.")
+            if _is_first_daily_claim_blocked_today(locked_assignment, today):
+                raise HTTPException(status_code=409, detail="Первую награду за подписку можно забрать завтра.")
             if str(locked_assignment["last_daily_claim_day"] or "") == today:
                 raise HTTPException(status_code=409, detail="Сегодняшняя награда уже забрана.")
 
@@ -840,6 +897,11 @@ async def _status_with_existing_db(db, user_id: int) -> SubscriptionStatusRespon
     available_rows = await list_available_subscription_tasks_for_user(db, int(user_id))
     active_rows = await list_user_active_subscription_assignments(db, int(user_id))
     available_rows = await _fill_missing_task_titles(db, available_rows)
+    available_rows = await _filter_available_tasks_user_is_not_subscribed(
+        db,
+        available_rows,
+        user_id=int(user_id),
+    )
     active_rows = await _fill_missing_task_titles(db, active_rows, task_title_key="task_title")
     slots_used = await count_user_active_subscription_slots(db, int(user_id))
     cooldown_days_left = _cooldown_days_left(abandon_available_at)
