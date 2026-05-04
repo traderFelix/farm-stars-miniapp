@@ -12,6 +12,9 @@ class PromoCreate(StatesGroup):
     amount = State()
     total_uses = State()
     title = State()
+    scope = State()
+    partner_ref = State()
+    partner_channel_chat_id = State()
 
 class AddWinners(StatesGroup):
     usernames = State()
@@ -28,20 +31,32 @@ class AdminAdjust(StatesGroup):
 class AdminRefundFee(StatesGroup):
     waiting_manual_data = State()
 
+
+class PartnerViewsAccrualCreate(StatesGroup):
+    partner_ref = State()
+    channel_chat_id = State()
+    views_promised = State()
+
+
 class TaskChannelCreate(StatesGroup):
     chat_id = State()
+    owner_type = State()
     client_ref = State()
     total_bought_views = State()
     views_per_post = State()
     view_seconds = State()
 
 class TaskChannelEdit(StatesGroup):
-    total_bought_views = State()
     views_per_post = State()
     view_seconds = State()
 
 
+class TaskChannelAddViews(StatesGroup):
+    amount = State()
+
+
 class TaskChannelBindClient(StatesGroup):
+    owner_type = State()
     client_ref = State()
 
 
@@ -51,6 +66,7 @@ class TaskChannelManualPost(StatesGroup):
 
 class SubscriptionTaskCreate(StatesGroup):
     chat_id = State()
+    owner_type = State()
     client_ref = State()
     channel_url = State()
     instant_reward = State()
@@ -60,4 +76,5 @@ class SubscriptionTaskCreate(StatesGroup):
 
 
 class SubscriptionTaskBindClient(StatesGroup):
+    owner_type = State()
     client_ref = State()

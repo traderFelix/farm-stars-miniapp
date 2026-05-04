@@ -50,6 +50,7 @@ from shared.config import (
     VIEW_BATTLE_HOLD_MAX_SECONDS,
     VIEW_BATTLE_HOLD_MIN_SECONDS,
 )
+from shared.db.partners import get_partner_remaining_views
 from shared.db.users import add_user_risk_score
 
 logger = logging.getLogger(__name__)
@@ -659,9 +660,28 @@ async def ingest_task_channel_post_message(
 
         if allocated and channel:
             client_user_id = channel["client_user_id"]
-            remaining_views = int(channel["remaining_views"] or 0)
-            views_per_post = int(channel["views_per_post"] or 0)
-            remaining_post_slots = remaining_views // views_per_post if views_per_post > 0 else 0
+            client_remaining_views = int(channel["remaining_views"] or 0)
+            partner_remaining_views = 0
+            if client_user_id is not None:
+                partner_remaining_views = await get_partner_remaining_views(
+                    db,
+                    int(client_user_id),
+                    str(chat_id),
+                )
+            remaining_views = client_remaining_views + partner_remaining_views
+            client_views_per_post = int(channel["views_per_post"] or 0)
+            partner_views_per_post = int(channel["partner_views_per_post"] or 0) or client_views_per_post
+            client_post_slots = (
+                client_remaining_views // client_views_per_post
+                if client_views_per_post > 0
+                else 0
+            )
+            partner_post_slots = (
+                partner_remaining_views // partner_views_per_post
+                if partner_views_per_post > 0
+                else 0
+            )
+            remaining_post_slots = client_post_slots + partner_post_slots
             client_mention = _build_client_mention(
                 username=channel["client_username"],
             )

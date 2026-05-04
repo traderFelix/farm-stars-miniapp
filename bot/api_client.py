@@ -216,6 +216,29 @@ class ClientCabinetApi(ApiSection):
         )
 
 
+class PartnerCabinetApi(ApiSection):
+    async def get_summary(self, user_id: int) -> JsonDict:
+        return await self._get(f"/bot/partners/{int(user_id)}")
+
+    async def list_channels(self, user_id: int) -> JsonDict:
+        return await self._get(f"/bot/partners/{int(user_id)}/channels")
+
+    async def get_channel(self, user_id: int, chat_id: str) -> JsonDict:
+        return await self._get(f"/bot/partners/{int(user_id)}/channels/{str(chat_id)}")
+
+    async def list_promos(self, user_id: int, chat_id: str) -> JsonDict:
+        return await self._get(f"/bot/partners/{int(user_id)}/channels/{str(chat_id)}/promos")
+
+    async def get_accruals(self, user_id: int, chat_id: str) -> JsonDict:
+        return await self._get(f"/bot/partners/{int(user_id)}/channels/{str(chat_id)}/accruals")
+
+    async def list_accrual_history(self, user_id: int, chat_id: str, *, limit: int = 50) -> JsonDict:
+        return await self._get(
+            f"/bot/partners/{int(user_id)}/channels/{str(chat_id)}/accrual-history",
+            params={"limit": int(limit)},
+        )
+
+
 class UsersApi(ApiSection):
     async def lookup(self, query: str) -> JsonDict:
         return await self._post(
@@ -430,6 +453,9 @@ class PromosAdminApi(ApiSection):
             *,
             promo_code: str,
             title: Optional[str],
+            partner_user_id: Optional[int],
+            partner_channel_chat_id: Optional[str],
+            partner_channel_title: Optional[str],
             amount: float,
             total_uses: int,
     ) -> JsonDict:
@@ -438,6 +464,9 @@ class PromosAdminApi(ApiSection):
             json={
                 "promo_code": promo_code,
                 "title": title,
+                "partner_user_id": int(partner_user_id) if partner_user_id is not None else None,
+                "partner_channel_chat_id": str(partner_channel_chat_id) if partner_channel_chat_id is not None else None,
+                "partner_channel_title": str(partner_channel_title) if partner_channel_title is not None else None,
                 "amount": float(amount),
                 "total_uses": int(total_uses),
             },
@@ -465,6 +494,28 @@ class PromosAdminApi(ApiSection):
         return await self._get(f"/admin/promos/{promo_code}/stats")
 
 
+class PartnerTrafficAdminApi(ApiSection):
+    async def create_views(
+            self,
+            *,
+            partner_user_id: int,
+            channel_chat_id: str,
+            channel_title: Optional[str],
+            views_promised: int,
+            views_delivered: int = 0,
+    ) -> JsonDict:
+        return await self._post(
+            "/admin/partner-traffic/views",
+            json={
+                "partner_user_id": int(partner_user_id),
+                "channel_chat_id": str(channel_chat_id),
+                "channel_title": str(channel_title) if channel_title is not None else None,
+                "views_promised": int(views_promised),
+                "views_delivered": int(views_delivered),
+            },
+        )
+
+
 class TaskChannelsApi(ApiSection):
     async def list(self) -> JsonDict:
         return await self._get("/admin/task-channels")
@@ -478,6 +529,7 @@ class TaskChannelsApi(ApiSection):
             chat_id: str,
             title: Optional[str],
             client_user_id: Optional[int],
+            owner_type: str,
             total_bought_views: int,
             views_per_post: int,
             view_seconds: int,
@@ -488,6 +540,7 @@ class TaskChannelsApi(ApiSection):
                 "chat_id": chat_id,
                 "title": title,
                 "client_user_id": int(client_user_id) if client_user_id is not None else None,
+                "owner_type": str(owner_type),
                 "total_bought_views": int(total_bought_views),
                 "views_per_post": int(views_per_post),
                 "view_seconds": int(view_seconds),
@@ -504,6 +557,7 @@ class TaskChannelsApi(ApiSection):
             total_bought_views: int,
             views_per_post: int,
             view_seconds: int,
+            pool: str = "main",
     ) -> JsonDict:
         return await self._post(
             f"/admin/task-channels/{int(channel_id)}/params",
@@ -511,14 +565,22 @@ class TaskChannelsApi(ApiSection):
                 "total_bought_views": int(total_bought_views),
                 "views_per_post": int(views_per_post),
                 "view_seconds": int(view_seconds),
+                "pool": str(pool or "main"),
             },
         )
 
-    async def bind_client(self, channel_id: int, *, client_user_id: int) -> JsonDict:
+    async def add_views(self, channel_id: int, *, amount: int) -> JsonDict:
+        return await self._post(
+            f"/admin/task-channels/{int(channel_id)}/views/add",
+            json={"amount": int(amount)},
+        )
+
+    async def bind_client(self, channel_id: int, *, client_user_id: int, owner_type: str) -> JsonDict:
         return await self._post(
             f"/admin/task-channels/{int(channel_id)}/client",
             json={
                 "client_user_id": int(client_user_id),
+                "owner_type": str(owner_type),
             },
         )
 
@@ -565,6 +627,7 @@ class SubscriptionTasksApi(ApiSection):
             chat_id: str,
             title: Optional[str],
             client_user_id: Optional[int],
+            owner_type: str,
             channel_url: str,
             instant_reward: float,
             daily_reward_total: float,
@@ -577,6 +640,7 @@ class SubscriptionTasksApi(ApiSection):
                 "chat_id": str(chat_id),
                 "title": title,
                 "client_user_id": int(client_user_id) if client_user_id is not None else None,
+                "owner_type": str(owner_type),
                 "channel_url": str(channel_url),
                 "instant_reward": float(instant_reward),
                 "daily_reward_total": float(daily_reward_total),
@@ -591,10 +655,13 @@ class SubscriptionTasksApi(ApiSection):
             json={"is_active": bool(is_active)},
         )
 
-    async def bind_client(self, task_id: int, *, client_user_id: int) -> JsonDict:
+    async def bind_client(self, task_id: int, *, client_user_id: int, owner_type: str) -> JsonDict:
         return await self._post(
             f"/admin/subscription-tasks/{int(task_id)}/client",
-            json={"client_user_id": int(client_user_id)},
+            json={
+                "client_user_id": int(client_user_id),
+                "owner_type": str(owner_type),
+            },
         )
 
     async def archive(self, task_id: int) -> JsonDict:
@@ -651,10 +718,12 @@ class BotApiClient:
         self.tasks = TasksApi(self)
         self.battles = BattlesApi(self)
         self.clients = ClientCabinetApi(self)
+        self.partners = PartnerCabinetApi(self)
         self.users = UsersApi(self)
         self.withdrawals_review = ReviewWithdrawalsApi(self)
         self.admin_campaigns = CampaignsAdminApi(self)
         self.admin_promos = PromosAdminApi(self)
+        self.admin_partner_traffic = PartnerTrafficAdminApi(self)
         self.task_channels = TaskChannelsApi(self)
         self.subscription_tasks = SubscriptionTasksApi(self)
         self.analytics = AnalyticsApi(self)
@@ -769,6 +838,35 @@ async def get_client_channel_posts_via_api(user_id: int, channel_id: int, *, lim
 
 async def list_client_orders_via_api(user_id: int, *, limit: int = 20) -> JsonDict:
     return await api_client.clients.list_orders(user_id, limit=limit)
+
+
+async def get_partner_cabinet_summary_via_api(user_id: int) -> JsonDict:
+    return await api_client.partners.get_summary(user_id)
+
+
+async def list_partner_channels_via_api(user_id: int) -> JsonDict:
+    return await api_client.partners.list_channels(user_id)
+
+
+async def get_partner_channel_via_api(user_id: int, chat_id: str) -> JsonDict:
+    return await api_client.partners.get_channel(user_id, chat_id)
+
+
+async def list_partner_channel_promos_via_api(user_id: int, chat_id: str) -> JsonDict:
+    return await api_client.partners.list_promos(user_id, chat_id)
+
+
+async def get_partner_channel_accruals_via_api(user_id: int, chat_id: str) -> JsonDict:
+    return await api_client.partners.get_accruals(user_id, chat_id)
+
+
+async def list_partner_channel_accrual_history_via_api(
+        user_id: int,
+        chat_id: str,
+        *,
+        limit: int = 50,
+) -> JsonDict:
+    return await api_client.partners.list_accrual_history(user_id, chat_id, limit=limit)
 
 
 async def get_user_stats(user_id: int) -> JsonDict:
@@ -905,12 +1003,18 @@ async def create_promo_via_api(
         *,
         promo_code: str,
         title: Optional[str],
+        partner_user_id: Optional[int] = None,
+        partner_channel_chat_id: Optional[str] = None,
+        partner_channel_title: Optional[str] = None,
         amount: float,
         total_uses: int,
 ) -> JsonDict:
     return await api_client.admin_promos.create(
         promo_code=promo_code,
         title=title,
+        partner_user_id=partner_user_id,
+        partner_channel_chat_id=partner_channel_chat_id,
+        partner_channel_title=partner_channel_title,
         amount=amount,
         total_uses=total_uses,
     )
@@ -1002,6 +1106,23 @@ async def list_task_channels_via_api() -> JsonDict:
     return await api_client.task_channels.list()
 
 
+async def create_partner_views_accrual_via_api(
+        *,
+        partner_user_id: int,
+        channel_chat_id: str,
+        channel_title: Optional[str],
+        views_promised: int,
+        views_delivered: int = 0,
+) -> JsonDict:
+    return await api_client.admin_partner_traffic.create_views(
+        partner_user_id=partner_user_id,
+        channel_chat_id=channel_chat_id,
+        channel_title=channel_title,
+        views_promised=views_promised,
+        views_delivered=views_delivered,
+    )
+
+
 async def get_task_channel_via_api(channel_id: int) -> JsonDict:
     return await api_client.task_channels.get(channel_id)
 
@@ -1011,6 +1132,7 @@ async def create_task_channel_via_api(
         chat_id: str,
         title: Optional[str],
         client_user_id: Optional[int],
+        owner_type: str,
         total_bought_views: int,
         views_per_post: int,
         view_seconds: int,
@@ -1019,6 +1141,7 @@ async def create_task_channel_via_api(
         chat_id=chat_id,
         title=title,
         client_user_id=client_user_id,
+        owner_type=owner_type,
         total_bought_views=total_bought_views,
         views_per_post=views_per_post,
         view_seconds=view_seconds,
@@ -1035,12 +1158,25 @@ async def update_task_channel_params_via_api(
         total_bought_views: int,
         views_per_post: int,
         view_seconds: int,
+        pool: str = "main",
 ) -> JsonDict:
     return await api_client.task_channels.update_params(
         channel_id,
         total_bought_views=total_bought_views,
         views_per_post=views_per_post,
         view_seconds=view_seconds,
+        pool=pool,
+    )
+
+
+async def add_task_channel_views_via_api(
+        channel_id: int,
+        *,
+        amount: int,
+) -> JsonDict:
+    return await api_client.task_channels.add_views(
+        channel_id,
+        amount=amount,
     )
 
 
@@ -1048,10 +1184,12 @@ async def bind_task_channel_client_via_api(
         channel_id: int,
         *,
         client_user_id: int,
+        owner_type: str,
 ) -> JsonDict:
     return await api_client.task_channels.bind_client(
         channel_id,
         client_user_id=client_user_id,
+        owner_type=owner_type,
     )
 
 
@@ -1096,6 +1234,7 @@ async def create_subscription_task_via_api(
         chat_id: str,
         title: Optional[str],
         client_user_id: Optional[int] = None,
+        owner_type: str = "client",
         channel_url: str,
         instant_reward: float,
         daily_reward_total: float,
@@ -1106,6 +1245,7 @@ async def create_subscription_task_via_api(
         chat_id=chat_id,
         title=title,
         client_user_id=client_user_id,
+        owner_type=owner_type,
         channel_url=channel_url,
         instant_reward=instant_reward,
         daily_reward_total=daily_reward_total,
@@ -1118,10 +1258,16 @@ async def set_subscription_task_status_via_api(task_id: int, *, is_active: bool)
     return await api_client.subscription_tasks.set_status(task_id, is_active=is_active)
 
 
-async def bind_subscription_task_client_via_api(task_id: int, *, client_user_id: int) -> JsonDict:
+async def bind_subscription_task_client_via_api(
+        task_id: int,
+        *,
+        client_user_id: int,
+        owner_type: str,
+) -> JsonDict:
     return await api_client.subscription_tasks.bind_client(
         task_id,
         client_user_id=client_user_id,
+        owner_type=owner_type,
     )
 
 
@@ -1217,6 +1363,12 @@ __all__ = [
     "get_client_channel_subscription_campaigns_via_api",
     "get_client_channel_posts_via_api",
     "list_client_orders_via_api",
+    "get_partner_cabinet_summary_via_api",
+    "list_partner_channels_via_api",
+    "get_partner_channel_via_api",
+    "list_partner_channel_promos_via_api",
+    "get_partner_channel_accruals_via_api",
+    "list_partner_channel_accrual_history_via_api",
     "get_user_stats",
     "get_user_battle_stats",
     "get_user_theft_stats",
@@ -1257,9 +1409,11 @@ __all__ = [
     "list_recent_fee_payments_via_api",
     "record_withdrawal_fee_refund",
     "record_fee_refund_by_charge_id",
+    "create_partner_views_accrual_via_api",
     "list_task_channels_via_api",
     "get_task_channel_via_api",
     "create_task_channel_via_api",
+    "add_task_channel_views_via_api",
     "bind_task_channel_client_via_api",
     "update_task_channel_title_via_api",
     "toggle_task_channel_via_api",

@@ -1,8 +1,10 @@
+import sqlite3
 from typing import Any, Optional
 
 import aiosqlite
 from fastapi import HTTPException
 
+from api.services.admin.client_roles import ensure_partner_role
 from shared.db.common import tx
 from shared.db.promos import (
     archive_promo,
@@ -18,6 +20,7 @@ from shared.db.promos import (
     unclaimed_total_amount,
     upsert_promo,
 )
+from shared.db.users import get_user_by_id
 
 
 def _serialize_promo(row: Any) -> dict[str, Any]:
@@ -27,6 +30,11 @@ def _serialize_promo(row: Any) -> dict[str, Any]:
     return {
         "promo_code": row["promo_code"],
         "title": row["title"] or None,
+        "partner_user_id": int(row["partner_user_id"]) if row["partner_user_id"] is not None else None,
+        "partner_username": row["partner_username"] or None if "partner_username" in row.keys() else None,
+        "partner_first_name": row["partner_first_name"] or None if "partner_first_name" in row.keys() else None,
+        "partner_channel_chat_id": row["partner_channel_chat_id"] or None,
+        "partner_channel_title": row["partner_channel_title"] or None,
         "reward_amount": float(row["reward_amount"] or 0),
         "total_uses": total_uses,
         "claims_count": claims_count,
@@ -103,6 +111,9 @@ async def create_promo_entry(
         *,
         promo_code: str,
         title: Optional[str],
+        partner_user_id: Optional[int],
+        partner_channel_chat_id: Optional[str],
+        partner_channel_title: Optional[str],
         amount: float,
         total_uses: int,
 ) -> dict[str, Any]:
@@ -110,16 +121,38 @@ async def create_promo_entry(
     normalized_title = _normalize_promo_title(title)
     normalized_amount = _normalize_promo_amount(amount)
     normalized_total_uses = _normalize_total_uses(total_uses)
+    normalized_partner_user_id = int(partner_user_id) if partner_user_id is not None else None
+    normalized_partner_channel_chat_id = (partner_channel_chat_id or "").strip() or None
+    normalized_partner_channel_title = (partner_channel_title or "").strip() or None
 
-    async with tx(db):
-        await upsert_promo(
-            db,
-            normalized_code,
-            normalized_title,
-            normalized_amount,
-            normalized_total_uses,
-            "draft",
-        )
+    if await get_promo(db, normalized_code):
+        raise HTTPException(status_code=409, detail="Промокод с таким кодом уже существует")
+
+    if normalized_partner_user_id is not None:
+        if not await get_user_by_id(db, normalized_partner_user_id):
+            raise HTTPException(status_code=404, detail="Партнер не найден")
+        if not normalized_partner_channel_chat_id:
+            raise HTTPException(status_code=400, detail="Для партнерского промокода нужен chat_id канала")
+    elif normalized_partner_channel_chat_id or normalized_partner_channel_title:
+        raise HTTPException(status_code=400, detail="Нельзя указать канал без партнера")
+
+    try:
+        async with tx(db, immediate=True):
+            await upsert_promo(
+                db,
+                normalized_code,
+                normalized_title,
+                normalized_amount,
+                normalized_total_uses,
+                "draft",
+                partner_user_id=normalized_partner_user_id,
+                partner_channel_chat_id=normalized_partner_channel_chat_id,
+                partner_channel_title=normalized_partner_channel_title,
+            )
+            if normalized_partner_user_id is not None:
+                await ensure_partner_role(db, normalized_partner_user_id)
+    except sqlite3.IntegrityError as e:
+        raise HTTPException(status_code=409, detail="Промокод с таким кодом уже существует") from e
 
     return await get_promo_detail(db, normalized_code)
 

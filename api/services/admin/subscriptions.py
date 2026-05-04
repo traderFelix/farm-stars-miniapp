@@ -6,7 +6,8 @@ from urllib import parse as urllib_parse
 import aiosqlite
 from fastapi import HTTPException
 
-from api.services.admin.client_roles import ensure_client_role, sync_client_role_after_rebind
+from api.services.admin.client_roles import ensure_owner_role, sync_owner_role_after_rebind
+from shared.config import OWNER_TYPE_CLIENT, OWNER_TYPE_PARTNER
 from shared.db.common import tx
 from shared.db.subscriptions import (
     archive_subscription_task,
@@ -33,6 +34,7 @@ def _serialize_task(row: Any) -> dict[str, Any]:
         "chat_id": str(row["chat_id"]),
         "title": str(row["title"] or ""),
         "client_user_id": int(row["client_user_id"]) if row["client_user_id"] is not None else None,
+        "owner_type": str(row["owner_type"] or OWNER_TYPE_CLIENT),
         "client_username": (row["client_username"] or None) if "client_username" in row.keys() else None,
         "client_first_name": (row["client_first_name"] or None) if "client_first_name" in row.keys() else None,
         "channel_url": normalize_subscription_channel_url(str(row["channel_url"])),
@@ -117,6 +119,15 @@ def _normalize_positive_int(value: int, *, field_name: str) -> int:
     return normalized
 
 
+def _normalize_owner_type(value: Optional[str]) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized == OWNER_TYPE_PARTNER:
+        return OWNER_TYPE_PARTNER
+    if normalized == OWNER_TYPE_CLIENT:
+        return OWNER_TYPE_CLIENT
+    raise HTTPException(status_code=400, detail="owner_type должен быть client или partner")
+
+
 async def list_admin_subscription_tasks(db: aiosqlite.Connection) -> dict[str, Any]:
     rows = await list_subscription_tasks(db)
     return {"items": [_serialize_task(row) for row in rows]}
@@ -142,6 +153,7 @@ async def create_admin_subscription_task(
         chat_id: str,
         title: Optional[str],
         client_user_id: Optional[int],
+        owner_type: str,
         channel_url: str,
         instant_reward: float,
         daily_reward_total: float,
@@ -151,6 +163,7 @@ async def create_admin_subscription_task(
     normalized_chat_id = _normalize_text(chat_id, field_name="chat_id")
     normalized_title = (title or "").strip()
     normalized_client_user_id = int(client_user_id) if client_user_id is not None else None
+    normalized_owner_type = _normalize_owner_type(owner_type)
     normalized_channel_url = normalize_subscription_channel_url(channel_url)
     if not normalized_title:
         normalized_title = await try_fetch_telegram_channel_title(normalized_chat_id) or ""
@@ -169,7 +182,7 @@ async def create_admin_subscription_task(
     if normalized_instant_reward == 0 and normalized_daily_reward_total == 0:
         raise HTTPException(status_code=400, detail="Награда не может быть 0.")
     if normalized_client_user_id is not None and not await get_user_by_id(db, normalized_client_user_id):
-        raise HTTPException(status_code=404, detail="Клиент не найден")
+        raise HTTPException(status_code=404, detail="Пользователь не найден")
 
     async with tx(db, immediate=True):
         task_id = await create_subscription_task(
@@ -177,6 +190,7 @@ async def create_admin_subscription_task(
             chat_id=normalized_chat_id,
             title=normalized_title,
             client_user_id=normalized_client_user_id,
+            owner_type=normalized_owner_type,
             channel_url=normalized_channel_url,
             instant_reward=normalized_instant_reward,
             daily_reward_total=normalized_daily_reward_total,
@@ -185,7 +199,7 @@ async def create_admin_subscription_task(
             is_active=False,
         )
         if normalized_client_user_id is not None:
-            await ensure_client_role(db, normalized_client_user_id)
+            await ensure_owner_role(db, normalized_client_user_id, owner_type=normalized_owner_type)
 
     return await build_admin_subscription_task_detail(db, int(task_id))
 
@@ -195,6 +209,7 @@ async def bind_admin_subscription_task_client(
         *,
         task_id: int,
         client_user_id: int,
+        owner_type: str,
 ) -> dict[str, Any]:
     row = await get_subscription_task(db, int(task_id))
     if not row:
@@ -202,24 +217,42 @@ async def bind_admin_subscription_task_client(
     if int(row["is_archived"] or 0) == 1:
         raise HTTPException(status_code=404, detail="Задание подписки уже в архиве.")
     if not await get_user_by_id(db, int(client_user_id)):
-        raise HTTPException(status_code=404, detail="Клиент не найден")
+        raise HTTPException(status_code=404, detail="Пользователь не найден")
 
+    normalized_owner_type = _normalize_owner_type(owner_type)
     previous_client_user_id = (
         int(row["client_user_id"])
         if row["client_user_id"] is not None
         else None
     )
+    previous_owner_type = str(row["owner_type"] or OWNER_TYPE_CLIENT)
     async with tx(db, immediate=True):
         await set_subscription_task_client(
             db,
             task_id=int(task_id),
             client_user_id=int(client_user_id),
+            owner_type=normalized_owner_type,
         )
-        await sync_client_role_after_rebind(
-            db,
-            previous_user_id=previous_client_user_id,
-            next_user_id=int(client_user_id),
-        )
+        if previous_owner_type == normalized_owner_type:
+            await sync_owner_role_after_rebind(
+                db,
+                previous_user_id=previous_client_user_id,
+                next_user_id=int(client_user_id),
+                owner_type=normalized_owner_type,
+            )
+        else:
+            await sync_owner_role_after_rebind(
+                db,
+                previous_user_id=previous_client_user_id,
+                next_user_id=None,
+                owner_type=previous_owner_type,
+            )
+            await sync_owner_role_after_rebind(
+                db,
+                previous_user_id=None,
+                next_user_id=int(client_user_id),
+                owner_type=normalized_owner_type,
+            )
 
     return await build_admin_subscription_task_detail(db, int(task_id))
 

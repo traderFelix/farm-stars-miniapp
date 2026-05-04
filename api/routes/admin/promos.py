@@ -63,6 +63,9 @@ async def create_promo_route(payload: PromoCreateRequest):
             db,
             promo_code=payload.promo_code,
             title=payload.title,
+            partner_user_id=payload.partner_user_id,
+            partner_channel_chat_id=payload.partner_channel_chat_id,
+            partner_channel_title=payload.partner_channel_title,
             amount=payload.amount,
             total_uses=payload.total_uses,
         )

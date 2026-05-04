@@ -4,6 +4,8 @@ from typing import Any, Optional
 
 import aiosqlite
 
+from shared.config import OWNER_TYPE_CLIENT
+
 
 async def _column_exists(db: aiosqlite.Connection, table_name: str, column_name: str) -> bool:
     async with db.execute(f"PRAGMA table_info({table_name})") as cur:
@@ -65,6 +67,22 @@ async def ensure_subscription_tasks_schema(db: aiosqlite.Connection) -> None:
         "subscription_tasks",
         "client_user_id",
         "INTEGER",
+    )
+    await _add_column_if_missing(
+        db,
+        "subscription_tasks",
+        "owner_type",
+        "TEXT NOT NULL DEFAULT 'client'",
+    )
+    await db.execute(
+        """
+        UPDATE subscription_tasks
+        SET owner_type = ?
+        WHERE owner_type IS NULL
+           OR TRIM(owner_type) = ''
+           OR owner_type NOT IN ('client', 'partner')
+        """,
+        (OWNER_TYPE_CLIENT,),
     )
     await db.execute(
         """
@@ -137,6 +155,7 @@ async def create_subscription_task(
         chat_id: str,
         title: str,
         client_user_id: Optional[int],
+        owner_type: str,
         channel_url: str,
         instant_reward: float,
         daily_reward_total: float,
@@ -148,15 +167,16 @@ async def create_subscription_task(
     cur = await db.execute(
         """
         INSERT INTO subscription_tasks (
-            chat_id, title, client_user_id, channel_url, instant_reward, daily_reward_total,
+            chat_id, title, client_user_id, owner_type, channel_url, instant_reward, daily_reward_total,
             daily_claim_days, max_subscribers, is_active, created_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
         """,
         (
             str(chat_id),
             str(title or ""),
             int(client_user_id) if client_user_id is not None else None,
+            str(owner_type or OWNER_TYPE_CLIENT),
             str(channel_url),
             float(instant_reward),
             float(daily_reward_total),
@@ -253,16 +273,20 @@ async def set_subscription_task_client(
         *,
         task_id: int,
         client_user_id: Optional[int],
+        owner_type: str,
 ) -> None:
     await ensure_subscription_tasks_schema(db)
     await db.execute(
         """
         UPDATE subscription_tasks
-        SET client_user_id = ?, updated_at = datetime('now')
+        SET client_user_id = ?,
+            owner_type = ?,
+            updated_at = datetime('now')
         WHERE id = ?
         """,
         (
             int(client_user_id) if client_user_id is not None else None,
+            str(owner_type or OWNER_TYPE_CLIENT),
             int(task_id),
         ),
     )

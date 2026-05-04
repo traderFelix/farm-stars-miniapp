@@ -1,6 +1,9 @@
-from typing import Optional
+from typing import Optional, cast
 
 import aiosqlite
+
+from shared.config import OWNER_TYPE_CLIENT
+from shared.db.partners import allocate_partner_views, get_partner_remaining_views
 
 TASK_POST_OPEN_SESSION_TTL_SECONDS = 10 * 60
 
@@ -21,6 +24,44 @@ async def ensure_task_channels_client_schema(db: aiosqlite.Connection) -> None:
         await db.execute(
             "ALTER TABLE task_channels ADD COLUMN client_user_id INTEGER"
         )
+    if not await _column_exists(db, "task_channels", "owner_type"):
+        await db.execute(
+            "ALTER TABLE task_channels ADD COLUMN owner_type TEXT NOT NULL DEFAULT 'client'"
+        )
+    if not await _column_exists(db, "task_channels", "partner_views_per_post"):
+        await db.execute(
+            "ALTER TABLE task_channels ADD COLUMN partner_views_per_post INTEGER NOT NULL DEFAULT 0"
+        )
+    if not await _column_exists(db, "task_channels", "partner_view_seconds"):
+        await db.execute(
+            "ALTER TABLE task_channels ADD COLUMN partner_view_seconds INTEGER NOT NULL DEFAULT 0"
+        )
+    await db.execute(
+        """
+        UPDATE task_channels
+        SET owner_type = ?
+        WHERE owner_type IS NULL
+           OR TRIM(owner_type) = ''
+           OR owner_type NOT IN ('client', 'partner')
+        """,
+        (OWNER_TYPE_CLIENT,),
+    )
+    await db.execute(
+        """
+        UPDATE task_channels
+        SET partner_views_per_post = views_per_post
+        WHERE partner_views_per_post IS NULL
+           OR partner_views_per_post <= 0
+        """
+    )
+    await db.execute(
+        """
+        UPDATE task_channels
+        SET partner_view_seconds = view_seconds
+        WHERE partner_view_seconds IS NULL
+           OR partner_view_seconds <= 0
+        """
+    )
 
 
 async def ensure_task_posts_manual_schema(db: aiosqlite.Connection) -> None:
@@ -32,6 +73,25 @@ async def ensure_task_posts_manual_schema(db: aiosqlite.Connection) -> None:
         await db.execute(
             "ALTER TABLE task_posts ADD COLUMN added_by_admin_id INTEGER"
         )
+    if not await _column_exists(db, "task_posts", "hold_seconds"):
+        await db.execute(
+            "ALTER TABLE task_posts ADD COLUMN hold_seconds INTEGER NOT NULL DEFAULT 0"
+        )
+    await db.execute(
+        """
+        UPDATE task_posts
+        SET hold_seconds = COALESCE(
+            (
+                SELECT c.view_seconds
+                FROM task_channels c
+                WHERE c.id = task_posts.channel_id
+            ),
+            0
+        )
+        WHERE hold_seconds IS NULL
+           OR hold_seconds <= 0
+        """
+    )
 
 
 async def ensure_task_post_open_sessions_schema(db: aiosqlite.Connection) -> None:
@@ -121,6 +181,7 @@ async def get_next_view_post_task_for_user(
         db: aiosqlite.Connection,
         user_id: int,
 ):
+    await ensure_task_posts_manual_schema(db)
     await cleanup_expired_task_post_open_sessions(db)
     async with db.execute(
             f"""
@@ -129,7 +190,7 @@ async def get_next_view_post_task_for_user(
             p.channel_id,
             c.chat_id,
             c.title AS channel_title,
-            c.view_seconds,
+            COALESCE(NULLIF(p.hold_seconds, 0), c.view_seconds) AS view_seconds,
             p.channel_post_id,
             p.reward,
             p.required_views,
@@ -159,6 +220,7 @@ async def get_openable_view_post_task_for_user(
         user_id: int,
         task_post_id: int,
 ):
+    await ensure_task_posts_manual_schema(db)
     await cleanup_expired_task_post_open_sessions(db)
     async with db.execute(
             f"""
@@ -167,7 +229,7 @@ async def get_openable_view_post_task_for_user(
             p.channel_id,
             c.chat_id,
             c.title AS channel_title,
-            c.view_seconds,
+            COALESCE(NULLIF(p.hold_seconds, 0), c.view_seconds) AS view_seconds,
             p.channel_post_id,
             p.reward,
             p.required_views,
@@ -197,6 +259,7 @@ async def get_view_post_task_for_user(
         user_id: int,
         task_post_id: int,
 ):
+    await ensure_task_posts_manual_schema(db)
     async with db.execute(
             """
         SELECT
@@ -204,7 +267,7 @@ async def get_view_post_task_for_user(
             p.channel_id,
             c.chat_id,
             c.title AS channel_title,
-            c.view_seconds,
+            COALESCE(NULLIF(p.hold_seconds, 0), c.view_seconds) AS view_seconds,
             p.channel_post_id,
             p.reward,
             p.required_views,
@@ -273,6 +336,7 @@ async def get_view_post_task_for_open_session(
         task_post_id: int,
         session_id: str,
 ):
+    await ensure_task_posts_manual_schema(db)
     await cleanup_expired_task_post_open_sessions(db)
     async with db.execute(
             """
@@ -281,7 +345,7 @@ async def get_view_post_task_for_open_session(
             p.channel_id,
             c.chat_id,
             c.title AS channel_title,
-            c.view_seconds,
+            COALESCE(NULLIF(p.hold_seconds, 0), c.view_seconds) AS view_seconds,
             p.channel_post_id,
             p.reward,
             p.required_views,
@@ -417,10 +481,13 @@ async def list_task_channels(db: aiosqlite.Connection):
             c.id,
             c.chat_id,
             COALESCE(title, '') AS title,
+            c.owner_type,
             c.is_active,
             c.total_bought_views,
             c.views_per_post,
             c.view_seconds,
+            c.partner_views_per_post,
+            c.partner_view_seconds,
             c.allocated_views,
             (c.total_bought_views - c.allocated_views) AS remaining_views,
             c.created_at,
@@ -443,10 +510,13 @@ async def get_task_channel(db: aiosqlite.Connection, channel_id: int):
             c.id,
             c.chat_id,
             COALESCE(c.title, '') AS title,
+            c.owner_type,
             c.is_active,
             c.total_bought_views,
             c.views_per_post,
             c.view_seconds,
+            c.partner_views_per_post,
+            c.partner_view_seconds,
             c.allocated_views,
             (c.total_bought_views - c.allocated_views) AS remaining_views,
             c.created_at,
@@ -471,10 +541,13 @@ async def get_task_channel_by_chat_id(db: aiosqlite.Connection, chat_id: str):
             c.id,
             c.chat_id,
             COALESCE(c.title, '') AS title,
+            c.owner_type,
             c.is_active,
             c.total_bought_views,
             c.views_per_post,
             c.view_seconds,
+            c.partner_views_per_post,
+            c.partner_view_seconds,
             c.allocated_views,
             (c.total_bought_views - c.allocated_views) AS remaining_views,
             c.created_at,
@@ -496,6 +569,7 @@ async def create_task_channel(
         chat_id: str,
         title: Optional[str],
         client_user_id: Optional[int],
+        owner_type: str,
         total_bought_views: int,
         views_per_post: int,
         view_seconds: int,
@@ -504,15 +578,20 @@ async def create_task_channel(
     cur = await db.execute(
         """
         INSERT INTO task_channels (
-            chat_id, title, client_user_id, is_active, total_bought_views, views_per_post, view_seconds, allocated_views, created_at
+            chat_id, title, client_user_id, owner_type, is_active, total_bought_views,
+            views_per_post, view_seconds, partner_views_per_post, partner_view_seconds,
+            allocated_views, created_at
         )
-        VALUES (?, ?, ?, 0, ?, ?, ?, 0, datetime('now'))
+        VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, 0, datetime('now'))
         """,
         (
             str(chat_id),
             title,
             int(client_user_id) if client_user_id is not None else None,
+            str(owner_type or OWNER_TYPE_CLIENT),
             int(total_bought_views),
+            int(views_per_post),
+            int(view_seconds),
             int(views_per_post),
             int(view_seconds),
         ),
@@ -524,16 +603,19 @@ async def set_task_channel_client(
         db: aiosqlite.Connection,
         channel_id: int,
         client_user_id: Optional[int],
+        owner_type: str,
 ) -> None:
     await ensure_task_channels_client_schema(db)
     await db.execute(
         """
         UPDATE task_channels
-        SET client_user_id = ?
+        SET client_user_id = ?,
+            owner_type = ?
         WHERE id = ?
         """,
         (
             int(client_user_id) if client_user_id is not None else None,
+            str(owner_type or OWNER_TYPE_CLIENT),
             int(channel_id),
         ),
     )
@@ -606,6 +688,28 @@ async def update_task_channel_params(
     )
 
 
+async def update_task_channel_partner_params(
+        db: aiosqlite.Connection,
+        channel_id: int,
+        partner_views_per_post: int,
+        partner_view_seconds: int,
+) -> None:
+    await db.execute(
+        """
+        UPDATE task_channels
+        SET
+            partner_views_per_post = ?,
+            partner_view_seconds = ?
+        WHERE id = ?
+        """,
+        (
+            int(partner_views_per_post),
+            int(partner_view_seconds),
+            int(channel_id),
+        ),
+    )
+
+
 async def get_task_channel_allocated_views(db: aiosqlite.Connection, channel_id: int) -> int:
     async with db.execute(
             """
@@ -618,6 +722,19 @@ async def get_task_channel_allocated_views(db: aiosqlite.Connection, channel_id:
     ) as cur:
         row = await cur.fetchone()
         return int(row["allocated_views"] or 0) if row else 0
+
+
+async def get_task_channel_partner_remaining_views(db: aiosqlite.Connection, channel_row) -> int:
+    partner_user_id = channel_row["client_user_id"] if channel_row is not None else None
+    if partner_user_id is None:
+        return 0
+    partner_user_id_value = cast(int, partner_user_id)
+    channel_chat_id = str(channel_row["chat_id"])
+    return await get_partner_remaining_views(
+        db,
+        partner_user_id_value,
+        channel_chat_id,
+    )
 
 
 async def list_task_posts_by_channel(
@@ -685,13 +802,21 @@ async def auto_disable_task_channel_if_exhausted(
         db: aiosqlite.Connection,
         channel_id: int,
 ) -> bool:
+    channel = await get_task_channel(db, int(channel_id))
+    if not channel or int(channel["is_active"] or 0) != 1:
+        return False
+
+    client_remaining = int(channel["remaining_views"] or 0)
+    partner_remaining = await get_task_channel_partner_remaining_views(db, channel)
+    if client_remaining + partner_remaining > 0:
+        return False
+
     cur = await db.execute(
         """
         UPDATE task_channels
         SET is_active = 0
         WHERE id = ?
           AND is_active = 1
-          AND allocated_views >= total_bought_views
         """,
         (int(channel_id),),
     )
@@ -715,8 +840,16 @@ async def allocate_task_post_from_channel_post(
     if int(channel["is_active"] or 0) != 1:
         return False
 
-    remaining = int(channel["remaining_views"] or 0)
-    views_per_post = int(channel["views_per_post"] or 0)
+    client_remaining = int(channel["remaining_views"] or 0)
+    partner_remaining = await get_task_channel_partner_remaining_views(db, channel)
+    remaining = client_remaining + partner_remaining
+    client_views_per_post = int(channel["views_per_post"] or 0)
+    client_view_seconds = int(channel["view_seconds"] or 0)
+    partner_views_per_post = int(channel["partner_views_per_post"] or 0) or client_views_per_post
+    partner_view_seconds = int(channel["partner_view_seconds"] or 0) or client_view_seconds
+    use_partner_pool = partner_remaining > 0
+    views_per_post = partner_views_per_post if use_partner_pool else client_views_per_post
+    hold_seconds = partner_view_seconds if use_partner_pool else client_view_seconds
 
     if remaining <= 0 or views_per_post <= 0:
         await auto_disable_task_channel_if_exhausted(db, int(channel["id"]))
@@ -731,9 +864,9 @@ async def allocate_task_post_from_channel_post(
         """
         INSERT OR IGNORE INTO task_posts (
             channel_id, channel_post_id, reward, required_views, current_views, is_active,
-            source, added_by_admin_id, created_at
+            source, added_by_admin_id, hold_seconds, created_at
         )
-        VALUES (?, ?, ?, ?, 0, 1, ?, ?, datetime('now'))
+        VALUES (?, ?, ?, ?, 0, 1, ?, ?, ?, datetime('now'))
         """,
         (
             int(channel["id"]),
@@ -742,22 +875,43 @@ async def allocate_task_post_from_channel_post(
             int(alloc),
             source,
             int(added_by_admin_id) if added_by_admin_id is not None else None,
+            int(hold_seconds),
         ),
     )
 
     if cur.rowcount != 1:
         return False
 
-    await db.execute(
-        """
-        UPDATE task_channels
-        SET
-            allocated_views = allocated_views + ?,
-            title = COALESCE(?, title)
-        WHERE id = ?
-        """,
-        (int(alloc), title, int(channel["id"])),
-    )
+    partner_alloc = min(partner_remaining, int(alloc))
+    client_alloc = max(int(alloc) - int(partner_alloc), 0)
+    if partner_alloc > 0 and channel["client_user_id"] is not None:
+        await allocate_partner_views(
+            db,
+            partner_user_id=int(channel["client_user_id"]),
+            channel_chat_id=str(channel["chat_id"]),
+            amount=int(partner_alloc),
+        )
+
+    if client_alloc > 0:
+        await db.execute(
+            """
+            UPDATE task_channels
+            SET
+                allocated_views = allocated_views + ?,
+                title = COALESCE(?, title)
+            WHERE id = ?
+            """,
+            (int(client_alloc), title, int(channel["id"])),
+        )
+    else:
+        await db.execute(
+            """
+            UPDATE task_channels
+            SET title = COALESCE(?, title)
+            WHERE id = ?
+            """,
+            (title, int(channel["id"])),
+        )
 
     await auto_disable_task_channel_if_exhausted(db, int(channel["id"]))
     return True

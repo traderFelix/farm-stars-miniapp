@@ -164,6 +164,52 @@ def client_back_kb(callback_data: str) -> InlineKeyboardMarkup:
     )
 
 
+def admin_owner_type_kb(*, client_callback: str, partner_callback: str, back_callback: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="👤 Клиент", callback_data=client_callback)],
+            [InlineKeyboardButton(text="🤝 Партнер", callback_data=partner_callback)],
+            [InlineKeyboardButton(text="⬅ Назад", callback_data=back_callback)],
+        ]
+    )
+
+
+def partner_home_kb(rows) -> InlineKeyboardMarkup:
+    keyboard = []
+    for row in rows:
+        chat_id = str(row["chat_id"])
+        title = (row.get("title") or "").strip() or chat_id
+        status = "🟢" if bool(row.get("is_active")) else "⏸"
+        keyboard.append([
+            InlineKeyboardButton(
+                text=f"{status} {title}",
+                callback_data=f"partner:channel:{chat_id}",
+            )
+        ])
+
+    keyboard.append([InlineKeyboardButton(text="⬅ Назад", callback_data="back")])
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+
+def partner_channel_kb(chat_id: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🎟 Мои промокоды", callback_data=f"partner:channel:{str(chat_id)}:promos")],
+            [InlineKeyboardButton(text="🧾 Мои начисления", callback_data=f"partner:channel:{str(chat_id)}:accruals")],
+            [InlineKeyboardButton(text="⬅ Назад", callback_data="partner:home")],
+        ]
+    )
+
+
+def partner_accruals_kb(chat_id: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🗓 История начислений", callback_data=f"partner:channel:{str(chat_id)}:history")],
+            [InlineKeyboardButton(text="⬅ Назад", callback_data=f"partner:channel:{str(chat_id)}")],
+        ]
+    )
+
+
 # ---------- ADMIN KEYBOARDS ----------
 
 def admin_menu_kb() -> InlineKeyboardMarkup:
@@ -408,6 +454,16 @@ def promo_created_kb(code: str) -> InlineKeyboardMarkup:
     )
 
 
+def promo_scope_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🌐 Общий промокод", callback_data="adm:promo:scope:general")],
+            [InlineKeyboardButton(text="🤝 Для партнера", callback_data="adm:promo:scope:partner")],
+            [InlineKeyboardButton(text="⬅ Назад", callback_data="adm:promos_menu")],
+        ]
+    )
+
+
 def promo_stats_list_kb(rows, back_callback: str = "adm:back") -> InlineKeyboardMarkup:
     keyboard = []
     for row in rows[:50]:
@@ -460,20 +516,29 @@ def admin_task_channels_kb(rows) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=kb)
 
 
-def admin_task_channel_card_kb(channel_id: int, is_active: bool) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="➕ Добавить пост вручную", callback_data=f"adm:tch:manual_post_start:{channel_id}")],
-            [InlineKeyboardButton(text="📊 Статус по постам", callback_data=f"adm:tch:posts:{channel_id}")],
-            [InlineKeyboardButton(text="👤 Привязать клиента", callback_data=f"adm:tch:client:{channel_id}")],
-            [InlineKeyboardButton(text="⚙️ Редактировать параметры", callback_data=f"adm:tch:edit:{channel_id}")],
-            [InlineKeyboardButton(
-                text="🔴 Отключить канал" if is_active else "🟢 Включить канал",
-                callback_data=f"adm:tch:toggle:{channel_id}",
-            )],
-            [InlineKeyboardButton(text="⬅ Назад", callback_data="adm:tch:list")],
-        ]
-    )
+def admin_task_channel_card_kb(
+        channel_id: int,
+        is_active: bool,
+        *,
+        can_partner_views_accrual: bool = False,
+        can_add_client_views: bool = False,
+) -> InlineKeyboardMarkup:
+    keyboard = [
+        [InlineKeyboardButton(text="➕ Добавить пост вручную", callback_data=f"adm:tch:manual_post_start:{channel_id}")],
+        [InlineKeyboardButton(text="📊 Статус по постам", callback_data=f"adm:tch:posts:{channel_id}")],
+        [InlineKeyboardButton(text="👤 Привязать пользователя", callback_data=f"adm:tch:client:{channel_id}")],
+    ]
+    if can_add_client_views or can_partner_views_accrual:
+        keyboard.append([InlineKeyboardButton(text="➕ Зачислить просмотры", callback_data=f"adm:tch:credit_views:{channel_id}")])
+    keyboard.extend([
+        [InlineKeyboardButton(text="⚙️ Редактировать параметры", callback_data=f"adm:tch:edit:{channel_id}")],
+        [InlineKeyboardButton(
+            text="🔴 Отключить канал" if is_active else "🟢 Включить канал",
+            callback_data=f"adm:tch:toggle:{channel_id}",
+        )],
+        [InlineKeyboardButton(text="⬅ Назад", callback_data="adm:tch:list")],
+    ])
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 
 def admin_task_channel_manual_post_confirm_kb(channel_id: int) -> InlineKeyboardMarkup:
@@ -511,7 +576,7 @@ def admin_subscription_tasks_kb(rows) -> InlineKeyboardMarkup:
 def admin_subscription_task_card_kb(task_id: int, is_active: bool) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="👤 Привязать клиента", callback_data=f"adm:sub:client:{int(task_id)}")],
+            [InlineKeyboardButton(text="👤 Привязать пользователя", callback_data=f"adm:sub:client:{int(task_id)}")],
             [InlineKeyboardButton(
                 text="🔴 Отключить" if is_active else "🟢 Включить",
                 callback_data=f"adm:sub:toggle:{int(task_id)}:{0 if is_active else 1}",

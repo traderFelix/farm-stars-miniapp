@@ -13,8 +13,6 @@ from aiogram.types import (
     CallbackQuery,
     FSInputFile,
     InaccessibleMessage,
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
     Message,
     User,
 )
@@ -32,9 +30,15 @@ from bot.api_client import (
     get_client_channel_via_api,
     get_client_channel_posts_via_api,
     get_client_channel_view_stats_via_api,
+    get_partner_cabinet_summary_via_api,
+    get_partner_channel_accruals_via_api,
+    get_partner_channel_via_api,
     get_next_task,
     list_client_channels_via_api,
     list_client_orders_via_api,
+    list_partner_channel_accrual_history_via_api,
+    list_partner_channel_promos_via_api,
+    list_partner_channels_via_api,
     get_theft_status,
     ingest_task_channel_post_via_api,
     open_task,
@@ -50,6 +54,9 @@ from bot.keyboards import (
     client_view_stats_kb,
     main_menu,
     miniapp_menu_button,
+    partner_accruals_kb,
+    partner_channel_kb,
+    partner_home_kb,
     task_after_view_kb,
     tasks_menu,
 )
@@ -344,6 +351,104 @@ def _build_client_campaigns_status_text(payload: dict[str, Any]) -> str:
         lines.append(
             f"{status_icon} {status_label} кампания #{campaign_id} {created_at} — {participants}/{max_subscribers}"
         )
+        lines.append("")
+
+    return "\n".join(lines).strip()
+
+
+def _format_partner_promo_status(value: Any) -> str:
+    normalized = str(value or "").strip().lower()
+    return "активен" if normalized == "active" else "выключен"
+
+
+def _build_partner_home_text(summary: dict[str, Any]) -> str:
+    return (
+        "💼 <b>Кабинет партнера</b>\n\n"
+        f"Каналов: <b>{int(summary.get('channels_count') or 0)}</b>\n"
+        f"Рефералов: <b>{int(summary.get('referrals_count') or 0)}</b>"
+    )
+
+
+def _build_partner_channel_text(channel: dict[str, Any]) -> str:
+    return f"<b>{_format_client_channel_title(channel)}</b>"
+
+
+def _build_partner_promos_text(payload: dict[str, Any]) -> str:
+    channel = payload["channel"]
+    rows = list(payload.get("items") or [])
+
+    if not rows:
+        return (
+            "🎟 <b>Мои промокоды</b>\n\n"
+            f"Канал: <b>{_format_client_channel_title(channel)}</b>\n\n"
+            "Пока нет привязанных промокодов."
+        )
+
+    lines = [
+        "🎟 <b>Мои промокоды</b>",
+        "",
+        f"Канал: <b>{_format_client_channel_title(channel)}</b>",
+        "",
+    ]
+    for row in rows:
+        promo_code = html.escape(str(row.get("promo_code") or ""))
+        status = _format_partner_promo_status(row.get("status"))
+        claims_count = int(row.get("claims_count") or 0)
+        total_uses = int(row.get("total_uses") or 0)
+        new_referrals_count = int(row.get("new_referrals_count") or 0)
+        lines.extend([
+            f"<b>{promo_code}</b>",
+            f"Статус: <b>{status}</b>",
+            f"Активации: <b>{claims_count}/{total_uses}</b>",
+            f"Новых рефов: <b>{new_referrals_count}</b>",
+            "",
+        ])
+
+    return "\n".join(lines).strip()
+
+
+def _build_partner_accruals_text(payload: dict[str, Any]) -> str:
+    channel = payload["channel"]
+    summary = payload["summary"]
+    return (
+        "🧾 <b>Мои начисления</b>\n\n"
+        f"Канал: <b>{_format_client_channel_title(channel)}</b>\n\n"
+        f"Подписчиков залито/обещано: <b>{int(summary.get('subscribers_delivered') or 0)}/{int(summary.get('subscribers_promised') or 0)}</b>\n"
+        f"Просмотров выдано/обещано: <b>{int(summary.get('views_delivered') or 0)}/{int(summary.get('views_promised') or 0)}</b>"
+    )
+
+
+def _build_partner_accrual_history_text(payload: dict[str, Any]) -> str:
+    channel = payload["channel"]
+    rows = list(payload.get("items") or [])
+
+    if not rows:
+        return (
+            "🗓 <b>История начислений</b>\n\n"
+            f"Канал: <b>{_format_client_channel_title(channel)}</b>\n\n"
+            "Пока нет записей."
+        )
+
+    lines = [
+        "🗓 <b>История начислений</b>",
+        "",
+        f"Канал: <b>{_format_client_channel_title(channel)}</b>",
+        "",
+    ]
+    for row in rows:
+        created_at = _format_client_datetime(row.get("created_at"))
+        subscribers_delivered = int(row.get("subscribers_delivered") or 0)
+        subscribers_promised = int(row.get("subscribers_promised") or 0)
+        views_delivered = int(row.get("views_delivered") or 0)
+        views_promised = int(row.get("views_promised") or 0)
+        note = (row.get("note") or "").strip()
+        lines.extend([
+            f"<b>{created_at}</b>",
+            f"Подписчики: <b>{subscribers_delivered}/{subscribers_promised}</b>",
+            f"Просмотры: <b>{views_delivered}/{views_promised}</b>",
+        ])
+        if note:
+            lines.append(f"Комментарий: <b>{html.escape(note)}</b>")
         lines.append("")
 
     return "\n".join(lines).strip()
@@ -1376,19 +1481,62 @@ async def partner_home(callback: CallbackQuery):
         await safe_callback_answer(callback, "❌ Партнерский раздел тебе пока недоступен.", show_alert=True)
         return
 
+    try:
+        summary = await get_partner_cabinet_summary_via_api(callback.from_user.id)
+        channels = await list_partner_channels_via_api(callback.from_user.id)
+    except ApiClientError as e:
+        await _answer_user_api_error(callback, e, context="partner_home")
+        return
+
+    rows = list(channels.get("items") or [])
     await safe_callback_answer(callback)
     await safe_edit_text(
         callback.message,
-        "💼 <b>Кабинет партнера</b>\n\n"
-        "Тут потом будут:\n"
-        "• приглашенные клиенты\n"
-        "• приглашенные юзеры\n"
-        "• проценты / бонусы\n"
-        "• партнерская статистика",
-        reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[
-                [InlineKeyboardButton(text="⬅ Назад", callback_data="back")]
-            ]
-        ),
+        _build_partner_home_text(summary),
+        reply_markup=partner_home_kb(rows),
+        parse_mode=ParseMode.HTML,
+    )
+
+
+@router.callback_query(F.data.startswith("partner:channel:"))
+async def partner_channel_router(callback: CallbackQuery):
+    parts = (callback.data or "").split(":")
+    if len(parts) < 3:
+        await safe_callback_answer(callback, "❌ Канал партнера не найден.", show_alert=True)
+        return
+
+    chat_id = parts[2]
+    mode = parts[3] if len(parts) > 3 else "card"
+
+    try:
+        if mode == "promos":
+            payload = await list_partner_channel_promos_via_api(callback.from_user.id, chat_id)
+            text = _build_partner_promos_text(payload)
+            reply_markup = client_back_kb(f"partner:channel:{chat_id}")
+        elif mode == "accruals":
+            payload = await get_partner_channel_accruals_via_api(callback.from_user.id, chat_id)
+            text = _build_partner_accruals_text(payload)
+            reply_markup = partner_accruals_kb(chat_id)
+        elif mode == "history":
+            payload = await list_partner_channel_accrual_history_via_api(
+                callback.from_user.id,
+                chat_id,
+                limit=50,
+            )
+            text = _build_partner_accrual_history_text(payload)
+            reply_markup = client_back_kb(f"partner:channel:{chat_id}:accruals")
+        else:
+            payload = await get_partner_channel_via_api(callback.from_user.id, chat_id)
+            text = _build_partner_channel_text(payload["channel"])
+            reply_markup = partner_channel_kb(chat_id)
+    except ApiClientError as e:
+        await _answer_user_api_error(callback, e, context=f"partner_channel.{mode}")
+        return
+
+    await safe_callback_answer(callback)
+    await safe_edit_text(
+        callback.message,
+        text,
+        reply_markup=reply_markup,
         parse_mode=ParseMode.HTML,
     )

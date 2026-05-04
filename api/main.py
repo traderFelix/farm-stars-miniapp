@@ -10,6 +10,7 @@ from shared.config import WEB_ORIGIN_DEV, WEB_ORIGIN_NGROK
 
 from api.routes.admin.analytics import router as analytics_admin_router
 from api.routes.admin.campaigns import router as campaigns_admin_router
+from api.routes.admin.partner_traffic import router as partner_traffic_admin_router
 from api.routes.admin.promos import router as promos_admin_router
 from api.routes.admin.subscriptions import router as subscriptions_admin_router
 from api.routes.admin.users import router as users_router
@@ -20,6 +21,7 @@ from api.routes.battles import router as battles_router
 from api.routes.campaigns import router as campaigns_router
 from api.routes.health import router as health_router
 from api.routes.internal_client_cabinet import router as internal_client_cabinet_router
+from api.routes.internal_partner_cabinet import router as internal_partner_cabinet_router
 from api.routes.internal_users import router as internal_users_router
 from api.routes.miniapp_compat import router as miniapp_compat_router
 from api.routes.profile import router as profile_router
@@ -98,6 +100,7 @@ app.include_router(battles_router)
 app.include_router(campaigns_router)
 app.include_router(promos_router)
 app.include_router(internal_client_cabinet_router)
+app.include_router(internal_partner_cabinet_router)
 app.include_router(internal_users_router)
 app.include_router(profile_router)
 app.include_router(referrals_router)
@@ -108,6 +111,7 @@ app.include_router(miniapp_compat_router)
 app.include_router(users_router)
 app.include_router(analytics_admin_router)
 app.include_router(campaigns_admin_router)
+app.include_router(partner_traffic_admin_router)
 app.include_router(promos_admin_router)
 app.include_router(subscriptions_admin_router)
 app.include_router(task_channels_router)

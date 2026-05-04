@@ -4,9 +4,11 @@ from typing import Any, Optional
 import aiosqlite
 from fastapi import HTTPException
 
-from api.services.admin.client_roles import ensure_client_role, sync_client_role_after_rebind
+from api.services.admin.client_roles import ensure_owner_role, sync_owner_role_after_rebind
 from api.services.admin.telegram_channels import verified_telegram_channel_title
+from shared.config import OWNER_TYPE_CLIENT, OWNER_TYPE_PARTNER
 from shared.db.common import tx
+from shared.db.partners import get_partner_traffic_totals
 from shared.db.tasks import (
     allocate_task_post_from_channel_post,
     create_task_channel,
@@ -21,6 +23,7 @@ from shared.db.tasks import (
     set_task_channel_active,
     task_channel_stats,
     update_task_channel_params,
+    update_task_channel_partner_params,
 )
 from shared.db.users import get_user_by_id
 
@@ -31,12 +34,15 @@ def _serialize_channel(row: Any) -> dict[str, Any]:
         "chat_id": str(row["chat_id"]),
         "title": row["title"] or "",
         "client_user_id": int(row["client_user_id"]) if row["client_user_id"] is not None else None,
+        "owner_type": str(row["owner_type"] or OWNER_TYPE_CLIENT),
         "client_username": row["client_username"] or None,
         "client_first_name": row["client_first_name"] or None,
         "is_active": bool(row["is_active"] or 0),
         "total_bought_views": int(row["total_bought_views"] or 0),
         "views_per_post": int(row["views_per_post"] or 0),
         "view_seconds": int(row["view_seconds"] or 0),
+        "partner_views_per_post": int(row["partner_views_per_post"] or 0),
+        "partner_view_seconds": int(row["partner_view_seconds"] or 0),
         "allocated_views": int(row["allocated_views"] or 0),
         "remaining_views": int(row["remaining_views"] or 0),
         "created_at": row["created_at"],
@@ -49,6 +55,13 @@ def _serialize_stats(row: Any) -> dict[str, Any]:
         "total_required": int(row["total_required"] or 0),
         "total_current": int(row["total_current"] or 0),
         "active_posts": int(row["active_posts"] or 0),
+    }
+
+
+def _serialize_partner_accruals(row: Any) -> dict[str, Any]:
+    return {
+        "views_promised": int(row["views_promised"] or 0),
+        "views_delivered": int(row["views_delivered"] or 0),
     }
 
 
@@ -91,11 +104,20 @@ def _validate_chat_id(chat_id: str) -> str:
     return normalized
 
 
-def _validate_views_ratio(total_bought_views: int, views_per_post: int) -> None:
-    if int(views_per_post) > int(total_bought_views):
+def _normalize_owner_type(value: Optional[str]) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized == OWNER_TYPE_PARTNER:
+        return OWNER_TYPE_PARTNER
+    if normalized == OWNER_TYPE_CLIENT:
+        return OWNER_TYPE_CLIENT
+    raise HTTPException(status_code=400, detail="owner_type должен быть client или partner")
+
+
+def _validate_views_ratio(total_views: int, views_per_post: int, *, detail_text: str) -> None:
+    if int(total_views) > 0 and int(views_per_post) > int(total_views):
         raise HTTPException(
             status_code=400,
-            detail="Просмотров на 1 пост не может быть больше, чем куплено всего.",
+            detail=detail_text,
         )
 
 
@@ -106,9 +128,18 @@ async def build_channel_detail(
     await ensure_task_channels_client_schema(db)
     row = await _get_channel_row(db, int(channel_id))
     stats = await task_channel_stats(db, int(channel_id))
+    partner_accruals = None
+    if row["client_user_id"] is not None:
+        partner_totals = await get_partner_traffic_totals(
+            db,
+            int(row["client_user_id"]),
+            str(row["chat_id"]),
+        )
+        partner_accruals = _serialize_partner_accruals(partner_totals)
     return {
         "channel": _serialize_channel(row),
         "stats": _serialize_stats(stats),
+        "partner_accruals": partner_accruals,
     }
 
 
@@ -149,31 +180,90 @@ async def update_channel(
         total_bought_views: int,
         views_per_post: int,
         view_seconds: int,
+        pool: str = "main",
 ) -> dict[str, Any]:
-    _ = await _get_channel_row(db, int(channel_id))
+    row = await _get_channel_row(db, int(channel_id))
 
     total_bought_views = _validate_positive_int(total_bought_views, field_name="total_bought_views")
     views_per_post = _validate_positive_int(views_per_post, field_name="views_per_post")
     view_seconds = _validate_positive_int(view_seconds, field_name="view_seconds")
-    _validate_views_ratio(total_bought_views, views_per_post)
+    normalized_pool = str(pool or "main").strip().lower()
+    if normalized_pool not in {"main", "partner"}:
+        raise HTTPException(status_code=400, detail="pool должен быть main или partner")
 
-    allocated_views = await get_task_channel_allocated_views(db, int(channel_id))
-    if total_bought_views < allocated_views:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "Нельзя поставить меньше, чем уже распределено по постам.\n\n"
-                f"Уже распределено: {allocated_views}"
+    partner_promised_views = 0
+    if row["client_user_id"] is not None:
+        partner_totals = await get_partner_traffic_totals(
+            db,
+            int(row["client_user_id"]),
+            str(row["chat_id"]),
+        )
+        partner_promised_views = int(partner_totals["views_promised"] or 0)
+    owner_type = str(row["owner_type"] or OWNER_TYPE_CLIENT)
+    if normalized_pool == "partner":
+        _validate_views_ratio(
+            partner_promised_views,
+            views_per_post,
+            detail_text="Просмотров на 1 пост не может быть больше, чем начислено партнеру.",
+        )
+    else:
+        _validate_views_ratio(
+            total_bought_views,
+            views_per_post,
+            detail_text=(
+                "Просмотров на 1 пост не может быть больше, чем начислено в основном пуле."
+                if owner_type == OWNER_TYPE_PARTNER
+                else "Просмотров на 1 пост не может быть больше, чем куплено всего."
             ),
         )
+
+        allocated_views = await get_task_channel_allocated_views(db, int(channel_id))
+        if total_bought_views < allocated_views:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Нельзя поставить меньше, чем уже распределено по постам.\n\n"
+                    f"Уже распределено: {allocated_views}"
+                ),
+            )
+
+    async with tx(db):
+        if normalized_pool == "partner":
+            await update_task_channel_partner_params(
+                db=db,
+                channel_id=int(channel_id),
+                partner_views_per_post=views_per_post,
+                partner_view_seconds=view_seconds,
+            )
+        else:
+            await update_task_channel_params(
+                db=db,
+                channel_id=int(channel_id),
+                total_bought_views=total_bought_views,
+                views_per_post=views_per_post,
+                view_seconds=view_seconds,
+            )
+
+    return await build_channel_detail(db, int(channel_id))
+
+
+async def add_channel_views(
+        db: aiosqlite.Connection,
+        channel_id: int,
+        *,
+        amount: int,
+) -> dict[str, Any]:
+    row = await _get_channel_row(db, int(channel_id))
+    amount = _validate_positive_int(amount, field_name="amount")
+    new_total_bought_views = int(row["total_bought_views"] or 0) + int(amount)
 
     async with tx(db):
         await update_task_channel_params(
             db=db,
             channel_id=int(channel_id),
-            total_bought_views=total_bought_views,
-            views_per_post=views_per_post,
-            view_seconds=view_seconds,
+            total_bought_views=new_total_bought_views,
+            views_per_post=int(row["views_per_post"] or 0),
+            view_seconds=int(row["view_seconds"] or 0),
         )
 
     return await build_channel_detail(db, int(channel_id))
@@ -185,18 +275,24 @@ async def create_channel(
         chat_id: str,
         title: Optional[str],
         client_user_id: Optional[int],
+        owner_type: str,
         total_bought_views: int,
         views_per_post: int,
         view_seconds: int,
 ) -> dict[str, Any]:
     chat_id = _validate_chat_id(chat_id)
+    owner_type = _normalize_owner_type(owner_type)
     total_bought_views = _validate_positive_int(total_bought_views, field_name="total_bought_views")
     views_per_post = _validate_positive_int(views_per_post, field_name="views_per_post")
     view_seconds = _validate_positive_int(view_seconds, field_name="view_seconds")
-    _validate_views_ratio(total_bought_views, views_per_post)
+    _validate_views_ratio(
+        total_bought_views,
+        views_per_post,
+        detail_text="Просмотров на 1 пост не может быть больше, чем куплено всего.",
+    )
 
     if client_user_id is not None and not await get_user_by_id(db, int(client_user_id)):
-        raise HTTPException(status_code=404, detail="Клиент не найден")
+        raise HTTPException(status_code=404, detail="Пользователь не найден")
 
     try:
         async with tx(db):
@@ -205,12 +301,13 @@ async def create_channel(
                 chat_id=chat_id,
                 title=title,
                 client_user_id=client_user_id,
+                owner_type=owner_type,
                 total_bought_views=total_bought_views,
                 views_per_post=views_per_post,
                 view_seconds=view_seconds,
             )
             if client_user_id is not None:
-                await ensure_client_role(db, int(client_user_id))
+                await ensure_owner_role(db, int(client_user_id), owner_type=owner_type)
     except sqlite3.IntegrityError as e:
         raise HTTPException(
             status_code=409,
@@ -225,24 +322,42 @@ async def bind_channel_client(
         channel_id: int,
         *,
         client_user_id: int,
+        owner_type: str,
 ) -> dict[str, Any]:
     row = await _get_channel_row(db, int(channel_id))
+    owner_type = _normalize_owner_type(owner_type)
 
     if not await get_user_by_id(db, int(client_user_id)):
-        raise HTTPException(status_code=404, detail="Клиент не найден")
+        raise HTTPException(status_code=404, detail="Пользователь не найден")
 
     previous_client_user_id = (
         int(row["client_user_id"])
         if row["client_user_id"] is not None
         else None
     )
+    previous_owner_type = str(row["owner_type"] or OWNER_TYPE_CLIENT)
     async with tx(db):
-        await set_task_channel_client(db, int(channel_id), int(client_user_id))
-        await sync_client_role_after_rebind(
-            db,
-            previous_user_id=previous_client_user_id,
-            next_user_id=int(client_user_id),
-        )
+        await set_task_channel_client(db, int(channel_id), int(client_user_id), owner_type)
+        if previous_owner_type == owner_type:
+            await sync_owner_role_after_rebind(
+                db,
+                previous_user_id=previous_client_user_id,
+                next_user_id=int(client_user_id),
+                owner_type=owner_type,
+            )
+        else:
+            await sync_owner_role_after_rebind(
+                db,
+                previous_user_id=previous_client_user_id,
+                next_user_id=None,
+                owner_type=previous_owner_type,
+            )
+            await sync_owner_role_after_rebind(
+                db,
+                previous_user_id=None,
+                next_user_id=int(client_user_id),
+                owner_type=owner_type,
+            )
 
     return await build_channel_detail(db, int(channel_id))
 

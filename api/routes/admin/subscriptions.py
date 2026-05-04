@@ -52,6 +52,7 @@ async def create_subscription_task_route(payload: AdminSubscriptionTaskCreateReq
             chat_id=payload.chat_id,
             title=payload.title,
             client_user_id=payload.client_user_id,
+            owner_type=payload.owner_type,
             channel_url=payload.channel_url,
             instant_reward=payload.instant_reward,
             daily_reward_total=payload.daily_reward_total,
@@ -82,6 +83,7 @@ async def bind_subscription_task_client_route(
             db,
             task_id=int(task_id),
             client_user_id=payload.client_user_id,
+            owner_type=payload.owner_type,
         )
     finally:
         await db.close()
