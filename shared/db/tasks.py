@@ -842,20 +842,20 @@ async def allocate_task_post_from_channel_post(
 
     client_remaining = int(channel["remaining_views"] or 0)
     partner_remaining = await get_task_channel_partner_remaining_views(db, channel)
-    remaining = client_remaining + partner_remaining
     client_views_per_post = int(channel["views_per_post"] or 0)
     client_view_seconds = int(channel["view_seconds"] or 0)
     partner_views_per_post = int(channel["partner_views_per_post"] or 0) or client_views_per_post
     partner_view_seconds = int(channel["partner_view_seconds"] or 0) or client_view_seconds
     use_partner_pool = partner_remaining > 0
+    pool_remaining = partner_remaining if use_partner_pool else client_remaining
     views_per_post = partner_views_per_post if use_partner_pool else client_views_per_post
     hold_seconds = partner_view_seconds if use_partner_pool else client_view_seconds
 
-    if remaining <= 0 or views_per_post <= 0:
+    if pool_remaining <= 0 or views_per_post <= 0:
         await auto_disable_task_channel_if_exhausted(db, int(channel["id"]))
         return False
 
-    alloc = min(remaining, views_per_post)
+    alloc = min(pool_remaining, views_per_post)
     if alloc <= 0:
         await auto_disable_task_channel_if_exhausted(db, int(channel["id"]))
         return False
@@ -882,17 +882,22 @@ async def allocate_task_post_from_channel_post(
     if cur.rowcount != 1:
         return False
 
-    partner_alloc = min(partner_remaining, int(alloc))
-    client_alloc = max(int(alloc) - int(partner_alloc), 0)
-    if partner_alloc > 0 and channel["client_user_id"] is not None:
+    if use_partner_pool and channel["client_user_id"] is not None:
         await allocate_partner_views(
             db,
             partner_user_id=int(channel["client_user_id"]),
             channel_chat_id=str(channel["chat_id"]),
-            amount=int(partner_alloc),
+            amount=int(alloc),
         )
-
-    if client_alloc > 0:
+        await db.execute(
+            """
+            UPDATE task_channels
+            SET title = COALESCE(?, title)
+            WHERE id = ?
+            """,
+            (title, int(channel["id"])),
+        )
+    else:
         await db.execute(
             """
             UPDATE task_channels
@@ -901,16 +906,7 @@ async def allocate_task_post_from_channel_post(
                 title = COALESCE(?, title)
             WHERE id = ?
             """,
-            (int(client_alloc), title, int(channel["id"])),
-        )
-    else:
-        await db.execute(
-            """
-            UPDATE task_channels
-            SET title = COALESCE(?, title)
-            WHERE id = ?
-            """,
-            (title, int(channel["id"])),
+            (int(alloc), title, int(channel["id"])),
         )
 
     await auto_disable_task_channel_if_exhausted(db, int(channel["id"]))

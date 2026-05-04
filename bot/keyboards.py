@@ -529,7 +529,7 @@ def admin_task_channel_card_kb(
         [InlineKeyboardButton(text="👤 Привязать пользователя", callback_data=f"adm:tch:client:{channel_id}")],
     ]
     if can_add_client_views or can_partner_views_accrual:
-        keyboard.append([InlineKeyboardButton(text="➕ Зачислить просмотры", callback_data=f"adm:tch:credit_views:{channel_id}")])
+        keyboard.append([InlineKeyboardButton(text="➕ Добавить лимит", callback_data=f"adm:tch:credit_views:{channel_id}")])
     keyboard.extend([
         [InlineKeyboardButton(text="⚙️ Редактировать параметры", callback_data=f"adm:tch:edit:{channel_id}")],
         [InlineKeyboardButton(

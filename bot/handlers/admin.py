@@ -113,6 +113,19 @@ if OWNER_ID and str(OWNER_ID).isdigit():
     STATIC_ADMIN_IDS.add(int(OWNER_ID))
 
 
+def _is_myrole_command_text(text: Optional[str]) -> bool:
+    normalized = (text or "").strip()
+    if not normalized:
+        return False
+
+    command = normalized.split(maxsplit=1)[0].split("@", 1)[0].lower()
+    return command in {"/myrole", ".myrole"}
+
+
+def _is_myrole_command(message: Message) -> bool:
+    return _is_myrole_command_text(message.text)
+
+
 def _require_bot(bot: Optional[Bot]) -> Bot:
     if bot is None:
         raise ValueError("Bot instance is missing")
@@ -192,7 +205,7 @@ def _build_partner_views_accrual_created_text(detail: dict[str, Any]) -> str:
         f"Партнер: {partner_label}\n"
         f"Канал: {channel_title or channel_chat_id}\n"
         f"chat_id: {channel_chat_id}\n"
-        f"Начислено просмотров: {views_promised}\n"
+        f"Добавлено в доп. начисления: {views_promised}\n"
         "Дальше они будут списываться автоматически по новым постам."
     )
 
@@ -335,7 +348,7 @@ async def admin_api_unavailable_callback(callback: CallbackQuery):
     await callback.answer(ADMIN_API_UNAVAILABLE_TEXT, show_alert=True)
 
 
-@fallback_router.message(F.text.startswith("/myrole"))
+@fallback_router.message(_is_myrole_command)
 async def admin_api_unavailable_myrole(message: Message):
     await message.answer(ADMIN_API_UNAVAILABLE_TEXT)
 
@@ -568,19 +581,33 @@ def _build_task_channel_card_text(detail: dict) -> tuple[str, bool, int, bool, b
         username=client_username,
         first_name=client_first_name,
     )
-    total_views_label = "Начислено просмотров" if owner_type == OWNER_TYPE_PARTNER else "Куплено просмотров"
     can_partner_views_accrual = client_user_id is not None
     can_add_client_views = owner_type == OWNER_TYPE_CLIENT and client_user_id is not None
+    main_pool_block = ""
+    if owner_type == OWNER_TYPE_CLIENT:
+        main_pool_block = (
+            "Покупка клиента\n"
+            f"Куплено просмотров: {total_bought}\n"
+            f"На один пост: {views_per_post}\n"
+            f"Секунд просмотра: {view_seconds}\n"
+            f"Уже распределено: {allocated}\n"
+            f"Осталось распределить: {remaining}"
+        )
+
     partner_accruals_block = ""
     if partner_accruals is not None:
         manual_views_promised = int(partner_accruals.get("views_promised") or 0)
         manual_views_delivered = int(partner_accruals.get("views_delivered") or 0)
-        if manual_views_promised > 0 or manual_views_delivered > 0:
+        if (
+                owner_type == OWNER_TYPE_PARTNER
+                or manual_views_promised > 0
+                or manual_views_delivered > 0
+        ):
             manual_remaining = max(manual_views_promised - manual_views_delivered, 0)
             partner_accruals_block = (
-                "\n\n"
-                "Партнерский пул\n"
-                f"Начислено просмотров: {manual_views_promised}\n"
+                ("\n\n" if main_pool_block else "") +
+                "Доп. партнерские начисления\n"
+                f"Начислено отдельно: {manual_views_promised}\n"
                 f"На один пост: {partner_views_per_post}\n"
                 f"Секунд просмотра: {partner_view_seconds}\n"
                 f"Уже распределено: {manual_views_delivered}\n"
@@ -594,11 +621,7 @@ def _build_task_channel_card_text(detail: dict) -> tuple[str, bool, int, bool, b
         f"Тип: {_owner_type_label(owner_type)}\n"
         f"Пользователь: {client_label}\n"
         f"Статус: {status_text}\n\n"
-        f"{total_views_label}: {total_bought}\n"
-        f"На один пост: {views_per_post}\n"
-        f"Секунд просмотра: {view_seconds}\n"
-        f"Уже распределено: {allocated}\n"
-        f"Осталось распределить: {remaining}"
+        f"{main_pool_block}"
         f"{partner_accruals_block}\n\n"
         f"Постов в системе: {total_posts}\n"
         f"Активных постов: {active_posts}\n"
@@ -858,7 +881,7 @@ async def adm_partner_views_channel_chat_id(message: Message, state: FSMContext)
     await state.set_state(PartnerViewsAccrualCreate.views_promised)
     await message.answer(
         f"Канал: {title or chat_id}\n\n"
-        "Сколько просмотров обещано начислить партнеру?"
+        "Сколько просмотров добавить в доп. начисления партнеру?"
     )
 
 
@@ -3354,15 +3377,19 @@ async def adm_task_channel_new_client_ref(message: Message, state: FSMContext):
     )
 
     await state.update_data(client_user_id=client_user_id)
+    if owner_type == OWNER_TYPE_PARTNER:
+        await state.update_data(total_bought_views=0)
+        await state.set_state(TaskChannelCreate.views_per_post)
+        await message.answer(
+            f"{_owner_type_title(owner_type)} привязан: {client_label}\n\n"
+            "Теперь введи, сколько просмотров выделять на 1 пост из доп. начислений:"
+        )
+        return
+
     await state.set_state(TaskChannelCreate.total_bought_views)
-    total_views_prompt = (
-        "Теперь введи, сколько просмотров начислить партнеру всего для этого канала:"
-        if owner_type == OWNER_TYPE_PARTNER
-        else "Теперь введи, сколько просмотров куплено всего для этого канала:"
-    )
     await message.answer(
         f"{_owner_type_title(owner_type)} привязан: {client_label}\n\n"
-        f"{total_views_prompt}"
+        "Теперь введи, сколько просмотров куплено всего для этого канала:"
     )
 
 
@@ -3392,10 +3419,11 @@ async def adm_task_channel_new_views_per_post(message: Message, state: FSMContex
         return
 
     data = await state.get_data()
+    owner_type = _normalize_owner_type(data.get("owner_type"))
     total_bought_views = int(data["total_bought_views"])
 
-    if views_per_post > total_bought_views:
-        await message.answer("❌ Просмотров на 1 пост не может быть больше, чем куплено всего.")
+    if owner_type == OWNER_TYPE_CLIENT and views_per_post > total_bought_views:
+        await message.answer("❌ Просмотров на 1 пост не может быть больше общего лимита.")
         return
 
     await state.update_data(views_per_post=views_per_post)
@@ -3463,15 +3491,15 @@ async def adm_task_channel_edit_start(callback: CallbackQuery, state: FSMContext
     channel = detail["channel"]
     owner_type = _normalize_owner_type(channel.get("owner_type"))
     await state.clear()
-    choice_keyboard = [
-        [InlineKeyboardButton(
-            text="💰 Параметры покупки клиента" if owner_type == OWNER_TYPE_CLIENT else "📦 Параметры основного пула",
-            callback_data=f"adm:tch:edit_pool:{channel_id}:main",
-        )]
-    ]
-    if _to_optional_int(channel.get("client_user_id")) is not None:
+    choice_keyboard = []
+    if owner_type == OWNER_TYPE_CLIENT:
         choice_keyboard.append([InlineKeyboardButton(
-            text="🚀 Параметры начисления партнеру",
+            text="💰 Параметры покупки клиента",
+            callback_data=f"adm:tch:edit_pool:{channel_id}:main",
+        )])
+    if owner_type == OWNER_TYPE_PARTNER or _to_optional_int(channel.get("client_user_id")) is not None:
+        choice_keyboard.append([InlineKeyboardButton(
+            text="🚀 Параметры доп. начислений",
             callback_data=f"adm:tch:edit_pool:{channel_id}:partner",
         )])
 
@@ -3531,17 +3559,17 @@ async def adm_task_channel_edit_pool_start(callback: CallbackQuery, state: FSMCo
     total_bought_views = int(channel.get("total_bought_views") or 0)
     partner_views_promised = int(partner_accruals.get("views_promised") or 0)
     if edit_pool == "partner":
-        pool_title = "начисления партнеру"
+        pool_title = "доп. партнерских начислений"
         current_views_per_post = int(channel.get("partner_views_per_post") or 0)
         current_view_seconds = int(channel.get("partner_view_seconds") or 0)
         pool_total_limit = partner_views_promised
-        total_label = "Сейчас начислено партнеру"
+        total_label = "Сейчас начислено отдельно"
     else:
-        pool_title = "покупки клиента" if owner_type == OWNER_TYPE_CLIENT else "основного пула"
+        pool_title = "покупки клиента"
         current_views_per_post = int(channel.get("views_per_post") or 0)
         current_view_seconds = int(channel.get("view_seconds") or 0)
         pool_total_limit = total_bought_views
-        total_label = "Сейчас куплено просмотров" if owner_type == OWNER_TYPE_CLIENT else "Сейчас начислено просмотров"
+        total_label = "Сейчас куплено просмотров"
 
     await state.set_state(TaskChannelEdit.views_per_post)
     await state.update_data(
@@ -3560,7 +3588,7 @@ async def adm_task_channel_edit_pool_start(callback: CallbackQuery, state: FSMCo
         f"Сейчас просмотров на 1 пост: {current_views_per_post}\n"
         f"Сейчас секунд просмотра: {current_view_seconds}\n\n"
         "Объём здесь не меняется.\n"
-        "Для этого используй кнопку «Зачислить просмотры» и выбери нужное направление.\n\n"
+        "Для этого используй кнопку «Добавить лимит» и выбери нужное направление.\n\n"
         "Теперь введи новое количество просмотров на 1 пост:",
         reply_markup=admin_back_kb(f"adm:tch:open:{channel_id}"),
     )
@@ -3621,10 +3649,10 @@ async def adm_task_channel_credit_views_start(callback: CallbackQuery, state: FS
         ]
     await safe_edit_text(
         callback.message,
-        "➕ Зачислить просмотры\n\n"
+        "➕ Добавить лимит\n\n"
         f"Пользователь: {owner_label}\n"
         f"Канал: {(channel.get('title') or channel['chat_id'])}\n\n"
-        "Куда зачислить просмотры?",
+        "Куда добавить просмотры?",
         reply_markup=InlineKeyboardMarkup(
             inline_keyboard=[
                 *choice_keyboard,
@@ -3663,13 +3691,13 @@ async def adm_task_channel_credit_views_target(callback: CallbackQuery, state: F
     prompt = (
         "Сколько просмотров добавить в покупку клиента?"
         if target == "client"
-        else "Сколько просмотров начислить партнеру?"
+        else "Сколько просмотров добавить в доп. начисления партнеру?"
     )
     await safe_edit_text(
         callback.message,
-        "➕ Зачислить просмотры\n\n"
+        "➕ Добавить лимит\n\n"
         f"Канал: {(data.get('channel_title') or data.get('channel_chat_id'))}\n"
-        f"Направление: {'покупка клиента' if target == 'client' else 'начисление партнеру'}\n\n"
+        f"Направление: {'покупка клиента' if target == 'client' else 'доп. начисления партнеру'}\n\n"
         f"{prompt}",
         reply_markup=admin_back_kb(f"adm:tch:open:{channel_id}"),
     )
@@ -3707,9 +3735,9 @@ async def adm_task_channel_add_views_amount(message: Message, state: FSMContext)
     await state.clear()
     text, is_active, resolved_channel_id, can_partner_views_accrual, can_add_client_views = _build_task_channel_card_text(detail)
     success_text = (
-        f"✅ Просмотры зачислены в начисление партнеру: {amount}\n\n"
+        f"✅ Просмотры добавлены в доп. начисления партнеру: {amount}\n\n"
         if credit_target == "partner"
-        else f"✅ Просмотры зачислены в покупку клиента: {amount}\n\n"
+        else f"✅ Просмотры добавлены в покупку клиента: {amount}\n\n"
     )
     await message.answer(
         success_text + text,
@@ -4049,6 +4077,11 @@ async def adm_task_channel_new_view_seconds(message: Message, state: FSMContext)
 
     await state.clear()
     new_id = int(detail["channel"]["id"])
+    bought_views_line = (
+        ""
+        if owner_type == OWNER_TYPE_PARTNER
+        else f"Куплено просмотров: {total_bought_views}\n"
+    )
 
     await message.answer(
         "✅ Канал подключен\n\n"
@@ -4056,7 +4089,7 @@ async def adm_task_channel_new_view_seconds(message: Message, state: FSMContext)
         f"chat_id: {chat_id}\n"
         f"Тип: {_owner_type_label(owner_type)}\n"
         f"Пользователь user_id: {client_user_id}\n"
-        f"Куплено просмотров: {total_bought_views}\n"
+        f"{bought_views_line}"
         f"На 1 пост: {views_per_post}\n"
         f"Секунд просмотра: {view_seconds}\n"
         "Статус: 🔴 Отключен"
@@ -4186,7 +4219,7 @@ async def adm_growth_back(callback: CallbackQuery):
             reply_markup=admin_menu_kb(),
         )
 
-@router.message(F.text.startswith("/myrole"))
+@router.message(_is_myrole_command)
 async def adm_my_role(message: Message):
     try:
         profile = await get_user_profile(message.from_user.id)
