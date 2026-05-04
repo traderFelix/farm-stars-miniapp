@@ -113,19 +113,6 @@ if OWNER_ID and str(OWNER_ID).isdigit():
     STATIC_ADMIN_IDS.add(int(OWNER_ID))
 
 
-def _is_myrole_command_text(text: Optional[str]) -> bool:
-    normalized = (text or "").strip()
-    if not normalized:
-        return False
-
-    command = normalized.split(maxsplit=1)[0].split("@", 1)[0].lower()
-    return command in {"/myrole", ".myrole"}
-
-
-def _is_myrole_command(message: Message) -> bool:
-    return _is_myrole_command_text(message.text)
-
-
 def _require_bot(bot: Optional[Bot]) -> Bot:
     if bot is None:
         raise ValueError("Bot instance is missing")
@@ -348,7 +335,7 @@ async def admin_api_unavailable_callback(callback: CallbackQuery):
     await callback.answer(ADMIN_API_UNAVAILABLE_TEXT, show_alert=True)
 
 
-@fallback_router.message(_is_myrole_command)
+@fallback_router.message(F.text.startswith("/myrole"))
 async def admin_api_unavailable_myrole(message: Message):
     await message.answer(ADMIN_API_UNAVAILABLE_TEXT)
 
@@ -4219,7 +4206,7 @@ async def adm_growth_back(callback: CallbackQuery):
             reply_markup=admin_menu_kb(),
         )
 
-@router.message(_is_myrole_command)
+@router.message(F.text.startswith("/myrole"))
 async def adm_my_role(message: Message):
     try:
         profile = await get_user_profile(message.from_user.id)
