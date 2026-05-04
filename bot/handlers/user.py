@@ -410,11 +410,21 @@ def _build_partner_promos_text(payload: dict[str, Any]) -> str:
 def _build_partner_accruals_text(payload: dict[str, Any]) -> str:
     channel = payload["channel"]
     summary = payload["summary"]
+    subscribers_accrued = int(summary.get("subscribers_promised") or 0)
+    subscribers_spent = int(summary.get("subscribers_delivered") or 0)
+    views_accrued = int(summary.get("views_promised") or 0)
+    views_spent = int(summary.get("views_delivered") or 0)
+    subscribers_remaining = max(subscribers_accrued - subscribers_spent, 0)
+    views_remaining = max(views_accrued - views_spent, 0)
     return (
         "🧾 <b>Мои начисления</b>\n\n"
         f"Канал: <b>{_format_client_channel_title(channel)}</b>\n\n"
-        f"Подписчиков залито/обещано: <b>{int(summary.get('subscribers_delivered') or 0)}/{int(summary.get('subscribers_promised') or 0)}</b>\n"
-        f"Просмотров выдано/обещано: <b>{int(summary.get('views_delivered') or 0)}/{int(summary.get('views_promised') or 0)}</b>"
+        f"Подписчиков начислено: <b>{subscribers_accrued}</b>\n"
+        f"Подписчиков использовано: <b>{subscribers_spent}</b>\n"
+        f"Подписчиков осталось: <b>{subscribers_remaining}</b>\n\n"
+        f"Просмотров начислено: <b>{views_accrued}</b>\n"
+        f"Просмотров использовано на посты: <b>{views_spent}</b>\n"
+        f"Просмотров осталось: <b>{views_remaining}</b>"
     )
 
 
@@ -437,18 +447,17 @@ def _build_partner_accrual_history_text(payload: dict[str, Any]) -> str:
     ]
     for row in rows:
         created_at = _format_client_datetime(row.get("created_at"))
-        subscribers_delivered = int(row.get("subscribers_delivered") or 0)
-        subscribers_promised = int(row.get("subscribers_promised") or 0)
-        views_delivered = int(row.get("views_delivered") or 0)
-        views_promised = int(row.get("views_promised") or 0)
-        note = (row.get("note") or "").strip()
-        lines.extend([
-            f"<b>{created_at}</b>",
-            f"Подписчики: <b>{subscribers_delivered}/{subscribers_promised}</b>",
-            f"Просмотры: <b>{views_delivered}/{views_promised}</b>",
-        ])
-        if note:
-            lines.append(f"Комментарий: <b>{html.escape(note)}</b>")
+        subscribers_accrued = int(row.get("subscribers_promised") or 0)
+        views_accrued = int(row.get("views_promised") or 0)
+        entry_lines = [f"<b>{created_at}</b>"]
+        if subscribers_accrued > 0:
+            entry_lines.append(f"Подписчики начислено: <b>{subscribers_accrued}</b>")
+        if views_accrued > 0:
+            entry_lines.append(f"Просмотры начислено: <b>{views_accrued}</b>")
+        if len(entry_lines) == 1:
+            continue
+
+        lines.extend(entry_lines)
         lines.append("")
 
     return "\n".join(lines).strip()

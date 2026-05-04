@@ -82,7 +82,7 @@ from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
 from shared.config import ADMIN_IDS, LEDGER_PAGE_SIZE, OWNER_ID, ROLE_ADMIN
 from shared.config import OWNER_TYPE_CLIENT, OWNER_TYPE_PARTNER
 
-from bot.handlers.user import safe_edit_text
+from bot.handlers.user import safe_callback_answer, safe_edit_text
 
 from shared.formatting import fmt_stars
 
@@ -794,13 +794,13 @@ async def _render_promo_card(callback: CallbackQuery, code: str):
 
 @router.callback_query(F.data == "adm:back")
 async def adm_back(callback: CallbackQuery):
-    await callback.answer()
+    await safe_callback_answer(callback)
     await safe_edit_text(callback.message, "🛠 Админ-панель", reply_markup=admin_menu_kb())
 
 
 @router.callback_query(F.data == "adm:campaigns_menu")
 async def adm_campaigns_menu(callback: CallbackQuery):
-    await callback.answer()
+    await safe_callback_answer(callback)
     await safe_edit_text(
         callback.message,
         "🏆 Раздел конкурсов",
@@ -810,7 +810,7 @@ async def adm_campaigns_menu(callback: CallbackQuery):
 
 @router.callback_query(F.data == "adm:partner_views:new")
 async def adm_partner_views_new(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()
+    await safe_callback_answer(callback)
     await state.clear()
     await state.set_state(PartnerViewsAccrualCreate.partner_ref)
     await safe_edit_text(
@@ -927,7 +927,7 @@ async def adm_partner_views_views_promised(message: Message, state: FSMContext):
 
 @router.callback_query(F.data == "adm:promos_menu")
 async def adm_promos_menu(callback: CallbackQuery):
-    await callback.answer()
+    await safe_callback_answer(callback)
     await safe_edit_text(
         callback.message,
         "🎟 Раздел промокодов",
@@ -937,7 +937,7 @@ async def adm_promos_menu(callback: CallbackQuery):
 
 @router.callback_query(F.data == "adm:list")
 async def adm_list(callback: CallbackQuery):
-    await callback.answer()
+    await safe_callback_answer(callback)
 
     try:
         result = await list_campaigns_via_api()
@@ -963,14 +963,14 @@ async def adm_list(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("adm:open:"))
 async def adm_open(callback: CallbackQuery):
-    await callback.answer()
+    await safe_callback_answer(callback)
     key = callback.data.split(":", 2)[2]
     await _render_campaign_card(callback, key)
 
 
 @router.callback_query(F.data.startswith("adm:on:"))
 async def adm_on(callback: CallbackQuery):
-    await callback.answer()
+    await safe_callback_answer(callback)
     key = callback.data.split(":", 2)[2]
     try:
         detail = await set_campaign_status_via_api(key, status="active")
@@ -991,7 +991,7 @@ async def adm_on(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("adm:off:"))
 async def adm_off(callback: CallbackQuery):
-    await callback.answer()
+    await safe_callback_answer(callback)
     key = callback.data.split(":", 2)[2]
     try:
         detail = await set_campaign_status_via_api(key, status="ended")
@@ -1012,7 +1012,7 @@ async def adm_off(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("adm:del:ask:"))
 async def adm_delete_ask(callback: CallbackQuery):
-    await callback.answer()
+    await safe_callback_answer(callback)
     key = callback.data.split(":", 3)[3]
 
     try:
@@ -1050,7 +1050,7 @@ async def adm_delete_ask(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("adm:del:do:"))
 async def adm_delete_do(callback: CallbackQuery):
-    await callback.answer()
+    await safe_callback_answer(callback)
     key = callback.data.split(":", 3)[3]
 
     try:
@@ -1064,7 +1064,7 @@ async def adm_delete_do(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("adm:add_winners:"))
 async def add_winners_start(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()
+    await safe_callback_answer(callback)
 
     key = callback.data.split(":")[2]
     await state.set_state(AddWinners.usernames)
@@ -1101,7 +1101,7 @@ async def save_winners_msg(message: Message, state: FSMContext):
 
 @router.callback_query(F.data == "adm:new")
 async def adm_new(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()
+    await safe_callback_answer(callback)
     await state.set_state(CampaignCreate.key)
     await safe_edit_text(
         callback.message,
@@ -1190,7 +1190,7 @@ async def adm_new_post_url(message: Message, state: FSMContext):
 
 @router.callback_query(F.data == "adm:stats_menu")
 async def adm_stats_menu(callback: CallbackQuery):
-    await callback.answer()
+    await safe_callback_answer(callback)
 
     try:
         summary = await get_campaigns_summary_via_api(latest_limit=5)
@@ -1231,7 +1231,7 @@ async def adm_stats_menu(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("adm:stats:"))
 async def adm_stats(callback: CallbackQuery):
-    await callback.answer()
+    await safe_callback_answer(callback)
 
     key = callback.data.split(":")[2]
 
@@ -1269,7 +1269,7 @@ async def adm_stats(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("adm:show_winners:"))
 async def adm_show_winners(callback: CallbackQuery):
-    await callback.answer()
+    await safe_callback_answer(callback)
 
     key = callback.data.split(":")[2]
 
@@ -1310,7 +1310,7 @@ async def adm_show_winners(callback: CallbackQuery):
 
 @router.callback_query(F.data == "adm:promo:list")
 async def adm_promo_list(callback: CallbackQuery):
-    await callback.answer()
+    await safe_callback_answer(callback)
 
     try:
         result = await list_promos_via_api()
@@ -1336,14 +1336,14 @@ async def adm_promo_list(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("adm:promo:open:"))
 async def adm_promo_open(callback: CallbackQuery):
-    await callback.answer()
+    await safe_callback_answer(callback)
     code = callback.data.split(":")[3]
     await _render_promo_card(callback, code)
 
 
 @router.callback_query(F.data.startswith("adm:promo:on:"))
 async def adm_promo_on(callback: CallbackQuery):
-    await callback.answer()
+    await safe_callback_answer(callback)
     code = callback.data.split(":")[3]
 
     try:
@@ -1358,7 +1358,7 @@ async def adm_promo_on(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("adm:promo:off:"))
 async def adm_promo_off(callback: CallbackQuery):
-    await callback.answer()
+    await safe_callback_answer(callback)
     code = callback.data.split(":")[3]
 
     try:
@@ -1373,7 +1373,7 @@ async def adm_promo_off(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("adm:promo:del:ask:"))
 async def adm_promo_delete_ask(callback: CallbackQuery):
-    await callback.answer()
+    await safe_callback_answer(callback)
     code = callback.data.split(":")[4]
 
     try:
@@ -1394,7 +1394,7 @@ async def adm_promo_delete_ask(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("adm:promo:del:do:"))
 async def adm_promo_delete_do(callback: CallbackQuery):
-    await callback.answer()
+    await safe_callback_answer(callback)
     code = callback.data.split(":")[4]
 
     try:
@@ -1412,7 +1412,7 @@ async def adm_promo_delete_do(callback: CallbackQuery):
 
 @router.callback_query(F.data == "adm:promo:new")
 async def adm_promo_new(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()
+    await safe_callback_answer(callback)
     await state.set_state(PromoCreate.code)
     await safe_edit_text(
         callback.message,
@@ -1547,7 +1547,7 @@ async def adm_promo_new_title(message: Message, state: FSMContext):
 
 @router.callback_query(F.data == "adm:promo:scope:general")
 async def adm_promo_new_scope_general(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()
+    await safe_callback_answer(callback)
 
     try:
         detail = await _create_promo_from_state(state)
@@ -1566,7 +1566,7 @@ async def adm_promo_new_scope_general(callback: CallbackQuery, state: FSMContext
 
 @router.callback_query(F.data == "adm:promo:scope:partner")
 async def adm_promo_new_scope_partner(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()
+    await safe_callback_answer(callback)
     await state.set_state(PromoCreate.partner_ref)
     await safe_edit_text(
         callback.message,
@@ -1637,7 +1637,7 @@ async def adm_promo_new_partner_channel_chat_id(message: Message, state: FSMCont
 
 @router.callback_query(F.data == "adm:promo:stats_menu")
 async def adm_promo_stats_menu(callback: CallbackQuery):
-    await callback.answer()
+    await safe_callback_answer(callback)
 
     try:
         summary = await get_promos_summary_via_api(latest_limit=5)
@@ -1678,7 +1678,7 @@ async def adm_promo_stats_menu(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("adm:promo:stats:"))
 async def adm_promo_stats(callback: CallbackQuery):
-    await callback.answer()
+    await safe_callback_answer(callback)
     code = callback.data.split(":")[3]
 
     try:
@@ -1717,13 +1717,13 @@ async def adm_promo_stats(callback: CallbackQuery):
 
 @router.callback_query(F.data == "adm:home")
 async def adm_home(callback: CallbackQuery):
-    await callback.answer()
+    await safe_callback_answer(callback)
     await safe_edit_text(callback.message, "🛠 Админ-панель", reply_markup=admin_menu_kb())
 
 
 @router.callback_query(F.data.startswith("adm:winner_del:"))
 async def winner_del_start(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()
+    await safe_callback_answer(callback)
     key = callback.data.split(":")[2]
 
     await state.set_state(DeleteWinner.username)
@@ -1759,7 +1759,7 @@ async def winner_del_finish(message: Message, state: FSMContext):
 
 @router.callback_query(F.data == "adm:top")
 async def adm_top_balances(callback: CallbackQuery):
-    await callback.answer()
+    await safe_callback_answer(callback)
 
     try:
         result = await get_top_balances_via_api(limit=10)
@@ -1789,7 +1789,7 @@ async def adm_top_balances(callback: CallbackQuery):
 
 @router.callback_query(F.data == "adm:growth_png")
 async def adm_growth_png(callback: CallbackQuery):
-    await callback.answer()
+    await safe_callback_answer(callback)
 
     days = 30
     try:
@@ -1868,7 +1868,7 @@ async def adm_growth_png(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("adm:ledger_last"))
 async def adm_ledger_last(callback: CallbackQuery):
-    await callback.answer()
+    await safe_callback_answer(callback)
 
     parts = (callback.data or "").split(":")
     page = 0
@@ -1930,7 +1930,7 @@ async def adm_ledger_last(callback: CallbackQuery):
 
 @router.callback_query(F.data == "adm:user_balance")
 async def adm_user_balance(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()
+    await safe_callback_answer(callback)
     await state.set_state(UserLookup.user)
     await callback.message.answer("Введи username или user_id пользователя:")
 
@@ -1961,7 +1961,7 @@ async def adm_user_balance_show(message: Message, state: FSMContext):
 
 @router.callback_query(F.data.startswith("adm:ub:add:"))
 async def adm_user_add_start(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()
+    await safe_callback_answer(callback)
     user_id = int(callback.data.split(":")[3])
 
     await state.update_data(adj_user_id=user_id, adj_mode="add")
@@ -1972,7 +1972,7 @@ async def adm_user_add_start(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data.startswith("adm:ub:sub:"))
 async def adm_user_sub_start(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()
+    await safe_callback_answer(callback)
     user_id = int(callback.data.split(":")[3])
 
     await state.update_data(adj_user_id=user_id, adj_mode="sub")
@@ -2034,7 +2034,7 @@ async def adm_user_adjust_finish(message: Message, state: FSMContext):
 
 @router.callback_query(F.data == "adm:wd:list")
 async def adm_withdraw_list(callback: CallbackQuery):
-    await callback.answer()
+    await safe_callback_answer(callback)
 
     try:
         result = await list_withdrawals_queue(status="pending", limit=20)
@@ -2105,14 +2105,14 @@ async def _render_withdraw_card(callback: CallbackQuery, wid: int):
 
 @router.callback_query(F.data.startswith("adm:wd:open:"))
 async def adm_withdraw_open(callback: CallbackQuery):
-    await callback.answer()
+    await safe_callback_answer(callback)
     wid = int(callback.data.split(":")[3])
     await _render_withdraw_card(callback, wid)
 
 
 @router.callback_query(F.data.startswith("adm:wd:paid:"))
 async def adm_withdraw_paid(callback: CallbackQuery):
-    await callback.answer()
+    await safe_callback_answer(callback)
 
     wid = int(callback.data.split(":")[3])
     admin_id = callback.from_user.id
@@ -2251,7 +2251,7 @@ async def adm_withdraw_reject(callback: CallbackQuery):
 
 @router.callback_query(F.data == "adm:audit")
 async def adm_audit_balances(callback: CallbackQuery):
-    await callback.answer()
+    await safe_callback_answer(callback)
 
     try:
         audit = await get_audit_via_api(limit=10)
@@ -2356,7 +2356,7 @@ async def adm_user_details(callback: CallbackQuery):
         if "message is not modified" not in str(e):
             raise
 
-    await callback.answer()
+    await safe_callback_answer(callback)
 
 @router.callback_query(F.data.startswith("adm:user:mark_susp:"))
 async def adm_user_mark_susp(callback: CallbackQuery):
@@ -2464,7 +2464,7 @@ async def adm_user_ledger(callback: CallbackQuery):
         text,
         reply_markup=_user_ledger_nav_kb(user_id, page, has_next),
     )
-    await callback.answer()
+    await safe_callback_answer(callback)
 
 @router.callback_query(F.data.startswith("adm:user:stats:"))
 async def adm_user_stats(callback: CallbackQuery):
@@ -2502,7 +2502,7 @@ async def adm_user_stats(callback: CallbackQuery):
         if "message is not modified" not in str(e):
             raise
 
-    await callback.answer()
+    await safe_callback_answer(callback)
 
 
 @router.callback_query(F.data.startswith("adm:user:battles:"))
@@ -2538,7 +2538,7 @@ async def adm_user_battles(callback: CallbackQuery):
         if "message is not modified" not in str(e):
             raise
 
-    await callback.answer()
+    await safe_callback_answer(callback)
 
 
 @router.callback_query(F.data.startswith("adm:user:thefts:"))
@@ -2574,7 +2574,7 @@ async def adm_user_thefts(callback: CallbackQuery):
         if "message is not modified" not in str(e):
             raise
 
-    await callback.answer()
+    await safe_callback_answer(callback)
 
 
 @router.callback_query(F.data.startswith("adm:user:risk:"))
@@ -2668,11 +2668,11 @@ async def adm_user_risk(callback: CallbackQuery):
         text,
         reply_markup=_user_risk_nav_kb(user_id, page, has_next),
     )
-    await callback.answer()
+    await safe_callback_answer(callback)
 
 @router.callback_query(F.data == "adm:fee_refund_menu")
 async def adm_fee_refund_menu(callback: CallbackQuery):
-    await callback.answer()
+    await safe_callback_answer(callback)
 
     try:
         result = await list_recent_fee_payments_via_api(limit=10)
@@ -2727,7 +2727,7 @@ async def adm_fee_refund_menu(callback: CallbackQuery):
 
 @router.callback_query(F.data == "adm:fee_refund_manual")
 async def adm_fee_refund_manual(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()
+    await safe_callback_answer(callback)
     await state.set_state(AdminRefundFee.waiting_manual_data)
 
     await callback.message.answer(
@@ -2803,7 +2803,7 @@ async def adm_fee_refund_manual_finish(message: Message, state: FSMContext):
 
 @router.callback_query(F.data == "adm:sub:list")
 async def adm_subscription_tasks_list(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()
+    await safe_callback_answer(callback)
     await state.clear()
 
     try:
@@ -2836,7 +2836,7 @@ async def adm_subscription_tasks_list(callback: CallbackQuery, state: FSMContext
 
 @router.callback_query(F.data == "adm:sub:new")
 async def adm_subscription_task_new_start(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()
+    await safe_callback_answer(callback)
     await state.clear()
     await state.set_state(SubscriptionTaskCreate.chat_id)
     await safe_edit_text(
@@ -2878,7 +2878,7 @@ async def adm_subscription_task_new_chat_id(message: Message, state: FSMContext)
 @router.callback_query(F.data.startswith("adm:sub:new:owner:"))
 async def adm_subscription_task_new_owner_type(callback: CallbackQuery, state: FSMContext):
     owner_type = _normalize_owner_type((callback.data or "").rsplit(":", 1)[1])
-    await callback.answer()
+    await safe_callback_answer(callback)
     await state.update_data(owner_type=owner_type)
     await state.set_state(SubscriptionTaskCreate.client_ref)
     await safe_edit_text(
@@ -3032,7 +3032,7 @@ async def adm_subscription_task_new_max_subscribers(message: Message, state: FSM
 
 @router.callback_query(F.data.startswith("adm:sub:open:"))
 async def adm_subscription_task_open(callback: CallbackQuery):
-    await callback.answer()
+    await safe_callback_answer(callback)
     task_id = int((callback.data or "").rsplit(":", 1)[1])
 
     try:
@@ -3055,7 +3055,7 @@ async def adm_subscription_task_open(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("adm:sub:toggle:"))
 async def adm_subscription_task_toggle(callback: CallbackQuery):
-    await callback.answer()
+    await safe_callback_answer(callback)
     parts = (callback.data or "").split(":")
     task_id = int(parts[3])
     next_active = bool(int(parts[4]))
@@ -3080,7 +3080,7 @@ async def adm_subscription_task_toggle(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("adm:sub:client:"))
 async def adm_subscription_task_bind_client_start(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()
+    await safe_callback_answer(callback)
     task_id = int((callback.data or "").rsplit(":", 1)[1])
 
     try:
@@ -3113,7 +3113,7 @@ async def adm_subscription_task_bind_owner_type(callback: CallbackQuery, state: 
     parts = (callback.data or "").split(":")
     task_id = int(parts[3])
     owner_type = _normalize_owner_type(parts[4] if len(parts) > 4 else OWNER_TYPE_CLIENT)
-    await callback.answer()
+    await safe_callback_answer(callback)
     await state.update_data(subscription_task_id=task_id, owner_type=owner_type)
     await state.set_state(SubscriptionTaskBindClient.client_ref)
     await safe_edit_text(
@@ -3159,7 +3159,7 @@ async def adm_subscription_task_bind_client_value(message: Message, state: FSMCo
 
 @router.callback_query(F.data.startswith("adm:sub:archive:ask:"))
 async def adm_subscription_task_archive_ask(callback: CallbackQuery):
-    await callback.answer()
+    await safe_callback_answer(callback)
     task_id = int((callback.data or "").rsplit(":", 1)[1])
 
     try:
@@ -3185,7 +3185,7 @@ async def adm_subscription_task_archive_ask(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("adm:sub:archive:do:"))
 async def adm_subscription_task_archive_do(callback: CallbackQuery):
-    await callback.answer()
+    await safe_callback_answer(callback)
     task_id = int((callback.data or "").rsplit(":", 1)[1])
 
     try:
@@ -3255,7 +3255,7 @@ async def _render_task_channel_card(callback: CallbackQuery, channel_id: int):
 
 @router.callback_query(F.data == "adm:tch:list")
 async def adm_task_channels_list(callback: CallbackQuery):
-    await callback.answer()
+    await safe_callback_answer(callback)
 
     try:
         result = await list_task_channels_via_api()
@@ -3294,7 +3294,7 @@ async def adm_task_channels_list(callback: CallbackQuery):
 
 @router.callback_query(F.data == "adm:tch:new")
 async def adm_task_channel_new_start(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()
+    await safe_callback_answer(callback)
     await state.set_state(TaskChannelCreate.chat_id)
     await safe_edit_text(
         callback.message,
@@ -3328,7 +3328,7 @@ async def adm_task_channel_new_chat_id(message: Message, state: FSMContext):
 @router.callback_query(F.data.startswith("adm:tch:new:owner:"))
 async def adm_task_channel_new_owner_type(callback: CallbackQuery, state: FSMContext):
     owner_type = _normalize_owner_type((callback.data or "").rsplit(":", 1)[1])
-    await callback.answer()
+    await safe_callback_answer(callback)
     await state.update_data(owner_type=owner_type)
     await state.set_state(TaskChannelCreate.client_ref)
     await safe_edit_text(
@@ -3420,14 +3420,14 @@ async def adm_task_channel_new_views_per_post(message: Message, state: FSMContex
 
 @router.callback_query(F.data.startswith("adm:tch:open:"))
 async def adm_task_channel_open(callback: CallbackQuery):
-    await callback.answer()
+    await safe_callback_answer(callback)
     channel_id = int(callback.data.split(":")[3])
     await _render_task_channel_card(callback, channel_id)
 
 
 @router.callback_query(F.data.startswith("adm:tch:toggle:"))
 async def adm_task_channel_toggle(callback: CallbackQuery):
-    await callback.answer()
+    await safe_callback_answer(callback)
     channel_id = int(callback.data.split(":")[3])
 
     try:
@@ -3459,7 +3459,7 @@ async def adm_task_channel_toggle(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("adm:tch:edit:"))
 async def adm_task_channel_edit_start(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()
+    await safe_callback_answer(callback)
     channel_id = int(callback.data.split(":")[3])
 
     try:
@@ -3506,7 +3506,7 @@ async def adm_task_channel_edit_start(callback: CallbackQuery, state: FSMContext
 
 @router.callback_query(F.data.startswith("adm:tch:edit_pool:"))
 async def adm_task_channel_edit_pool_start(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()
+    await safe_callback_answer(callback)
     parts = (callback.data or "").split(":")
     channel_id = int(parts[3])
     edit_pool = str(parts[4] if len(parts) > 4 else "").strip().lower()
@@ -3583,7 +3583,7 @@ async def adm_task_channel_edit_pool_start(callback: CallbackQuery, state: FSMCo
 
 @router.callback_query(F.data.startswith("adm:tch:credit_views:"))
 async def adm_task_channel_credit_views_start(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()
+    await safe_callback_answer(callback)
     channel_id = int(callback.data.split(":")[3])
 
     try:
@@ -3636,7 +3636,7 @@ async def adm_task_channel_credit_views_start(callback: CallbackQuery, state: FS
         ]
     await safe_edit_text(
         callback.message,
-        "➕ Добавить лимит\n\n"
+        "➕ Добавить просмотры\n\n"
         f"Пользователь: {owner_label}\n"
         f"Канал: {(channel.get('title') or channel['chat_id'])}\n\n"
         "Куда добавить просмотры?",
@@ -3651,7 +3651,7 @@ async def adm_task_channel_credit_views_start(callback: CallbackQuery, state: FS
 
 @router.callback_query(F.data.startswith("adm:tch:credit_target:"))
 async def adm_task_channel_credit_views_target(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()
+    await safe_callback_answer(callback)
     parts = (callback.data or "").split(":")
     channel_id = int(parts[3])
     target = str(parts[4] if len(parts) > 4 else "").strip().lower()
@@ -3682,7 +3682,7 @@ async def adm_task_channel_credit_views_target(callback: CallbackQuery, state: F
     )
     await safe_edit_text(
         callback.message,
-        "➕ Добавить лимит\n\n"
+        "➕ Добавить просмотры\n\n"
         f"Канал: {(data.get('channel_title') or data.get('channel_chat_id'))}\n"
         f"Направление: {'покупка клиента' if target == 'client' else 'доп. начисления партнеру'}\n\n"
         f"{prompt}",
@@ -3764,7 +3764,7 @@ async def adm_task_channel_edit_views_per_post(message: Message, state: FSMConte
 @router.callback_query(F.data.startswith("adm:tch:manual_post_start:"))
 async def adm_task_channel_manual_post_start(callback: CallbackQuery, state: FSMContext):
     data = callback.data or ""
-    await callback.answer()
+    await safe_callback_answer(callback)
     channel_id = int(data.rsplit(":", 1)[1])
 
     try:
@@ -3874,7 +3874,7 @@ async def adm_task_channel_manual_post_link(message: Message, bot: Bot, state: F
 
 @router.callback_query(F.data == "adm:tch:manual_post:add")
 async def adm_task_channel_manual_post_add(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()
+    await safe_callback_answer(callback)
     data = await state.get_data()
     channel_id = _to_optional_int(data.get("channel_id"))
     channel_post_id = _to_optional_int(data.get("channel_post_id"))
@@ -3921,7 +3921,7 @@ async def adm_task_channel_manual_post_add(callback: CallbackQuery, state: FSMCo
 
 @router.callback_query(F.data.startswith("adm:tch:posts:"))
 async def adm_task_channel_posts(callback: CallbackQuery):
-    await callback.answer()
+    await safe_callback_answer(callback)
     parts = (callback.data or "").split(":")
     channel_id = int(parts[3])
     page = 0
@@ -4096,7 +4096,7 @@ async def adm_task_channel_new_view_seconds(message: Message, state: FSMContext)
 @router.callback_query(F.data.startswith("adm:tch:client:"))
 async def adm_task_channel_bind_client(callback: CallbackQuery, state: FSMContext):
     channel_id = int(callback.data.rsplit(":", 1)[1])
-    await callback.answer()
+    await safe_callback_answer(callback)
     await state.clear()
     await state.update_data(channel_id=channel_id)
     await state.set_state(TaskChannelBindClient.owner_type)
@@ -4116,7 +4116,7 @@ async def adm_task_channel_bind_owner_type(callback: CallbackQuery, state: FSMCo
     parts = (callback.data or "").split(":")
     channel_id = int(parts[3])
     owner_type = _normalize_owner_type(parts[4] if len(parts) > 4 else OWNER_TYPE_CLIENT)
-    await callback.answer()
+    await safe_callback_answer(callback)
     await state.update_data(channel_id=channel_id, owner_type=owner_type)
     await state.set_state(TaskChannelBindClient.client_ref)
     await safe_edit_text(
@@ -4167,7 +4167,7 @@ async def adm_task_channel_bind_client_value(message: Message, state: FSMContext
 
 @router.callback_query(F.data.startswith("adm:growth_back:"))
 async def adm_growth_back(callback: CallbackQuery):
-    await callback.answer()
+    await safe_callback_answer(callback)
 
     origin_message_id = int(callback.data.rsplit(":", 1)[1])
 
@@ -4227,7 +4227,7 @@ async def adm_my_role(message: Message):
 async def adm_choose_role(callback: CallbackQuery):
     user_id = int(callback.data.split(":")[-1])
 
-    await callback.answer()
+    await safe_callback_answer(callback)
 
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
